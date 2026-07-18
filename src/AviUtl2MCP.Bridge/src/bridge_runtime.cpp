@@ -2,6 +2,7 @@
 
 #include "aviutl2_mcp/instance_descriptor.h"
 #include "aviutl2_mcp/named_pipe_server.h"
+#include "aviutl2_mcp/native_ring_logger.h"
 
 #include <Windows.h>
 
@@ -43,11 +44,18 @@ bool bridge_runtime::start(const std::uint32_t host_version) noexcept {
             throw;
         }
         is_running_ = true;
+        get_native_logger().write(
+            native_log_level::information,
+            "runtime",
+            "bridge.started",
+            "Bridge started with hostVersion=" + std::to_string(host_version));
         return true;
     } catch (const std::exception& exception) {
-        OutputDebugStringA("AviUtl2MCP bridge startup failed: ");
-        OutputDebugStringA(exception.what());
-        OutputDebugStringA("\n");
+        get_native_logger().write(
+            native_log_level::error,
+            "runtime",
+            "bridge.start_failed",
+            exception.what());
         publisher_.reset();
         server_.reset();
         identity_.reset();
@@ -68,6 +76,11 @@ void bridge_runtime::stop() noexcept {
     if (server_ != nullptr) {
         server_->stop();
     }
+    get_native_logger().write(
+        native_log_level::information,
+        "runtime",
+        "bridge.stopped",
+        "Bridge stopped");
     publisher_.reset();
     server_.reset();
     identity_.reset();

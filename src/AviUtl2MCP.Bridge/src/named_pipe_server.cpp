@@ -1,4 +1,5 @@
 #include "aviutl2_mcp/named_pipe_server.h"
+#include "aviutl2_mcp/native_ring_logger.h"
 
 #include "aviutl2_mcp/handshake.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
@@ -175,9 +176,11 @@ private:
             try {
                 write_frame(transport_, frame);
             } catch (const std::exception& exception) {
-                OutputDebugStringA("AviUtl2MCP session writer failed: ");
-                OutputDebugStringA(exception.what());
-                OutputDebugStringA("\n");
+                get_native_logger().write(
+                    native_log_level::error,
+                    "pipe",
+                    "session.write_failed",
+                    exception.what());
                 std::scoped_lock lock(mutex_);
                 is_closed_ = true;
                 queue_.clear();
@@ -310,9 +313,11 @@ void named_pipe_server::run(HANDLE pipe) noexcept {
                 serve_client(pipe);
             }
         } catch (const std::exception& exception) {
-            OutputDebugStringA("AviUtl2MCP pipe session failed: ");
-            OutputDebugStringA(exception.what());
-            OutputDebugStringA("\n");
+            get_native_logger().write(
+                native_log_level::error,
+                "pipe",
+                "session.failed",
+                exception.what());
         }
         DisconnectNamedPipe(pipe);
         CloseHandle(pipe);
@@ -324,9 +329,11 @@ void named_pipe_server::run(HANDLE pipe) noexcept {
         try {
             pipe = create_pipe();
         } catch (const std::exception& exception) {
-            OutputDebugStringA("AviUtl2MCP pipe recreation failed: ");
-            OutputDebugStringA(exception.what());
-            OutputDebugStringA("\n");
+            get_native_logger().write(
+                native_log_level::error,
+                "pipe",
+                "listener.recreate_failed",
+                exception.what());
             break;
         }
     }
@@ -402,6 +409,13 @@ void named_pipe_server::serve_client(const HANDLE pipe) {
     response.payload_hash = calculate_payload_hash(response.header, response.json, response.binary);
     write_frame(transport, response);
     set_last_session({client_process_id, client_session_id, result.accepted});
+    get_native_logger().write(
+        result.accepted ? native_log_level::information : native_log_level::warning,
+        "pipe",
+        result.accepted ? "handshake.accepted" : "handshake.rejected",
+        "clientProcessId=" + std::to_string(client_process_id)
+            + " clientSessionId=" + std::to_string(client_session_id)
+            + " clientInstanceId=" + hello.client_instance_id);
     if (!result.accepted) {
         return;
     }
@@ -412,6 +426,11 @@ void named_pipe_server::serve_client(const HANDLE pipe) {
     while (is_running_.load()) {
         ipc_frame frame = read_frame(transport);
         if (frame.header.kind == message_kind::close) {
+            get_native_logger().write(
+                native_log_level::information,
+                "pipe",
+                "session.closed",
+                "clientInstanceId=" + hello.client_instance_id);
             return;
         }
         if (frame.header.kind == message_kind::request) {

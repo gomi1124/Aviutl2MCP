@@ -1,6 +1,5 @@
 #include "aviutl2_mcp/command_gate.h"
-
-#include <Windows.h>
+#include "aviutl2_mcp/native_ring_logger.h"
 
 #include <stdexcept>
 #include <utility>
@@ -57,9 +56,17 @@ void command_gate::stop() noexcept {
         try {
             cancel();
         } catch (const std::exception& exception) {
-            OutputDebugStringA("AviUtl2MCP queued command cancellation failed: ");
-            OutputDebugStringA(exception.what());
-            OutputDebugStringA("\n");
+            get_native_logger().write(
+                native_log_level::error,
+                "command_gate",
+                "command.cancel_failed",
+                exception.what());
+        } catch (...) {
+            get_native_logger().write(
+                native_log_level::error,
+                "command_gate",
+                "command.cancel_failed",
+                "Unknown queued command cancellation failure");
         }
     }
     condition_.notify_all();
@@ -96,9 +103,17 @@ void command_gate::run() noexcept {
         try {
             command.execute();
         } catch (const std::exception& exception) {
-            OutputDebugStringA("AviUtl2MCP command gate task failed: ");
-            OutputDebugStringA(exception.what());
-            OutputDebugStringA("\n");
+            get_native_logger().write(
+                native_log_level::error,
+                "command_gate",
+                "command.execute_failed",
+                exception.what());
+        } catch (...) {
+            get_native_logger().write(
+                native_log_level::error,
+                "command_gate",
+                "command.execute_failed",
+                "Unknown command gate task failure");
         }
     }
 }

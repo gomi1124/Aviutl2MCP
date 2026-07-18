@@ -27,6 +27,9 @@ public sealed class NativeBridgeInteropTests
         Assert.IsTrue(File.Exists(bridgePath), $"Native bridge was not found at {bridgePath}.");
 
         nint module = NativeLibrary.Load(bridgePath);
+        Assert.IsTrue(
+            NativeLibrary.TryGetExport(module, "InitializeLogger", out _),
+            "Native bridge did not export InitializeLogger.");
         InitializePlugin initialize = Marshal.GetDelegateForFunctionPointer<InitializePlugin>(
             NativeLibrary.GetExport(module, "InitializePlugin"));
         UninitializePlugin uninitialize = Marshal.GetDelegateForFunctionPointer<UninitializePlugin>(

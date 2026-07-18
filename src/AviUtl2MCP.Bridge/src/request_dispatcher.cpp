@@ -1,6 +1,5 @@
 #include "aviutl2_mcp/request_dispatcher.h"
-
-#include <Windows.h>
+#include "aviutl2_mcp/native_ring_logger.h"
 
 #include <nlohmann/json.hpp>
 
@@ -120,6 +119,12 @@ std::future<ipc_frame> request_dispatcher::dispatch(
             "not_started",
             false));
     }
+    get_native_logger().write(
+        native_log_level::trace,
+        "dispatcher",
+        "request.received",
+        "method=" + request.method,
+        request.correlation_id);
 
     operation_handler* handler = nullptr;
     {
@@ -415,11 +420,17 @@ void request_dispatcher::dispatch_async(
             try {
                 completion(response.get());
             } catch (const std::exception& exception) {
-                OutputDebugStringA("AviUtl2MCP async response completion failed: ");
-                OutputDebugStringA(exception.what());
-                OutputDebugStringA("\n");
+                get_native_logger().write(
+                    native_log_level::error,
+                    "dispatcher",
+                    "response.completion_failed",
+                    exception.what());
             } catch (...) {
-                OutputDebugStringA("AviUtl2MCP async response completion failed with an unknown exception\n");
+                get_native_logger().write(
+                    native_log_level::error,
+                    "dispatcher",
+                    "response.completion_failed",
+                    "Unknown async response completion failure");
             }
             is_completed->store(true);
         });
@@ -574,7 +585,14 @@ ipc_frame request_dispatcher::create_response_frame(
             {"details", nlohmann::json::object()},
         };
     }
-    return create_frame_from_json(request.request_id, document.dump());
+    ipc_frame response = create_frame_from_json(request.request_id, document.dump());
+    get_native_logger().write(
+        result.ok ? native_log_level::information : native_log_level::warning,
+        "dispatcher",
+        result.ok ? "request.completed" : "request.failed",
+        "method=" + request.method + " outcome=" + result.outcome,
+        request.correlation_id);
+    return response;
 }
 
 ipc_frame request_dispatcher::create_error_frame(
@@ -607,7 +625,14 @@ ipc_frame request_dispatcher::create_error_frame(
             {"undoRecommended", false},
             {"details", details}}},
     }.dump();
-    return create_frame_from_json(request_id, json);
+    ipc_frame response = create_frame_from_json(request_id, json);
+    get_native_logger().write(
+        native_log_level::warning,
+        "dispatcher",
+        "request.rejected",
+        "code=" + code + " outcome=" + outcome,
+        correlation_id);
+    return response;
 }
 
 ipc_frame request_dispatcher::create_frame_from_json(

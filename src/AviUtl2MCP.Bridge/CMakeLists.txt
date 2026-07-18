@@ -11,6 +11,7 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/locator_resolver.cpp
   src/named_pipe_server.cpp
   src/native_ipc_frame_codec.cpp
+  src/native_ring_logger.cpp
   src/pipe_security.cpp
   src/request_dispatcher.cpp
   src/revision_tracker.cpp
@@ -23,6 +24,7 @@ target_include_directories(AviUtl2MCP.Bridge.Core
 
 target_include_directories(AviUtl2MCP.Bridge.Core SYSTEM
   PRIVATE
+    "${PROJECT_SOURCE_DIR}/external/aviutl2_sdk/include/aviutl2_sdk"
     "${PROJECT_SOURCE_DIR}/external/nlohmann_json/single_include"
 )
 

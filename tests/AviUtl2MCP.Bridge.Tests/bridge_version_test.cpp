@@ -10,11 +10,14 @@
 #include "aviutl2_mcp/locator_resolver.h"
 #include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
+#include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/pipe_security.h"
 #include "aviutl2_mcp/request_dispatcher.h"
 #include "aviutl2_mcp/revision_tracker.h"
 
 #include <Windows.h>
+
+#include "logger2.h"
 
 #include <algorithm>
 #include <array>
@@ -25,6 +28,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -35,6 +39,34 @@
 namespace {
 
 using aviutl2_mcp::byte_transport;
+
+std::mutex HOST_LOG_MUTEX;
+std::vector<std::pair<std::string, std::wstring>> HOST_LOG_MESSAGES;
+
+void capture_host_message(const char* level, const LPCWSTR message) {
+    std::scoped_lock lock(HOST_LOG_MUTEX);
+    HOST_LOG_MESSAGES.emplace_back(level, message == nullptr ? L"" : message);
+}
+
+void capture_host_log(LOG_HANDLE*, const LPCWSTR message) {
+    capture_host_message("log", message);
+}
+
+void capture_host_info(LOG_HANDLE*, const LPCWSTR message) {
+    capture_host_message("information", message);
+}
+
+void capture_host_warning(LOG_HANDLE*, const LPCWSTR message) {
+    capture_host_message("warning", message);
+}
+
+void capture_host_error(LOG_HANDLE*, const LPCWSTR message) {
+    capture_host_message("error", message);
+}
+
+void capture_host_trace(LOG_HANDLE*, const LPCWSTR message) {
+    capture_host_message("trace", message);
+}
 
 void require(const bool condition, const char* message) {
     if (!condition) {
@@ -707,6 +739,22 @@ void test_request_dispatcher_and_at_most_once() {
         "attached mutation responses did not complete");
     require(get_json(original.get()) == get_json(duplicate.get()), "attached retry response differed");
     require(attached_count.load() == 1, "in-flight attached mutation executed twice");
+    const aviutl2_mcp::native_log_snapshot correlation_logs =
+        aviutl2_mcp::get_native_logger().snapshot({
+            .limit = 100U,
+            .after_sequence = std::nullopt,
+            .correlation_id = correlation_id,
+        });
+    require(
+        std::ranges::any_of(correlation_logs.entries, [](const aviutl2_mcp::native_log_entry& entry) {
+            return entry.event_id == "request.received";
+        }),
+        "dispatcher did not record the request correlation ID");
+    require(
+        std::ranges::any_of(correlation_logs.entries, [](const aviutl2_mcp::native_log_entry& entry) {
+            return entry.event_id == "request.completed" || entry.event_id == "request.rejected";
+        }),
+        "dispatcher did not record a correlated request outcome");
     dispatcher.stop();
 }
 
@@ -771,6 +819,109 @@ void test_request_dispatcher_cancellation() {
     dispatcher.stop();
 }
 
+void test_native_ring_logger_and_host_sink() {
+    {
+        std::scoped_lock lock(HOST_LOG_MUTEX);
+        HOST_LOG_MESSAGES.clear();
+    }
+    LOG_HANDLE host_logger{
+        &capture_host_log,
+        &capture_host_info,
+        &capture_host_warning,
+        &capture_host_error,
+        &capture_host_trace,
+    };
+    aviutl2_mcp::native_ring_logger logger(2U);
+    logger.attach(&host_logger);
+
+    logger.write(
+        aviutl2_mcp::native_log_level::information,
+        "dispatcher",
+        "request.accepted",
+        "token=alpha accepted",
+        "correlation-one");
+    logger.write(
+        aviutl2_mcp::native_log_level::warning,
+        "dispatcher",
+        "request.failed",
+        "password: beta",
+        "correlation-two");
+    logger.write(
+        aviutl2_mcp::native_log_level::error,
+        "runtime",
+        "bridge.failed",
+        "Bearer gamma",
+        "correlation-two");
+
+    aviutl2_mcp::native_log_snapshot complete = logger.snapshot({.limit = 10U});
+    require(logger.capacity() == 2U, "native log capacity changed");
+    require(complete.entries.size() == 2U, "native log ring did not evict its oldest entry");
+    require(complete.has_evicted_entries, "native log ring did not report prior eviction");
+    require(complete.entries[0].sequence == 2U && complete.entries[1].sequence == 3U,
+        "native log sequence was not monotonic");
+    require(complete.entries[0].source == "bridge", "native log source was incorrect");
+    require(complete.entries[0].message.find("beta") == std::string::npos,
+        "native log retained a password");
+    require(complete.entries[1].message.find("gamma") == std::string::npos,
+        "native log retained a bearer token");
+    require(complete.entries[0].message.find("[REDACTED]") != std::string::npos,
+        "native log did not mark a redacted value");
+    require(!complete.entries[0].timestamp_utc.empty() && complete.entries[0].timestamp_utc.back() == 'Z',
+        "native log timestamp was not UTC");
+
+    const aviutl2_mcp::native_log_snapshot first_page = logger.snapshot({
+        .limit = 1U,
+        .after_sequence = std::nullopt,
+        .correlation_id = "correlation-two",
+        .component = std::nullopt,
+        .levels = {
+            aviutl2_mcp::native_log_level::warning,
+            aviutl2_mcp::native_log_level::error,
+        },
+    });
+    require(first_page.entries.size() == 1U && first_page.is_truncated,
+        "native log paging did not report truncation");
+    require(first_page.next_sequence == 2U, "native log paging cursor was incorrect");
+    const aviutl2_mcp::native_log_snapshot second_page = logger.snapshot({
+        .limit = 1U,
+        .after_sequence = first_page.next_sequence,
+        .correlation_id = "correlation-two",
+    });
+    require(second_page.entries.size() == 1U && second_page.entries[0].sequence == 3U,
+        "native log cursor did not continue after the previous page");
+    require(!second_page.is_truncated, "native log final page was incorrectly truncated");
+
+    {
+        std::scoped_lock lock(HOST_LOG_MUTEX);
+        require(HOST_LOG_MESSAGES.size() == 3U, "host logger did not receive every native entry");
+        require(HOST_LOG_MESSAGES[0].first == "information"
+                && HOST_LOG_MESSAGES[1].first == "warning"
+                && HOST_LOG_MESSAGES[2].first == "error",
+            "native log level used the wrong host callback");
+        require(HOST_LOG_MESSAGES[0].second.find(L"alpha") == std::wstring::npos,
+            "host logger retained a secret");
+        require(HOST_LOG_MESSAGES[2].second.find(L"correlationId=correlation-two") != std::wstring::npos,
+            "host logger omitted the correlation ID");
+    }
+
+    logger.attach(nullptr);
+    logger.write(
+        aviutl2_mcp::native_log_level::trace,
+        "test",
+        "detached",
+        "detached host");
+    {
+        std::scoped_lock lock(HOST_LOG_MUTEX);
+        require(HOST_LOG_MESSAGES.size() == 3U, "detached host logger was called");
+    }
+    require_throws(
+        [&logger] { static_cast<void>(logger.snapshot({.limit = 0U})); },
+        "native log accepted a zero query limit");
+    require_throws(
+        [] { static_cast<void>(aviutl2_mcp::native_ring_logger(0U)); },
+        "native log accepted a zero capacity");
+}
+
 }  // namespace
 
 int main() {
@@ -791,6 +942,7 @@ int main() {
         std::pair{"locator resolution", &test_locator_resolution},
         std::pair{"request dispatcher and at-most-once", &test_request_dispatcher_and_at_most_once},
         std::pair{"request dispatcher cancellation", &test_request_dispatcher_cancellation},
+        std::pair{"native ring logger and host sink", &test_native_ring_logger_and_host_sink},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
