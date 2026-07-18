@@ -8,7 +8,7 @@
 - 設計入力: [Phase 2設計書](design.md)、[Phase 3クラス図](class-diagram.md)
 - 完了証拠: [受け入れテスト対応表](acceptance-test-matrix.md)の33 AC
 - M1証拠: locked restore、C# 8 project build、native `.aux2` build、28 tool schema conformance、C#/C++ 40-byte header golden vector
-- M2進捗: 2026-07-19 WP2 Application共通基盤完了。WP3 BridgeClient、WP4 Native Bridge基盤は実装中
+- M2進捗: 2026-07-19 WP2、W3.1～W3.2完了。WP3 transport以降とWP4 Native Bridge基盤は実装中
 
 V1の28 tools、5 resources、4 promptsを削減せず実装する。各末端taskは原則15～60分の検証可能な単位とし、失敗時に層を特定できる順で進める。
 
