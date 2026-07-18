@@ -1,9 +1,10 @@
-# AviUtl2 MCP Phase 1 要件定義書（ドラフト）
+# AviUtl2 MCP Phase 1 要件定義書（承認済み・設計追記あり）
 
 ## 1. 文書状態
 
 - フェーズ: Phase 1 要件定義
 - 状態: ユーザー承認済み（2026-07-18）
+- Phase 2追記: 複数インスタンス選択とat-most-once受入基準を明確化。Phase 2承認対象に含める
 - 前提仕様: [Phase 0 仕様書](specification.md)
 - 対象環境: Windows 64-bit、AviUtl ExEdit2 2.1.0
 
@@ -135,6 +136,7 @@ Resources は読み取り専用とし、未接続時も構造化された状態�
 - **FR-CON-004** AviUtl2の編集、再生、出力状態を返す。
 - **FR-CON-005** 能力応答は操作ごとに `available`、理由、制約を返す。
 - **FR-CON-006** プロトコルバージョン不一致時は接続を拒否し、両バージョンを返す。
+- **FR-CON-007** 複数のAviUtl2インスタンスが存在する場合は候補を列挙し、明示選択なしに編集対象を自動決定しない。
 
 ### 6.2 プロジェクト・シーン
 
@@ -247,6 +249,7 @@ Resources は読み取り専用とし、未接続時も構造化された状態�
 - **NFR-REL-003** 要求ごとに一意な相関IDを付与し、重複応答を防止する。
 - **NFR-REL-004** タイムアウト後に結果不明となった編集を、状態再照会で判定できる。
 - **NFR-REL-005** 未知のSDK・プラグイン版では安全側に能力を無効化する。
+- **NFR-REL-006** 変更IPC要求は同一bridge epoch内でclient instance IDとrequest IDによりat-most-onceに処理し、再接続後の同一要求で編集を重複適用しない。
 
 ### 7.5 互換性・保守性
 
@@ -272,6 +275,15 @@ Resources は読み取り専用とし、未接続時も構造化された状態�
 |---|---|
 | `aviutl_not_running` | AviUtl2が起動していない |
 | `bridge_not_connected` | ブリッジへ接続できない |
+| `instance_ambiguous` | 対象AviUtl2が複数あり明示選択が必要 |
+| `invalid_argument` | 入力値間の制約または対象instanceの整合性に違反した |
+| `cursor_invalid` | cursorが現在の状態、query、期限またはserver epochと一致しない |
+| `bridge_busy` | ブリッジの接続または待ち行列が上限に達した |
+| `request_id_conflict` | 同じIPC request IDに異なるpayloadが指定された |
+| `request_expired` | 変更request IDの安全な再送受付期間が終了した |
+| `request_result_evicted` | 変更済みだが完全応答cacheが失効し、状態再取得が必要 |
+| `operation_cancelled` | commit point前に取消され変更されなかった |
+| `protocol_incompatible` | MCPサーバーとブリッジのprotocol major範囲が一致しない |
 | `project_not_open` | 編集可能なプロジェクトがない |
 | `edit_not_available` | 再生・出力中などで編集できない |
 | `capability_not_available` | 現在の環境で操作を提供できない |
@@ -304,6 +316,7 @@ Resources は読み取り専用とし、未接続時も構造化された状態�
 - **AC-MCP-002** AviUtl2起動後、MCPサーバー再起動なしで接続状態へ遷移する。
 - **AC-MCP-003** tools、resources、promptsが要件の一覧と一致する。
 - **AC-MCP-004** 標準出力にMCP以外のログが混入しない。
+- **AC-MCP-005** 複数のfake AviUtl2インスタンスで未指定要求を拒否し、`instanceId`指定時だけ対象へ接続する。
 
 ### 9.3 読み取り・編集
 
@@ -333,6 +346,7 @@ Resources は読み取り専用とし、未接続時も構造化された状態�
 - **AC-DIA-003** PSDToolKit2の既知ログ3種を分類し、根拠行と推奨対処を返す。
 - **AC-DIA-004** IPC切断後に診断結果が切断箇所を示し、再接続後に正常へ戻る。
 - **AC-DIA-005** プレビューの正常、タイムアウト、遅延完了を反復し、デッドロック、二重解放、解放後参照が発生しない。
+- **AC-DIA-006** 応答消失後に同じrequest IDを再送しても編集を二重適用せず、異なるpayloadなら `request_id_conflict` を返す。
 
 ### 9.6 安全性
 
@@ -346,11 +360,11 @@ Resources は読み取り専用とし、未接続時も構造化された状態�
 | Phase 0ユーザーストーリー | 主な要求 | 主な受け入れ基準 |
 |---|---|---|
 | 構成を説明させたい | FR-PRJ、FR-TLN | AC-EDT-001 |
-| 素材とオブジェクトを編集させたい | FR-EDT | AC-EDT-002〜007 |
-| PSD、音声、字幕を操作させたい | FR-PSD | AC-PSD-001〜006 |
+| 素材とオブジェクトを編集させたい | FR-EDT | AC-EDT-002〜008 |
+| PSD、音声、字幕を操作させたい | FR-PSD | AC-PSD-001〜007 |
 | 変更確認とUndoを使いたい | FR-EDT-009〜012 | AC-EDT-004〜006 |
 | プレビューで比較したい | FR-PRV | AC-DIA-001〜002 |
-| 失敗原因を診断したい | FR-DIA | AC-DIA-003〜004 |
+| 失敗原因を診断したい | FR-DIA | AC-DIA-003〜006 |
 
 ## 11. 敵対的レビュー結果
 

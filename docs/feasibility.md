@@ -45,14 +45,14 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 | `aviutl_set_layer` | 直接 | `set_layer_name`、`set_layer_enable`、`set_layer_lock` | UI表示番号とSDKの0始まり番号を境界で変換する |
 | `aviutl_set_cursor` | 直接 | `set_cursor_layer_frame`、`set_display_layer_frame`、`set_select_range` | SDK側で補正された実値を再取得して返す |
 | `aviutl_execute_batch` | 複合 | サーバー側事前検証後、1回の `call_edit_section_param` 内で各編集APIを実行 | 1 Undo単位にはできるが、編集開始後のAPI失敗を自動ロールバックする公開APIはない。部分適用を検出して明示する |
-| `aviutl_render_preview` | 複合 | `rendering_scene_video`、`wait_rendering_task`、サーバー側PNG変換 | 描画は非同期。`wait_rendering_task` を読取・編集ロック中に呼ぶとデッドロックし得るため、必ずロック外で待つ |
+| `aviutl_render_preview` | 複合 | `rendering_scene_video`、`wait_rendering_task`、bridge側WIC PNG変換 | 描画は非同期。`wait_rendering_task` を読取・編集ロック中に呼ぶとデッドロックし得るため、必ずロック外で待つ |
 | `aviutl_get_logs` | サーバー | AviUtl2、PSDToolKit2、ブリッジ、MCPの既知ログファイルを制限付きで読取 | ファイル全体や秘密情報を返さず、行数、期間、サイズ、マスキングを適用する |
 | `aviutl_diagnose` | 複合 | status、capabilities、ログ分類、IPC疎通、GCMZDrops共有メモリを集約 | 診断は原則読取専用とし、修復操作は別の明示的な編集要求にする |
 | `aviutl_psd_create` | 複合 | SDKでカーソル設定後、GCMZDrops API v3のMutex・共有メモリ・`WM_COPYDATA` を使用 | GCMZDrops JSONに絶対フレーム指定はない。SDK編集と外部ドロップは単一Undo/トランザクションにできないため、投入後の再検索と事後条件検証が必須 |
-| `aviutl_psd_setup` | 複合 | タイムライン検証、`最初に置くやつ@PSDToolKit` のエイリアスを `create_object_from_alias` で作成 | PSD関連オブジェクトより上に置く順序と、必要尺・衝突を検証する |
+| `aviutl_psd_setup` | 複合 | タイムライン検証、`最初に置くやつ@PSDToolKit` definitionを列挙し `create_object` で作成 | PSD関連オブジェクトより上に置く順序と、必要尺・衝突を検証する |
 | `aviutl_psd_set_character` | 直接 | PSD関連エフェクトを検出し、公開SDKの `set_object_item_value` / `set_effect_item_value` を使用 | 固定エフェクト番号に依存せず、名称と項目列挙結果を照合する |
 | `aviutl_psd_set_layer_state` | 直接 | `PSDファイル@PSDToolKit` の `レイヤー` 項目を公開SDKで取得・更新できることをPSDToolKit2ソースで確認 | 対象PSDファイルとセーフガード値を検証し、状態文字列の上限を設ける |
-| `aviutl_psd_create_voice` | 複合 | WAV/TXT/LAB検証、GCMZDrops外部APIによる `セリフ準備@PSDToolKit` 生成、字幕エイリアス作成 | PSDToolKit2の外部APIドロップ設定に依存する。音声準備と字幕は単一トランザクションではないため、各生成物を事後検証する |
+| `aviutl_psd_create_voice` | 複合 | WAV/TXT/LAB検証、GCMZDrops外部APIによる直接WAV/TXTまたは中間`.object`投入、`セリフ準備@PSDToolKit`生成、字幕エイリアス作成 | `external_wav_txt_pair`または`external_object_audio_text`が必要。必須character IDを生成後にSDK設定し、各生成物を事後検証する |
 | `aviutl_psd_validate` | 複合 | タイムライン、エイリアス、エフェクト、項目、ファイル対応を読取り、サーバーで規則判定 | 目パチ、2方式の口パク、パーツ上書き、参照ID、初期化順序を個別結果として返す |
 
 結論として、列挙済み28 toolsはV1の実装候補として維持できる。ただし、バッチ編集、PSD投入、音声・字幕生成は完全な原子性を保証できないため、事前検証、相関ID、事後条件検証、部分適用エラーをAPI契約へ含める。

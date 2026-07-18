@@ -8,11 +8,17 @@ PSDToolKit2 と GCMZDrops が導入された Windows 環境を対象に、編集
 
 ## 現在の状態
 
-Phase 0（仕様策定）と Phase 1（要件定義）は承認済みです。現在は Phase 2（設計）を進めています。
+Phase 0（仕様策定）と Phase 1（要件定義）は承認済みです。Phase 2（設計）は敵対的レビューまで完了し、ユーザー承認待ちです。
 
 - [Phase 0 仕様書](docs/specification.md)
 - [Phase 1 要件定義書](docs/requirements.md)
 - [V1 実現性マトリクス](docs/feasibility.md)
+- [Phase 2 設計書](docs/design.md)
+- [MCP API設計](docs/mcp-api.md)
+- [V1 machine-readable Schema catalog](schemas/mcp/v1/catalog.json)
+- [IPCプロトコル設計](docs/ipc-protocol.md)
+- [PSDToolKit2 / GCMZDrops互換契約](docs/psd-contract.md)
+- [V1受け入れテスト対応表](docs/acceptance-test-matrix.md)
 
 ## 想定コンポーネント
 
