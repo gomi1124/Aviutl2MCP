@@ -2,6 +2,7 @@ using AviUtl2MCP.Application.Serialization;
 using AviUtl2MCP.BridgeClient.Connections;
 using AviUtl2MCP.BridgeClient.Discovery;
 using AviUtl2MCP.BridgeClient.Handshake;
+using AviUtl2MCP.BridgeClient.Messaging;
 using System.Text.Json;
 
 namespace AviUtl2MCP.BridgeIntegrationTests;
@@ -262,6 +263,20 @@ public sealed class InstanceDescriptorWatcherTests
         public BridgeSessionInfo SessionInfo { get; }
 
         public bool IsConnected { get; private set; }
+
+        public ValueTask<BridgeResponse> SendAsync(
+            BridgeRequest request,
+            ReadOnlyMemory<byte> binary,
+            DateTimeOffset deadline,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public ValueTask CancelAsync(Guid requestId, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
 
         public ValueTask DisposeAsync()
         {
