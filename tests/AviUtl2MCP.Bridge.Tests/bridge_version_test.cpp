@@ -855,7 +855,7 @@ void test_native_ring_logger_and_host_sink() {
         aviutl2_mcp::native_log_level::warning,
         "dispatcher",
         "request.failed",
-        "password: beta",
+        "password: beta C:\\Users\\alice\\project.aup",
         {
             .correlation_id = "correlation-two",
             .instance_id = "instance-one",
@@ -883,6 +883,10 @@ void test_native_ring_logger_and_host_sink() {
     require(complete.entries[0].result_code == "revision_conflict", "native log omitted the result code");
     require(complete.entries[0].message.find("beta") == std::string::npos,
         "native log retained a password");
+    require(complete.entries[0].message.find("alice") == std::string::npos,
+        "native log retained a user directory");
+    require(complete.entries[0].message.find("[USER]") != std::string::npos,
+        "native log did not mask a user directory");
     require(complete.entries[1].message.find("gamma") == std::string::npos,
         "native log retained a bearer token");
     require(complete.entries[0].message.find("[REDACTED]") != std::string::npos,

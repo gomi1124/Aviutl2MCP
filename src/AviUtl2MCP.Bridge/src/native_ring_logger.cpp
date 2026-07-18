@@ -25,9 +25,13 @@ constexpr std::size_t MAXIMUM_HOST_MESSAGE_CHARS = 1023U;
     static const std::regex assignment_pattern(
         R"(\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+))",
         std::regex_constants::icase | std::regex_constants::ECMAScript);
+    static const std::regex user_directory_pattern(
+        R"(([A-Z]:\\Users\\)[^\\\s"']+)",
+        std::regex_constants::icase | std::regex_constants::ECMAScript);
 
     std::string masked = std::regex_replace(std::string(value), bearer_pattern, "Bearer [REDACTED]");
-    return std::regex_replace(masked, assignment_pattern, "$1=[REDACTED]");
+    masked = std::regex_replace(masked, assignment_pattern, "$1=[REDACTED]");
+    return std::regex_replace(masked, user_directory_pattern, "$1[USER]");
 }
 
 [[nodiscard]] std::wstring utf8_to_wide(const std::string_view value) {

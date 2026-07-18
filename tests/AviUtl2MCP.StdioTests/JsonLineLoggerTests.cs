@@ -45,6 +45,7 @@ public sealed class JsonLineLoggerTests
                            ["instanceId"] = "019beabc-49b0-7000-8000-000000000002",
                            ["operation"] = "status.get",
                            ["authorization"] = "Bearer scope-secret",
+                           ["projectPath"] = @"C:\Users\alice\project.aup",
                        }))
                 {
                     // Act
@@ -58,6 +59,7 @@ public sealed class JsonLineLoggerTests
             Assert.AreEqual(standardErrorLine, fileLine);
             Assert.IsFalse(standardErrorLine.Contains("scope-secret", StringComparison.Ordinal));
             Assert.IsFalse(standardErrorLine.Contains("message-secret", StringComparison.Ordinal));
+            Assert.IsFalse(standardErrorLine.Contains("alice", StringComparison.Ordinal));
 
             using JsonDocument document = JsonDocument.Parse(standardErrorLine);
             JsonElement root = document.RootElement;
@@ -77,6 +79,9 @@ public sealed class JsonLineLoggerTests
             Assert.AreEqual("ok", root.GetProperty("resultCode").GetString());
             Assert.AreEqual("[REDACTED]", root.GetProperty("properties").GetProperty("authorization").GetString());
             Assert.AreEqual("[REDACTED]", root.GetProperty("properties").GetProperty("Token").GetString());
+            Assert.AreEqual(
+                @"C:\Users\[USER]\project.aup",
+                root.GetProperty("properties").GetProperty("projectPath").GetString());
         }
         finally
         {

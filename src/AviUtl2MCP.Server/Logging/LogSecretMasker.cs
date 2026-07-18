@@ -23,7 +23,8 @@ public static partial class LogSecretMasker
         }
 
         string masked = BearerTokenRegex().Replace(value, "Bearer " + RedactedValue);
-        return AssignedSecretRegex().Replace(masked, match => $"{match.Groups[1].Value}={RedactedValue}");
+        masked = AssignedSecretRegex().Replace(masked, match => $"{match.Groups[1].Value}={RedactedValue}");
+        return UserDirectoryRegex().Replace(masked, "$1[USER]");
     }
 
     private static bool IsSensitiveKey(string key) =>
@@ -37,4 +38,7 @@ public static partial class LogSecretMasker
 
     [GeneratedRegex("\\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret)\\b\\s*[:=]\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s,;]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AssignedSecretRegex();
+
+    [GeneratedRegex("""([A-Z]:\\Users\\)[^\\\s"']+""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UserDirectoryRegex();
 }
