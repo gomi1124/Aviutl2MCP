@@ -2,6 +2,8 @@ using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using AviUtl2MCP.Application.Serialization;
+using AviUtl2MCP.BridgeClient.Connections;
+using AviUtl2MCP.BridgeClient.Discovery;
 using AviUtl2MCP.BridgeClient.Handshake;
 using AviUtl2MCP.BridgeClient.Protocol;
 using AviUtl2MCP.BridgeClient.Transport;
@@ -115,6 +117,51 @@ public sealed class BridgeHandshakeClientTests
         InvalidDataException exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(handshake);
         _ = await serverHandshake;
         StringAssert.Contains(exception.Message, "target instance", StringComparison.Ordinal);
+    }
+
+    [TestMethod]
+    public async Task BridgeConnectionRejectsDescriptorAndHandshakeProcessMismatch()
+    {
+        // Arrange
+        Guid targetInstanceId = Guid.NewGuid();
+        string pipeName = $"AviUtl2MCP.identity.{Guid.NewGuid():N}";
+        BridgeInstanceDescriptor descriptor = new(
+            targetInstanceId,
+            1234,
+            111,
+            pipeName,
+            "0.1.0-test",
+            1);
+        await using NamedPipeServerStream server = CreateServer(pipeName);
+        await using NamedPipeBridgeTransport transport = new();
+        await using BridgeConnection connection = new(
+            descriptor,
+            transport,
+            Guid.NewGuid(),
+            "0.1.0-test");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(5));
+        Task<ClientHello> serverHandshake = RespondAsync(
+            server,
+            new ServerHello(
+                true,
+                targetInstanceId,
+                Guid.NewGuid(),
+                4321,
+                222,
+                new NegotiatedProtocol(1, 0),
+                new BridgeVersions("0.1.0", "2.1.0", "2.1.0"),
+                new HandshakeLimits(1024, 1024, 1),
+                CreateCapabilities()),
+            timeout.Token);
+
+        // Act
+        Func<Task> handshake = async () => await connection.HandshakeAsync(timeout.Token);
+
+        // Assert
+        InvalidDataException exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(handshake);
+        _ = await serverHandshake;
+        StringAssert.Contains(exception.Message, "process identity", StringComparison.Ordinal);
+        Assert.IsFalse(connection.IsConnected);
     }
 
     private static async Task<ClientHello> RespondAsync(
