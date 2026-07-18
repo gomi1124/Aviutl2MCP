@@ -1,0 +1,40 @@
+# Build output
+artifacts/
+bin/
+obj/
+build/
+out/
+
+# Visual Studio and CMake
+.vs/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.sln.user
+*.vcxproj.user
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Test output
+TestResults/
+coverage/
+*.trx
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+
+# Generated AviUtl2 packages and binaries
+*.au2pkg.zip
+*.aux2
+*.pdb
+
+# Temporary files
+*.tmp
+*.log
+Thumbs.db
+.DS_Store
