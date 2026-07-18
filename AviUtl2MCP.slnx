@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AviUtl2MCP.Application/AviUtl2MCP.Application.csproj" />
+    <Project Path="src/AviUtl2MCP.BridgeClient/AviUtl2MCP.BridgeClient.csproj" />
+    <Project Path="src/AviUtl2MCP.Server/AviUtl2MCP.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AviUtl2MCP.BridgeIntegrationTests/AviUtl2MCP.BridgeIntegrationTests.csproj" />
+    <Project Path="tests/AviUtl2MCP.McpContractTests/AviUtl2MCP.McpContractTests.csproj" />
+    <Project Path="tests/AviUtl2MCP.RealAviUtlTests/AviUtl2MCP.RealAviUtlTests.csproj" />
+    <Project Path="tests/AviUtl2MCP.StdioTests/AviUtl2MCP.StdioTests.csproj" />
+    <Project Path="tests/AviUtl2MCP.UnitTests/AviUtl2MCP.UnitTests.csproj" />
+  </Folder>
+</Solution>

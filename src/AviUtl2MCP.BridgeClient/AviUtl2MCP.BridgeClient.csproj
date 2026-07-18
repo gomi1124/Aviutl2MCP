@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <RootNamespace>AviUtl2MCP.BridgeClient</RootNamespace>
+    <AssemblyName>AviUtl2MCP.BridgeClient</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AviUtl2MCP.Application/AviUtl2MCP.Application.csproj" />
+  </ItemGroup>
+</Project>

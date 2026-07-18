@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>AviUtl2MCP.Application</RootNamespace>
+    <AssemblyName>AviUtl2MCP.Application</AssemblyName>
+  </PropertyGroup>
+</Project>
