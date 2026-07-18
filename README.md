@@ -12,6 +12,7 @@ Phase 0（仕様策定）は承認済みです。現在は Phase 1（要件定�
 
 - [Phase 0 仕様書](docs/specification.md)
 - [Phase 1 要件定義書](docs/requirements.md)
+- [V1 実現性マトリクス](docs/feasibility.md)
 
 ## 想定コンポーネント
 
