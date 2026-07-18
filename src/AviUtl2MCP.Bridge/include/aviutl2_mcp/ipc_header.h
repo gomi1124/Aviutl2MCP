@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace aviutl2_mcp {
 
@@ -38,5 +39,6 @@ struct frame_header final {
 };
 
 [[nodiscard]] std::array<std::uint8_t, IPC_HEADER_BYTES> encode_header(const frame_header& header);
+[[nodiscard]] frame_header decode_header(std::span<const std::uint8_t, IPC_HEADER_BYTES> bytes);
 
 }  // namespace aviutl2_mcp

@@ -76,4 +76,36 @@ std::array<std::uint8_t, IPC_HEADER_BYTES> encode_header(const frame_header& hea
     return bytes;
 }
 
+frame_header decode_header(const std::span<const std::uint8_t, IPC_HEADER_BYTES> bytes) {
+    if (bytes[0] != 'A' || bytes[1] != '2' || bytes[2] != 'M' || bytes[3] != 'P') {
+        throw std::invalid_argument("IPC header magic is invalid");
+    }
+    if (bytes[4] != static_cast<std::uint8_t>(IPC_HEADER_BYTES) || bytes[5] != 0U) {
+        throw std::invalid_argument("IPC header size is unsupported");
+    }
+    if (bytes[6] != 1U || bytes[7] != 0U) {
+        throw std::invalid_argument("IPC protocol version is unsupported");
+    }
+    if (bytes[10] != 0U || bytes[11] != 0U) {
+        throw std::invalid_argument("IPC reserved header bytes must be zero");
+    }
+
+    frame_header header{
+        .kind = static_cast<message_kind>(bytes[8]),
+        .flags = static_cast<frame_flags>(bytes[9]),
+        .request_id = {},
+        .json_length = 0U,
+        .binary_length = 0U,
+    };
+    std::ranges::copy(bytes.subspan<12, 16>(), header.request_id.begin());
+    for (std::size_t index = 0; index < sizeof(header.json_length); ++index) {
+        header.json_length |= static_cast<std::uint32_t>(bytes[28 + index]) << (index * 8U);
+    }
+    for (std::size_t index = 0; index < sizeof(header.binary_length); ++index) {
+        header.binary_length |= static_cast<std::uint64_t>(bytes[32 + index]) << (index * 8U);
+    }
+    validate_header(header);
+    return header;
+}
+
 }  // namespace aviutl2_mcp

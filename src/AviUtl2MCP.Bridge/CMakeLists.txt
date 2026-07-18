@@ -1,6 +1,13 @@
 add_library(AviUtl2MCP.Bridge.Core STATIC
+  src/bridge_identity.cpp
+  src/bridge_runtime.cpp
   src/bridge_version.cpp
+  src/handshake.cpp
+  src/instance_descriptor.cpp
   src/ipc_header.cpp
+  src/named_pipe_server.cpp
+  src/native_ipc_frame_codec.cpp
+  src/pipe_security.cpp
 )
 
 target_include_directories(AviUtl2MCP.Bridge.Core
@@ -8,13 +15,29 @@ target_include_directories(AviUtl2MCP.Bridge.Core
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
+target_include_directories(AviUtl2MCP.Bridge.Core SYSTEM
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/external/nlohmann_json/single_include"
+)
+
 target_compile_features(AviUtl2MCP.Bridge.Core PUBLIC cxx_std_20)
+target_compile_definitions(AviUtl2MCP.Bridge.Core PRIVATE UNICODE _UNICODE)
+
+if(WIN32)
+  target_link_libraries(AviUtl2MCP.Bridge.Core PUBLIC Advapi32 Bcrypt Rpcrt4 Shell32 Ole32)
+endif()
 
 add_library(AviUtl2MCP.Bridge MODULE
   src/plugin_entry.cpp
 )
 
+target_include_directories(AviUtl2MCP.Bridge SYSTEM
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/external/aviutl2_sdk/include/aviutl2_sdk"
+)
+
 target_link_libraries(AviUtl2MCP.Bridge PRIVATE AviUtl2MCP.Bridge.Core)
+target_compile_definitions(AviUtl2MCP.Bridge PRIVATE UNICODE _UNICODE)
 set_target_properties(AviUtl2MCP.Bridge PROPERTIES
   PREFIX ""
   SUFFIX ".aux2"
