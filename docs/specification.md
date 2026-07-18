@@ -139,6 +139,19 @@ MCP の標準出力はプロトコル専用とし、ログは標準エラーへ�
 - 現在の環境には .NET SDK と Node.js があるが、ネイティブプラグインを構築する C++ ツールチェーンが未導入である。
 - GitHub の公開範囲とライセンスはユーザー確認後に決定する。
 
+### 9.1 ローカル調査環境
+
+- AviUtl ExEdit2: version 2.1.0
+- AviUtl2 実行ファイル: `C:\Program Files\AviUtl2\aviutl2.exe`
+- AviUtl2 データディレクトリ: `C:\ProgramData\aviutl2`
+- PSDToolKit2: `C:\ProgramData\aviutl2\Plugin\PSDToolKit` に導入済み
+- GCMZDrops: `C:\ProgramData\aviutl2\Plugin\GCMZDrops` に導入済み
+- .NET SDK: 10.0.103
+- Node.js: 24.14.0
+- Visual Studio: Community 2022 17.14.26（C++ワークロードなし）
+
+PSDToolKit2 と GCMZDrops のローカルバイナリにはファイルバージョン情報が埋め込まれていない。実機起動後に、GCMZDrops API とブリッジの能力照会から実行時バージョンを取得する。
+
 ## 10. 公開資料
 
 - [AviUtl2 SDK mirror](https://github.com/aviutl2/aviutl2_sdk_mirror)
