@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -126,6 +127,43 @@ void append_hash(const BCRYPT_HASH_HANDLE hash, const std::span<const std::uint8
     return result;
 }
 
+[[nodiscard]] std::string calculate_hash(
+    const std::initializer_list<std::span<const std::uint8_t>> chunks) {
+    algorithm_handle algorithm;
+    DWORD object_bytes = 0U;
+    DWORD result_bytes = 0U;
+    check_nt_status(
+        BCryptGetProperty(
+            algorithm.get(),
+            BCRYPT_OBJECT_LENGTH,
+            reinterpret_cast<PUCHAR>(&object_bytes),
+            sizeof(object_bytes),
+            &result_bytes,
+            0U),
+        "BCryptGetProperty object length failed");
+    DWORD hash_bytes = 0U;
+    check_nt_status(
+        BCryptGetProperty(
+            algorithm.get(),
+            BCRYPT_HASH_LENGTH,
+            reinterpret_cast<PUCHAR>(&hash_bytes),
+            sizeof(hash_bytes),
+            &result_bytes,
+            0U),
+        "BCryptGetProperty hash length failed");
+
+    std::vector<std::uint8_t> object(object_bytes);
+    std::vector<std::uint8_t> digest(hash_bytes);
+    hash_handle hash(algorithm.get(), object);
+    for (const auto chunk : chunks) {
+        append_hash(hash.get(), chunk);
+    }
+    check_nt_status(
+        BCryptFinishHash(hash.get(), digest.data(), static_cast<ULONG>(digest.size()), 0U),
+        "BCryptFinishHash failed");
+    return to_lower_hex(digest);
+}
+
 }  // namespace
 
 void validate_utf8(const std::span<const std::uint8_t> bytes) {
@@ -191,40 +229,11 @@ std::string calculate_payload_hash(
         binary_length[index] = static_cast<std::uint8_t>(header.binary_length >> (index * 8U));
     }
 
-    algorithm_handle algorithm;
-    DWORD object_bytes = 0U;
-    DWORD result_bytes = 0U;
-    check_nt_status(
-        BCryptGetProperty(
-            algorithm.get(),
-            BCRYPT_OBJECT_LENGTH,
-            reinterpret_cast<PUCHAR>(&object_bytes),
-            sizeof(object_bytes),
-            &result_bytes,
-            0U),
-        "BCryptGetProperty object length failed");
-    DWORD hash_bytes = 0U;
-    check_nt_status(
-        BCryptGetProperty(
-            algorithm.get(),
-            BCRYPT_HASH_LENGTH,
-            reinterpret_cast<PUCHAR>(&hash_bytes),
-            sizeof(hash_bytes),
-            &result_bytes,
-            0U),
-        "BCryptGetProperty hash length failed");
+    return calculate_hash({prefix, json, binary_length, binary});
+}
 
-    std::vector<std::uint8_t> object(object_bytes);
-    std::vector<std::uint8_t> digest(hash_bytes);
-    hash_handle hash(algorithm.get(), object);
-    append_hash(hash.get(), prefix);
-    append_hash(hash.get(), json);
-    append_hash(hash.get(), binary_length);
-    append_hash(hash.get(), binary);
-    check_nt_status(
-        BCryptFinishHash(hash.get(), digest.data(), static_cast<ULONG>(digest.size()), 0U),
-        "BCryptFinishHash failed");
-    return to_lower_hex(digest);
+std::string calculate_sha256(const std::span<const std::uint8_t> bytes) {
+    return calculate_hash({bytes});
 }
 
 ipc_frame read_frame(byte_transport& transport) {

@@ -1,17 +1,25 @@
+#include "aviutl2_mcp/at_most_once_store.h"
 #include "aviutl2_mcp/bridge_identity.h"
 #include "aviutl2_mcp/bridge_runtime.h"
 #include "aviutl2_mcp/bridge_version.h"
+#include "aviutl2_mcp/cancellation_registry.h"
+#include "aviutl2_mcp/command_gate.h"
 #include "aviutl2_mcp/handshake.h"
 #include "aviutl2_mcp/instance_descriptor.h"
 #include "aviutl2_mcp/ipc_header.h"
+#include "aviutl2_mcp/locator_resolver.h"
 #include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
 #include "aviutl2_mcp/pipe_security.h"
+#include "aviutl2_mcp/request_dispatcher.h"
+#include "aviutl2_mcp/revision_tracker.h"
 
 #include <Windows.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -20,6 +28,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -132,6 +141,80 @@ public:
 
 private:
     std::filesystem::path path_;
+};
+
+[[nodiscard]] std::array<std::uint8_t, 16> create_uuid_v7_bytes(
+    const std::chrono::system_clock::time_point time,
+    const std::uint8_t discriminator = 1U) {
+    const auto milliseconds = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()).count());
+    std::array<std::uint8_t, 16> bytes{};
+    for (std::size_t index = 0U; index < 6U; ++index) {
+        bytes[5U - index] = static_cast<std::uint8_t>(milliseconds >> (index * 8U));
+    }
+    bytes[6] = 0x70U;
+    bytes[8] = 0x80U;
+    bytes[15] = discriminator;
+    return bytes;
+}
+
+[[nodiscard]] aviutl2_mcp::ipc_frame create_request_frame(
+    const std::array<std::uint8_t, 16>& request_id,
+    const std::string& method,
+    const std::string& correlation_id,
+    const std::string& params = "{}") {
+    const std::string json = "{\"method\":\"" + method
+        + "\",\"correlationId\":\"" + correlation_id
+        + "\",\"timeoutMs\":5000,\"dryRun\":false,\"params\":" + params + "}";
+    aviutl2_mcp::ipc_frame frame{
+        .header = aviutl2_mcp::frame_header{
+            .kind = aviutl2_mcp::message_kind::request,
+            .flags = aviutl2_mcp::frame_flags::none,
+            .request_id = request_id,
+            .json_length = static_cast<std::uint32_t>(json.size()),
+            .binary_length = 0U,
+        },
+        .json = {json.begin(), json.end()},
+        .binary = {},
+        .payload_hash = {},
+    };
+    frame.payload_hash = aviutl2_mcp::calculate_payload_hash(frame.header, frame.json, frame.binary);
+    return frame;
+}
+
+[[nodiscard]] std::string get_json(const aviutl2_mcp::ipc_frame& frame) {
+    return {frame.json.begin(), frame.json.end()};
+}
+
+class lambda_operation_handler final : public aviutl2_mcp::operation_handler {
+public:
+    using function_type = std::function<aviutl2_mcp::operation_result(
+        const aviutl2_mcp::operation_request&,
+        aviutl2_mcp::operation_execution_context&)>;
+
+    lambda_operation_handler(std::string operation, const bool is_mutating, function_type execute)
+        : operation_(std::move(operation)),
+          is_mutating_(is_mutating),
+          execute_(std::move(execute)) {}
+
+    [[nodiscard]] std::string operation() const override {
+        return operation_;
+    }
+
+    [[nodiscard]] bool is_mutating() const noexcept override {
+        return is_mutating_;
+    }
+
+    [[nodiscard]] aviutl2_mcp::operation_result execute(
+        const aviutl2_mcp::operation_request& request,
+        aviutl2_mcp::operation_execution_context& context) override {
+        return execute_(request, context);
+    }
+
+private:
+    std::string operation_;
+    bool is_mutating_;
+    function_type execute_;
 };
 
 void test_bridge_version() {
@@ -295,6 +378,17 @@ void test_named_pipe_handshake() {
     require(response_json.find("\"accepted\":true") != std::string::npos, "server rejected valid handshake");
     require(response_json.find(identity.server_epoch) != std::string::npos, "ServerHello omitted stable epoch");
 
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    aviutl2_mcp::ipc_frame unsupported_request = create_request_frame(
+        create_uuid_v7_bytes(std::chrono::system_clock::now(), 7U),
+        "status.missing",
+        correlation_id);
+    aviutl2_mcp::write_frame(transport, unsupported_request);
+    const aviutl2_mcp::ipc_frame unsupported_response = aviutl2_mcp::read_frame(transport);
+    require(
+        get_json(unsupported_response).find("operation_not_supported") != std::string::npos,
+        "established named pipe session did not route Request through dispatcher");
+
     aviutl2_mcp::ipc_frame close{
         .header = aviutl2_mcp::frame_header{
             .kind = aviutl2_mcp::message_kind::close,
@@ -329,6 +423,354 @@ void test_runtime_lifecycle() {
     runtime.stop();
 }
 
+void test_command_gate_serialization_and_shutdown() {
+    aviutl2_mcp::command_gate gate(1U);
+    std::promise<void> first_started;
+    std::promise<void> release_first;
+    std::shared_future<void> release_signal = release_first.get_future().share();
+    std::promise<void> first_completed;
+    std::atomic<int> cancelled_count = 0;
+
+    require(
+        gate.try_enqueue(
+            [&first_started, &release_signal, &first_completed] {
+                first_started.set_value();
+                release_signal.wait();
+                first_completed.set_value();
+            },
+            [] {}) == aviutl2_mcp::gate_enqueue_result::accepted,
+        "command gate rejected the first task");
+    require(
+        first_started.get_future().wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "command gate did not start its worker task");
+    require(
+        gate.try_enqueue([] {}, [&cancelled_count] { ++cancelled_count; })
+            == aviutl2_mcp::gate_enqueue_result::accepted,
+        "command gate rejected a queued task");
+    require(
+        gate.try_enqueue([] {}, [] {}) == aviutl2_mcp::gate_enqueue_result::busy,
+        "command gate did not enforce queue capacity");
+
+    std::future<void> stop = std::async(std::launch::async, [&gate] { gate.stop(); });
+    for (int attempt = 0; attempt < 200 && cancelled_count.load() == 0; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const bool was_queued_work_cancelled = cancelled_count.load() == 1;
+    release_first.set_value();
+    require(
+        first_completed.get_future().wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "command gate did not drain executing work");
+    require(stop.wait_for(std::chrono::seconds(2)) == std::future_status::ready, "command gate stop did not join");
+    require(was_queued_work_cancelled, "command gate did not cancel queued work during shutdown");
+}
+
+void test_cancellation_state_machine() {
+    aviutl2_mcp::cancellation_registry registry;
+    const auto before_commit = create_uuid_v7_bytes(std::chrono::system_clock::now(), 10U);
+    require(registry.register_request(before_commit), "cancellation registry rejected a new request");
+    require(registry.try_begin(before_commit), "cancellation registry did not begin queued request");
+    const auto cancelled = registry.cancel(before_commit);
+    require(
+        cancelled.status == aviutl2_mcp::cancel_status::cancelled && cancelled.response_will_follow,
+        "pre-commit cancellation did not return cancelled");
+    require(!registry.try_reach_commit_point(before_commit), "cancelled request reached commit point");
+    registry.complete(before_commit);
+
+    const auto after_commit = create_uuid_v7_bytes(std::chrono::system_clock::now(), 11U);
+    require(registry.register_request(after_commit), "cancellation registry rejected committed test request");
+    require(registry.try_begin(after_commit), "committed test request did not begin");
+    require(registry.try_reach_commit_point(after_commit), "request did not reach commit point");
+    const auto too_late = registry.cancel(after_commit);
+    require(
+        too_late.status == aviutl2_mcp::cancel_status::too_late && too_late.response_will_follow,
+        "post-commit cancellation did not return tooLate");
+    registry.complete(after_commit);
+    require(
+        registry.cancel(after_commit).status == aviutl2_mcp::cancel_status::not_found,
+        "completed request was still cancellable");
+}
+
+void test_at_most_once_store() {
+    using clock = aviutl2_mcp::at_most_once_store::clock;
+    const clock::time_point now = clock::time_point(std::chrono::milliseconds(1780000000000LL));
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    const std::string client_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    aviutl2_mcp::at_most_once_store store(
+        identity.server_epoch,
+        {.maximum_tombstones = 3U, .maximum_cached_responses = 1U, .maximum_response_bytes = 1024U},
+        [now] { return now; });
+    const std::array<std::uint8_t, 1> first_payload{1U};
+    const std::array<std::uint8_t, 1> second_payload{2U};
+    const std::string payload_hash = aviutl2_mcp::calculate_sha256(first_payload);
+
+    aviutl2_mcp::mutation_key first_key{identity.server_epoch, client_id, create_uuid_v7_bytes(now, 1U)};
+    const auto accepted = store.begin(first_key, payload_hash);
+    require(accepted.decision == aviutl2_mcp::mutation_begin_decision::accepted, "mutation was not accepted");
+    const auto attached = store.begin(first_key, payload_hash);
+    require(attached.decision == aviutl2_mcp::mutation_begin_decision::attach, "duplicate did not attach");
+    require(
+        store.begin(first_key, aviutl2_mcp::calculate_sha256(second_payload)).decision
+            == aviutl2_mcp::mutation_begin_decision::request_id_conflict,
+        "different payload reused a request ID");
+    store.mark_executing(accepted.token);
+    store.complete(accepted.token, "completed", "revision-1", "{\"ok\":true}");
+    const auto completed = store.wait_for_completion(attached.token, std::chrono::seconds(1));
+    require(completed.has_value() && completed->response_json.has_value(), "attached mutation missed completion");
+    require(
+        store.begin(first_key, payload_hash).decision == aviutl2_mcp::mutation_begin_decision::cached,
+        "completed mutation did not return cached response");
+
+    aviutl2_mcp::mutation_key second_key{identity.server_epoch, client_id, create_uuid_v7_bytes(now, 2U)};
+    const auto second = store.begin(second_key, payload_hash);
+    store.mark_executing(second.token);
+    store.complete(second.token, "completed", "revision-2", "{\"ok\":true,\"n\":2}");
+    require(
+        store.begin(first_key, payload_hash).decision == aviutl2_mcp::mutation_begin_decision::result_evicted,
+        "LRU eviction allowed mutation re-execution");
+
+    aviutl2_mcp::mutation_key third_key{identity.server_epoch, client_id, create_uuid_v7_bytes(now, 3U)};
+    require(
+        store.begin(third_key, payload_hash).decision == aviutl2_mcp::mutation_begin_decision::accepted,
+        "third tombstone was not accepted");
+    aviutl2_mcp::mutation_key fourth_key{identity.server_epoch, client_id, create_uuid_v7_bytes(now, 4U)};
+    require(
+        store.begin(fourth_key, payload_hash).decision == aviutl2_mcp::mutation_begin_decision::bridge_busy,
+        "full tombstone store did not return bridge_busy");
+    aviutl2_mcp::mutation_key expired_key{
+        identity.server_epoch,
+        client_id,
+        create_uuid_v7_bytes(now - std::chrono::minutes(11), 5U)};
+    require(
+        store.begin(expired_key, payload_hash).decision == aviutl2_mcp::mutation_begin_decision::request_expired,
+        "old UUIDv7 mutation was accepted");
+}
+
+void test_revision_tracker() {
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::revision_tracker tracker(identity.server_epoch);
+    const std::string initial_content = tracker.content_revision();
+    const std::string initial_view = tracker.view_revision();
+    require(tracker.matches_content(initial_content), "initial content revision did not match itself");
+    require(tracker.commit_content_change() != initial_content, "content commit did not advance revision");
+    require(tracker.view_revision() == initial_view, "content commit changed view revision");
+    const auto scene_revisions = tracker.commit_scene_change();
+    require(scene_revisions.first == tracker.content_revision(), "scene commit content revision mismatch");
+    require(scene_revisions.second == tracker.view_revision(), "scene commit view revision mismatch");
+
+    const std::string next_project = aviutl2_mcp::create_bridge_identity().instance_id;
+    tracker.reset_project(next_project);
+    require(tracker.project_generation() == next_project, "project generation did not reset");
+    require(!tracker.matches_content(initial_content), "old project revision remained valid");
+}
+
+void test_locator_resolution() {
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    const std::string project_generation = aviutl2_mcp::create_bridge_identity().instance_id;
+    const aviutl2_mcp::object_candidate candidate{
+        .scene_id = 0,
+        .layer = 2,
+        .start_frame = 10,
+        .end_frame = 39,
+        .name = "character",
+        .alias = {'[', 'O', 'b', 'j', 'e', 'c', 't', ']'},
+        .effects = {{"PSDToolKit", {{"characterId", "string"}, {"layerState", "string"}}}},
+    };
+    const aviutl2_mcp::object_locator locator = aviutl2_mcp::create_object_locator(
+        identity.instance_id,
+        project_generation,
+        candidate);
+    const std::array one_candidate{candidate};
+    const auto resolved = aviutl2_mcp::resolve_object_locator(
+        locator,
+        identity.instance_id,
+        project_generation,
+        one_candidate);
+    require(
+        resolved.status == aviutl2_mcp::locator_resolution_status::resolved
+            && resolved.candidate_index == 0U,
+        "unique locator did not resolve");
+
+    aviutl2_mcp::object_candidate changed = candidate;
+    changed.effects[0].items[0].type = "integer";
+    const std::array changed_candidate{changed};
+    require(
+        aviutl2_mcp::resolve_object_locator(
+            locator, identity.instance_id, project_generation, changed_candidate).status
+            == aviutl2_mcp::locator_resolution_status::not_found,
+        "effect signature mismatch resolved an object");
+    const std::array duplicates{candidate, candidate};
+    require(
+        aviutl2_mcp::resolve_object_locator(
+            locator, identity.instance_id, project_generation, duplicates).status
+            == aviutl2_mcp::locator_resolution_status::ambiguous,
+        "duplicate fingerprint was resolved by enumeration order");
+}
+
+void test_request_dispatcher_and_at_most_once() {
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    const std::string client_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    std::atomic<int> mutation_count = 0;
+    std::atomic<int> attached_count = 0;
+    auto attached_started = std::make_shared<std::promise<void>>();
+    auto attached_release = std::make_shared<std::promise<void>>();
+    std::shared_future<void> attached_release_signal = attached_release->get_future().share();
+    dispatcher.register_handler(std::make_unique<lambda_operation_handler>(
+        "status.echo",
+        false,
+        [](const aviutl2_mcp::operation_request& request, aviutl2_mcp::operation_execution_context& context) {
+            return aviutl2_mcp::operation_result{
+                .ok = true,
+                .outcome = "completed",
+                .result_json = request.params_json,
+                .error_code = {},
+                .error_message = {},
+                .revision = context.revisions().content_revision(),
+                .view_revision = context.revisions().view_revision(),
+            };
+        }));
+    dispatcher.register_handler(std::make_unique<lambda_operation_handler>(
+        "object.attach",
+        true,
+        [&attached_count, attached_started, attached_release_signal](
+            const aviutl2_mcp::operation_request&,
+            aviutl2_mcp::operation_execution_context& context) {
+            ++attached_count;
+            attached_started->set_value();
+            attached_release_signal.wait();
+            if (!context.reach_commit_point()) {
+                throw std::runtime_error("attached mutation was cancelled");
+            }
+            const std::string revision = context.revisions().commit_content_change();
+            return aviutl2_mcp::operation_result{
+                .ok = true,
+                .outcome = "completed",
+                .result_json = "{\"attached\":true}",
+                .error_code = {},
+                .error_message = {},
+                .revision = revision,
+                .view_revision = context.revisions().view_revision(),
+            };
+        }));
+    dispatcher.register_handler(std::make_unique<lambda_operation_handler>(
+        "object.mutate",
+        true,
+        [&mutation_count](const aviutl2_mcp::operation_request&, aviutl2_mcp::operation_execution_context& context) {
+            ++mutation_count;
+            if (!context.reach_commit_point()) {
+                throw std::runtime_error("mutation was cancelled");
+            }
+            const std::string revision = context.revisions().commit_content_change();
+            return aviutl2_mcp::operation_result{
+                .ok = true,
+                .outcome = "completed",
+                .result_json = "{\"changed\":true}",
+                .error_code = {},
+                .error_message = {},
+                .revision = revision,
+                .view_revision = context.revisions().view_revision(),
+            };
+        }));
+
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const auto read_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 21U);
+    const auto read_response = dispatcher.dispatch(
+        create_request_frame(read_id, "status.echo", correlation_id, "{\"value\":1}"),
+        client_id).get();
+    require(get_json(read_response).find("\"value\":1") != std::string::npos, "dispatcher did not route read handler");
+
+    const auto mutation_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 22U);
+    const auto mutation_frame = create_request_frame(mutation_id, "object.mutate", correlation_id);
+    const auto first = dispatcher.dispatch(mutation_frame, client_id).get();
+    const auto retry = dispatcher.dispatch(mutation_frame, client_id).get();
+    require(get_json(first) == get_json(retry), "mutation retry did not return identical cached response");
+    require(mutation_count.load() == 1, "mutation retry executed more than once");
+
+    const auto conflict = dispatcher.dispatch(
+        create_request_frame(mutation_id, "object.mutate", correlation_id, "{\"different\":true}"),
+        client_id).get();
+    require(
+        get_json(conflict).find("request_id_conflict") != std::string::npos,
+        "payload conflict was not rejected");
+
+    const auto attached_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 23U);
+    const auto attached_frame = create_request_frame(attached_id, "object.attach", correlation_id);
+    std::future<aviutl2_mcp::ipc_frame> original = dispatcher.dispatch(attached_frame, client_id);
+    require(
+        attached_started->get_future().wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "original attached mutation did not start");
+    std::future<aviutl2_mcp::ipc_frame> duplicate = dispatcher.dispatch(attached_frame, client_id);
+    attached_release->set_value();
+    require(
+        original.wait_for(std::chrono::seconds(2)) == std::future_status::ready
+            && duplicate.wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "attached mutation responses did not complete");
+    require(get_json(original.get()) == get_json(duplicate.get()), "attached retry response differed");
+    require(attached_count.load() == 1, "in-flight attached mutation executed twice");
+    dispatcher.stop();
+}
+
+void test_request_dispatcher_cancellation() {
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    const std::string client_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    auto started = std::make_shared<std::promise<void>>();
+    auto release = std::make_shared<std::promise<void>>();
+    std::shared_future<void> release_signal = release->get_future().share();
+    dispatcher.register_handler(std::make_unique<lambda_operation_handler>(
+        "object.cancel-before",
+        true,
+        [started, release_signal](
+            const aviutl2_mcp::operation_request&,
+            aviutl2_mcp::operation_execution_context& context) {
+            started->set_value();
+            release_signal.wait();
+            if (!context.reach_commit_point()) {
+                return aviutl2_mcp::operation_result{
+                    .ok = false,
+                    .outcome = "unchanged",
+                    .result_json = {},
+                    .error_code = "operation_cancelled",
+                    .error_message = "cancelled",
+                    .revision = context.revisions().content_revision(),
+                    .view_revision = context.revisions().view_revision(),
+                };
+            }
+            throw std::runtime_error("cancelled handler reached commit point");
+        }));
+
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const auto request_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 31U);
+    std::future<aviutl2_mcp::ipc_frame> response = dispatcher.dispatch(
+        create_request_frame(request_id, "object.cancel-before", correlation_id),
+        client_id);
+    require(
+        started->get_future().wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "cancellation handler did not start");
+    aviutl2_mcp::ipc_frame cancel_frame{
+        .header = aviutl2_mcp::frame_header{
+            .kind = aviutl2_mcp::message_kind::cancel,
+            .flags = aviutl2_mcp::frame_flags::none,
+            .request_id = request_id,
+            .json_length = 0U,
+            .binary_length = 0U,
+        },
+        .json = {},
+        .binary = {},
+        .payload_hash = {},
+    };
+    const auto ack = dispatcher.cancel(cancel_frame);
+    require(get_json(ack).find("\"status\":\"cancelled\"") != std::string::npos, "CancelAck was not cancelled");
+    release->set_value();
+    require(
+        response.wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "cancelled operation did not return its single final response");
+    require(
+        get_json(response.get()).find("operation_cancelled") != std::string::npos,
+        "cancelled operation returned success");
+    dispatcher.stop();
+}
+
 }  // namespace
 
 int main() {
@@ -342,6 +784,13 @@ int main() {
         std::pair{"handshake negotiation", &test_handshake_negotiation},
         std::pair{"named pipe handshake", &test_named_pipe_handshake},
         std::pair{"runtime lifecycle", &test_runtime_lifecycle},
+        std::pair{"command gate serialization and shutdown", &test_command_gate_serialization_and_shutdown},
+        std::pair{"cancellation state machine", &test_cancellation_state_machine},
+        std::pair{"at-most-once store", &test_at_most_once_store},
+        std::pair{"revision tracker", &test_revision_tracker},
+        std::pair{"locator resolution", &test_locator_resolution},
+        std::pair{"request dispatcher and at-most-once", &test_request_dispatcher_and_at_most_once},
+        std::pair{"request dispatcher cancellation", &test_request_dispatcher_cancellation},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
@@ -355,3 +804,5 @@ int main() {
     }
     return failures;
 }
+#include <functional>
+#include <future>

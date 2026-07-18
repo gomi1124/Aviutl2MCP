@@ -6,6 +6,10 @@
 
 #include <algorithm>
 #include <array>
+#include <condition_variable>
+#include <deque>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -111,6 +115,99 @@ private:
     HANDLE stop_event_;
 };
 
+class session_writer final {
+public:
+    session_writer(byte_transport& transport, const HANDLE pipe)
+        : transport_(transport),
+          pipe_(pipe),
+          worker_(&session_writer::run, this) {}
+
+    ~session_writer() {
+        close();
+    }
+
+    session_writer(const session_writer&) = delete;
+    session_writer& operator=(const session_writer&) = delete;
+
+    void enqueue(ipc_frame frame) {
+        {
+            std::scoped_lock lock(mutex_);
+            if (is_closed_) {
+                return;
+            }
+            queue_.push_back(std::move(frame));
+        }
+        condition_.notify_one();
+    }
+
+    void close() noexcept {
+        bool should_cancel = false;
+        {
+            std::scoped_lock lock(mutex_);
+            if (!is_closed_) {
+                is_closed_ = true;
+                queue_.clear();
+                should_cancel = true;
+            }
+        }
+        if (should_cancel) {
+            CancelIoEx(pipe_, nullptr);
+            condition_.notify_all();
+        }
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+    }
+
+private:
+    void run() noexcept {
+        while (true) {
+            ipc_frame frame;
+            {
+                std::unique_lock lock(mutex_);
+                condition_.wait(lock, [this] { return is_closed_ || !queue_.empty(); });
+                if (is_closed_) {
+                    return;
+                }
+                frame = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            try {
+                write_frame(transport_, frame);
+            } catch (const std::exception& exception) {
+                OutputDebugStringA("AviUtl2MCP session writer failed: ");
+                OutputDebugStringA(exception.what());
+                OutputDebugStringA("\n");
+                std::scoped_lock lock(mutex_);
+                is_closed_ = true;
+                queue_.clear();
+                return;
+            }
+        }
+    }
+
+    byte_transport& transport_;
+    HANDLE pipe_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    std::deque<ipc_frame> queue_;
+    bool is_closed_ = false;
+    std::thread worker_;
+};
+
+class session_writer_guard final {
+public:
+    explicit session_writer_guard(std::shared_ptr<session_writer> writer)
+        : writer_(std::move(writer)) {}
+
+    ~session_writer_guard() {
+        writer_->close();
+    }
+
+private:
+    std::shared_ptr<session_writer> writer_;
+};
+
 [[nodiscard]] std::vector<std::uint8_t> to_bytes(const std::string& value) {
     return {value.begin(), value.end()};
 }
@@ -119,7 +216,8 @@ private:
 
 named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_version)
     : identity_(std::move(identity)),
-      host_version_(std::move(host_version)) {}
+      host_version_(std::move(host_version)),
+      dispatcher_(identity_) {}
 
 named_pipe_server::~named_pipe_server() {
     stop();
@@ -165,6 +263,7 @@ void named_pipe_server::stop() noexcept {
     if (worker_.joinable()) {
         worker_.join();
     }
+    dispatcher_.stop();
     active_pipe_.store(nullptr);
     if (stop_event_ != nullptr) {
         CloseHandle(stop_event_);
@@ -179,6 +278,10 @@ bool named_pipe_server::is_running() const noexcept {
 std::optional<pipe_session_diagnostics> named_pipe_server::last_session() const {
     std::scoped_lock lock(diagnostics_mutex_);
     return last_session_;
+}
+
+request_dispatcher& named_pipe_server::dispatcher() noexcept {
+    return dispatcher_;
 }
 
 HANDLE named_pipe_server::create_pipe() const {
@@ -303,19 +406,48 @@ void named_pipe_server::serve_client(const HANDLE pipe) {
         return;
     }
 
+    auto writer = std::make_shared<session_writer>(transport, pipe);
+    session_writer_guard writer_guard(writer);
+    auto in_flight = std::make_shared<std::atomic<std::uint32_t>>(0U);
     while (is_running_.load()) {
         ipc_frame frame = read_frame(transport);
         if (frame.header.kind == message_kind::close) {
             return;
         }
-        if (frame.header.kind != message_kind::ping
-            || frame.header.flags != frame_flags::none
-            || !frame.binary.empty()) {
-            throw std::invalid_argument("unsupported frame received before dispatcher initialization");
+        if (frame.header.kind == message_kind::request) {
+            const std::uint32_t previous = in_flight->fetch_add(1U);
+            if (previous >= result.limits.in_flight) {
+                in_flight->fetch_sub(1U);
+                writer->enqueue(dispatcher_.reject_busy(frame));
+                continue;
+            }
+            try {
+                dispatcher_.dispatch_async(
+                    std::move(frame),
+                    hello.client_instance_id,
+                    [writer, in_flight](ipc_frame completed) {
+                        in_flight->fetch_sub(1U);
+                        writer->enqueue(std::move(completed));
+                    });
+            } catch (...) {
+                in_flight->fetch_sub(1U);
+                throw;
+            }
+            continue;
         }
-        frame.header.kind = message_kind::pong;
-        frame.payload_hash = calculate_payload_hash(frame.header, frame.json, frame.binary);
-        write_frame(transport, frame);
+        if (frame.header.kind == message_kind::cancel) {
+            writer->enqueue(dispatcher_.cancel(frame));
+            continue;
+        }
+        if (frame.header.kind == message_kind::ping
+            && frame.header.flags == frame_flags::none
+            && frame.binary.empty()) {
+            frame.header.kind = message_kind::pong;
+            frame.payload_hash = calculate_payload_hash(frame.header, frame.json, frame.binary);
+            writer->enqueue(std::move(frame));
+            continue;
+        }
+        throw std::invalid_argument("unsupported frame received in established session");
     }
 }
 

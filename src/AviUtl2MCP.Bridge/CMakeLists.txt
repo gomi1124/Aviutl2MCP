@@ -1,13 +1,19 @@
 add_library(AviUtl2MCP.Bridge.Core STATIC
+  src/at_most_once_store.cpp
   src/bridge_identity.cpp
   src/bridge_runtime.cpp
   src/bridge_version.cpp
+  src/cancellation_registry.cpp
+  src/command_gate.cpp
   src/handshake.cpp
   src/instance_descriptor.cpp
   src/ipc_header.cpp
+  src/locator_resolver.cpp
   src/named_pipe_server.cpp
   src/native_ipc_frame_codec.cpp
   src/pipe_security.cpp
+  src/request_dispatcher.cpp
+  src/revision_tracker.cpp
 )
 
 target_include_directories(AviUtl2MCP.Bridge.Core

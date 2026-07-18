@@ -1,6 +1,9 @@
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.Json;
 using AviUtl2MCP.BridgeClient.Discovery;
 using AviUtl2MCP.BridgeClient.Handshake;
+using AviUtl2MCP.BridgeClient.Protocol;
 using AviUtl2MCP.BridgeClient.Transport;
 
 namespace AviUtl2MCP.BridgeIntegrationTests;
@@ -51,6 +54,27 @@ public sealed class NativeBridgeInteropTests
             Assert.AreEqual(Environment.ProcessId, session.AviutlProcessId);
             Assert.AreEqual(descriptor.ProcessCreationTime, session.AviutlProcessCreationTime);
             Assert.AreNotEqual(Guid.Empty, session.ServerEpoch);
+
+            Guid requestId = Guid.CreateVersion7();
+            string requestJson = JsonSerializer.Serialize(new
+            {
+                method = "status.get",
+                correlationId = requestId,
+                timeoutMs = 5000,
+                dryRun = false,
+                @params = new { },
+            });
+            IpcEncodedFrame request = IpcFrameCodec.EncodeFrame(
+                IpcMessageKind.Request,
+                IpcFrameOption.None,
+                requestId,
+                Encoding.UTF8.GetBytes(requestJson),
+                []);
+            await transport.WriteAsync(request.Bytes, timeout.Token);
+            IpcFrame response = await IpcFrameCodec.DecodeFrameAsync(transport, timeout.Token);
+            Assert.AreEqual(requestId, response.Header.RequestId);
+            Assert.AreEqual(IpcFrameOption.ErrorResponse, response.Header.Flags);
+            StringAssert.Contains(Encoding.UTF8.GetString(response.JsonBytes.Span), "operation_not_supported");
         }
         finally
         {

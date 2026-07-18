@@ -8,7 +8,7 @@
 - 設計入力: [Phase 2設計書](design.md)、[Phase 3クラス図](class-diagram.md)
 - 完了証拠: [受け入れテスト対応表](acceptance-test-matrix.md)の33 AC
 - M1証拠: locked restore、C# 8 project build、native `.aux2` build、28 tool schema conformance、C#/C++ 40-byte header golden vector
-- M2進捗: 2026-07-19 WP2～WP3完了。WP4はW4.1～W4.5（plugin lifecycle、atomic descriptor、logon SID＋SYSTEM pipe ACL、native frame codec、PID照合handshake）まで完了。Native 9 checkと.NET 61 test（実`.aux2` load/C# named-pipe相互運用を含む）で検証済み。W4.6以降は実装中
+- M2進捗: 2026-07-19 WP2～WP4完了。plugin lifecycle、atomic descriptor、logon SID＋SYSTEM pipe ACL、frame/handshake、dispatcher、Command gate、cancel、at-most-once、revision、locatorを実装。Native 16 checkと.NET 61 test（実`.aux2` load/C# named-pipe相互運用を含む）で検証済み
 
 V1の28 tools、5 resources、4 promptsを削減せず実装する。各末端taskは原則15～60分の検証可能な単位とし、失敗時に層を特定できる順で進める。
 

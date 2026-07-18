@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aviutl2_mcp/bridge_identity.h"
+#include "aviutl2_mcp/request_dispatcher.h"
 
 #include <Windows.h>
 
@@ -32,6 +33,7 @@ public:
 
     [[nodiscard]] bool is_running() const noexcept;
     [[nodiscard]] std::optional<pipe_session_diagnostics> last_session() const;
+    [[nodiscard]] request_dispatcher& dispatcher() noexcept;
 
 private:
     [[nodiscard]] HANDLE create_pipe() const;
@@ -42,6 +44,7 @@ private:
 
     bridge_identity identity_;
     std::string host_version_;
+    request_dispatcher dispatcher_;
     HANDLE stop_event_ = nullptr;
     std::atomic<HANDLE> active_pipe_ = nullptr;
     std::atomic<bool> is_running_ = false;

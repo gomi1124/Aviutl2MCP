@@ -30,6 +30,7 @@ void write_frame(byte_transport& transport, const ipc_frame& frame);
     const frame_header& header,
     std::span<const std::uint8_t> json,
     std::span<const std::uint8_t> binary);
+[[nodiscard]] std::string calculate_sha256(std::span<const std::uint8_t> bytes);
 void validate_utf8(std::span<const std::uint8_t> bytes);
 
 }  // namespace aviutl2_mcp
