@@ -1,9 +1,9 @@
-# AviUtl2 MCP Phase 2 設計書（ドラフト）
+# AviUtl2 MCP Phase 2 設計書（承認済み）
 
 ## 1. 文書状態
 
 - フェーズ: Phase 2 設計
-- 状態: 敵対的レビュー済み・ユーザー承認待ち
+- 状態: ユーザー承認済み（2026-07-18）
 - 承認済み入力: [Phase 0 仕様書](specification.md)、[Phase 1 要件定義書](requirements.md)
 - 実現性根拠: [V1 実現性マトリクス](feasibility.md)
 - 対象環境: Windows 64-bit、AviUtl ExEdit2 2.1.0、PSDToolKit2、GCMZDrops
@@ -484,3 +484,5 @@ revision単体・統合テストでは連続2編集を同じ旧revisionで送信
 - 本書、[MCP API設計](mcp-api.md)、[IPCプロトコル設計](ipc-protocol.md)を敵対的レビューし、指摘を反映する。
 - 要件と設計判断のトレーサビリティを確認する。
 - ユーザー承認後、Phase 3のクラス図へ進む。
+
+Phase 3成果物は[クラス図](class-diagram.md)と[Phase 4実装計画](implementation-plan.md)に記録する。

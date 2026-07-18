@@ -4,7 +4,7 @@
 
 - フェーズ: Phase 1 要件定義
 - 状態: ユーザー承認済み（2026-07-18）
-- Phase 2追記: 複数インスタンス選択とat-most-once受入基準を明確化。Phase 2承認対象に含める
+- Phase 2追記: 複数インスタンス選択とat-most-once受入基準を明確化し、2026-07-18に承認済み
 - 前提仕様: [Phase 0 仕様書](specification.md)
 - 対象環境: Windows 64-bit、AviUtl ExEdit2 2.1.0
 
