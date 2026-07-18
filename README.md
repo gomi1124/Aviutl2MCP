@@ -2,6 +2,8 @@
 
 AviUtl ExEdit2 のタイムラインを Model Context Protocol (MCP) から参照・編集するためのプロジェクトです。
 
+Repository: <https://github.com/gomi1124/Aviutl2MCP>
+
 PSDToolKit2 と GCMZDrops が導入された Windows 環境を対象に、編集操作、PSD キャラクター制御、診断、自動テストを一体化します。
 
 ## 現在の状態

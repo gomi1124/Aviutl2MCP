@@ -182,5 +182,5 @@ PSDToolKit2 と GCMZDrops のローカルバイナリにはファイルバージ
 2026-07-18 に次の事項が承認された。
 
 1. 本仕様のV1範囲
-2. GitHubリポジトリ `tagomi/Aviutl2MCP` を public、MIT License で作成すること
+2. GitHubリポジトリ `gomi1124/Aviutl2MCP` を public、MIT License で作成すること
 3. ネイティブプラグイン構築用 Visual Studio C++ ワークロードの導入
