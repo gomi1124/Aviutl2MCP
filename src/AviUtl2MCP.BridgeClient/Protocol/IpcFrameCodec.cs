@@ -34,14 +34,22 @@ public static class IpcFrameCodec
     public static async ValueTask<IpcFrame> DecodeFrameAsync(Stream stream, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        return await DecodeFrameAsync(new StreamFrameReader(stream), cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async ValueTask<IpcFrame> DecodeFrameAsync(
+        IIpcFrameReader reader,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
         byte[] headerBytes = new byte[BridgeProtocol.HEADER_BYTES];
-        await ReadExactlyAsync(stream, headerBytes, cancellationToken).ConfigureAwait(false);
+        await reader.ReadExactAsync(headerBytes, cancellationToken).ConfigureAwait(false);
         IpcFrameHeader header = IpcHeaderCodec.DecodeHeader(headerBytes);
 
         byte[] jsonBytes = GC.AllocateUninitializedArray<byte>(checked((int)header.JsonLength));
         byte[] binaryBytes = GC.AllocateUninitializedArray<byte>(checked((int)header.BinaryLength));
-        await ReadExactlyAsync(stream, jsonBytes, cancellationToken).ConfigureAwait(false);
-        await ReadExactlyAsync(stream, binaryBytes, cancellationToken).ConfigureAwait(false);
+        await reader.ReadExactAsync(jsonBytes, cancellationToken).ConfigureAwait(false);
+        await reader.ReadExactAsync(binaryBytes, cancellationToken).ConfigureAwait(false);
         ValidateUtf8(jsonBytes);
         return new IpcFrame(
             header,
@@ -75,21 +83,21 @@ public static class IpcFrameCodec
         return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
-    private static async ValueTask ReadExactlyAsync(
-        Stream stream,
-        Memory<byte> buffer,
-        CancellationToken cancellationToken)
+    private sealed class StreamFrameReader(Stream stream) : IIpcFrameReader
     {
-        int bytesRead = 0;
-        while (bytesRead < buffer.Length)
+        public async ValueTask ReadExactAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         {
-            int read = await stream.ReadAsync(buffer[bytesRead..], cancellationToken).ConfigureAwait(false);
-            if (read == 0)
+            int bytesRead = 0;
+            while (bytesRead < buffer.Length)
             {
-                throw new EndOfStreamException($"IPC frame ended after {bytesRead} of {buffer.Length} required bytes.");
-            }
+                int read = await stream.ReadAsync(buffer[bytesRead..], cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    throw new EndOfStreamException($"IPC frame ended after {bytesRead} of {buffer.Length} required bytes.");
+                }
 
-            bytesRead = checked(bytesRead + read);
+                bytesRead = checked(bytesRead + read);
+            }
         }
     }
 
