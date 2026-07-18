@@ -6,7 +6,7 @@ PSDToolKit2 と GCMZDrops が導入された Windows 環境を対象に、編集
 
 ## 現在の状態
 
-Phase 0（仕様策定）のドラフトを作成済みで、ユーザー承認待ちです。実装内容は承認後の要件定義と設計で確定します。
+Phase 0（仕様策定）は承認済みです。現在は Phase 1（要件定義）を進めています。
 
 - [Phase 0 仕様書](docs/specification.md)
 
@@ -24,4 +24,4 @@ Phase 0（仕様策定）のドラフトを作成済みで、ユーザー承認�
 - PSDToolKit2
 - GCMZDrops
 
-ライセンスと GitHub リポジトリの公開範囲は未確定です。
+本プロジェクトは [MIT License](LICENSE) で公開します。
