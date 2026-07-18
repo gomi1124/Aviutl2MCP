@@ -79,6 +79,11 @@ public sealed class BridgeConnection : IBridgeConnection
             throw new ArgumentException("Bridge request method or params were invalid.", nameof(request));
         }
 
+        if (deadline <= DateTimeOffset.UtcNow)
+        {
+            throw new TimeoutException("Bridge request deadline has already elapsed.");
+        }
+
         if (!IsConnected || requestTracker is null)
         {
             throw new IOException("Bridge connection is not available.");
@@ -186,6 +191,16 @@ public sealed class BridgeConnection : IBridgeConnection
         if (envelope.Ok == hasErrorFlag || (envelope.Ok ? envelope.Error is not null : envelope.Error is null))
         {
             throw new InvalidDataException("Bridge response success state and error fields were inconsistent.");
+        }
+
+        if (envelope.Error is not null
+            && (string.IsNullOrWhiteSpace(envelope.Error.Code)
+                || string.IsNullOrWhiteSpace(envelope.Error.Message)
+                || string.IsNullOrWhiteSpace(envelope.Error.Phase)
+                || string.IsNullOrWhiteSpace(envelope.Error.Outcome)
+                || envelope.Error.Details.ValueKind != JsonValueKind.Object))
+        {
+            throw new InvalidDataException("Bridge response error fields were invalid.");
         }
 
         return new BridgeResponse(envelope, frame);

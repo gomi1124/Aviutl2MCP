@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using AviUtl2MCP.Application.Serialization;
@@ -135,6 +136,93 @@ public sealed class BridgeConnectionMessagingTests
         Assert.IsTrue(connection.IsConnected);
     }
 
+    [TestMethod]
+    public async Task RegistryReconnectsSameDescriptorAfterBridgeDisconnect()
+    {
+        // Arrange
+        string directoryPath = CreateTestDirectory();
+        try
+        {
+            Guid instanceId = Guid.NewGuid();
+            Guid firstEpoch = Guid.NewGuid();
+            Guid secondEpoch = Guid.NewGuid();
+            string pipeName = $"AviUtl2MCP.v1.{instanceId:D}";
+            long processCreationTime = GetCurrentProcessCreationTime();
+            WriteDescriptor(directoryPath, instanceId, pipeName, processCreationTime);
+            InstanceDescriptorWatcher watcher = new(directoryPath);
+            BridgeConnectionFactory factory = new(Guid.NewGuid(), "0.1.0-test");
+            await using BridgeConnectionRegistry registry = new(watcher, factory);
+            TaskCompletionSource closeFirst = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(5));
+            Task firstServer = RunHandshakeUntilCloseAsync(
+                pipeName,
+                instanceId,
+                firstEpoch,
+                processCreationTime,
+                closeFirst.Task,
+                timeout.Token);
+            IBridgeConnection first = await registry.GetConnectionAsync(instanceId, timeout.Token);
+            Guid observedFirstEpoch = first.SessionInfo.ServerEpoch;
+
+            // Act
+            closeFirst.SetResult();
+            await firstServer;
+            await WaitForDisconnectAsync(first, timeout.Token);
+            TaskCompletionSource closeSecond = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task secondServer = RunHandshakeUntilCloseAsync(
+                pipeName,
+                instanceId,
+                secondEpoch,
+                processCreationTime,
+                closeSecond.Task,
+                timeout.Token);
+            IBridgeConnection second = await registry.GetConnectionAsync(instanceId, timeout.Token);
+
+            // Assert
+            Assert.AreNotSame(first, second);
+            Assert.AreEqual(firstEpoch, observedFirstEpoch);
+            Assert.AreEqual(secondEpoch, second.SessionInfo.ServerEpoch);
+            Assert.IsTrue(second.IsConnected);
+            closeSecond.SetResult();
+            await secondServer;
+        }
+        finally
+        {
+            DeleteTestDirectory(directoryPath);
+        }
+    }
+
+    [TestMethod]
+    public async Task PendingRequestFailsWhenBridgeClosesConnection()
+    {
+        // Arrange
+        Guid instanceId = Guid.NewGuid();
+        string pipeName = $"AviUtl2MCP.close.{Guid.NewGuid():N}";
+        await using NamedPipeServerStream server = CreateServer(pipeName);
+        BridgeInstanceDescriptor descriptor = new(instanceId, 1234, 5678, pipeName, "0.1.0-test", 1);
+        await using BridgeConnection connection = new(
+            descriptor,
+            new NamedPipeBridgeTransport(),
+            Guid.NewGuid(),
+            "0.1.0-test");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(5));
+        Task fakeBridge = CloseAfterRequestAsync(server, instanceId, timeout.Token);
+        await connection.HandshakeAsync(timeout.Token);
+        BridgeRequest request = CreateRequest("project.get");
+
+        // Act
+        Func<Task> send = async () => await connection.SendAsync(
+            request,
+            ReadOnlyMemory<byte>.Empty,
+            DateTimeOffset.UtcNow.AddSeconds(5),
+            timeout.Token);
+
+        // Assert
+        await Assert.ThrowsExactlyAsync<EndOfStreamException>(send);
+        await fakeBridge;
+        Assert.IsFalse(connection.IsConnected);
+    }
+
     private static async Task RunOutOfOrderBridgeAsync(
         NamedPipeServerStream server,
         Guid instanceId,
@@ -159,6 +247,44 @@ public sealed class BridgeConnectionMessagingTests
             cancellationToken);
     }
 
+    private static async Task RunHandshakeUntilCloseAsync(
+        string pipeName,
+        Guid instanceId,
+        Guid serverEpoch,
+        long processCreationTime,
+        Task closeSignal,
+        CancellationToken cancellationToken)
+    {
+        await using NamedPipeServerStream server = CreateServer(pipeName);
+        await server.WaitForConnectionAsync(cancellationToken);
+        IpcFrame hello = await IpcFrameCodec.DecodeFrameAsync(server, cancellationToken);
+        ServerHello response = new(
+            true,
+            instanceId,
+            serverEpoch,
+            Environment.ProcessId,
+            processCreationTime,
+            new NegotiatedProtocol(1, 0),
+            new BridgeVersions("0.1.0", "2.1.0", "2.1.0"),
+            new HandshakeLimits(1024 * 1024, 1024 * 1024, 8),
+            CreateJsonElement("{}"));
+        await WriteFrameAsync(
+            server,
+            IpcMessageKind.ServerHello,
+            hello.Header.RequestId,
+            ContractJsonSerializer.SerializeContract(response),
+            IpcFrameOption.None,
+            cancellationToken);
+        await closeSignal.WaitAsync(cancellationToken);
+        await WriteFrameAsync(
+            server,
+            IpcMessageKind.Close,
+            Guid.Empty,
+            "{}",
+            IpcFrameOption.None,
+            cancellationToken);
+    }
+
     private static async Task<IpcFrame> AcceptRequestAndTimeoutCancelAsync(
         NamedPipeServerStream server,
         Guid instanceId,
@@ -169,6 +295,22 @@ public sealed class BridgeConnectionMessagingTests
         IpcFrame cancel = await IpcFrameCodec.DecodeFrameAsync(server, cancellationToken);
         Assert.AreEqual(request.Header.RequestId, cancel.Header.RequestId);
         return cancel;
+    }
+
+    private static async Task CloseAfterRequestAsync(
+        NamedPipeServerStream server,
+        Guid instanceId,
+        CancellationToken cancellationToken)
+    {
+        await AcceptHandshakeAsync(server, instanceId, cancellationToken);
+        _ = await IpcFrameCodec.DecodeFrameAsync(server, cancellationToken);
+        await WriteFrameAsync(
+            server,
+            IpcMessageKind.Close,
+            Guid.Empty,
+            "{}",
+            IpcFrameOption.None,
+            cancellationToken);
     }
 
     private static async Task<Guid> RunCancellationBridgeAsync(
@@ -279,6 +421,58 @@ public sealed class BridgeConnectionMessagingTests
     {
         using JsonDocument document = JsonDocument.Parse(json);
         return document.RootElement.Clone();
+    }
+
+    private static async Task WaitForDisconnectAsync(
+        IBridgeConnection connection,
+        CancellationToken cancellationToken)
+    {
+        while (connection.IsConnected)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+        }
+    }
+
+    private static string CreateTestDirectory()
+    {
+        string path = Path.Combine(
+            Path.GetTempPath(),
+            "AviUtl2MCP.ReconnectTests",
+            Guid.NewGuid().ToString("N"));
+        _ = Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static void DeleteTestDirectory(string directoryPath)
+    {
+        if (Directory.Exists(directoryPath))
+        {
+            Directory.Delete(directoryPath, recursive: true);
+        }
+    }
+
+    private static long GetCurrentProcessCreationTime()
+    {
+        using Process process = Process.GetCurrentProcess();
+        return process.StartTime.ToUniversalTime().ToFileTimeUtc();
+    }
+
+    private static void WriteDescriptor(
+        string directoryPath,
+        Guid instanceId,
+        string pipeName,
+        long processCreationTime)
+    {
+        InstanceDescriptorDocument descriptor = new(
+            instanceId,
+            Environment.ProcessId,
+            processCreationTime,
+            pipeName,
+            "0.1.0-test",
+            1);
+        File.WriteAllText(
+            Path.Combine(directoryPath, $"{instanceId:D}.json"),
+            ContractJsonSerializer.SerializeContract(descriptor));
     }
 
     private static NamedPipeServerStream CreateServer(string pipeName)

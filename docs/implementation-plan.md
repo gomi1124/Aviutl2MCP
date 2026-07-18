@@ -8,7 +8,7 @@
 - 設計入力: [Phase 2設計書](design.md)、[Phase 3クラス図](class-diagram.md)
 - 完了証拠: [受け入れテスト対応表](acceptance-test-matrix.md)の33 AC
 - M1証拠: locked restore、C# 8 project build、native `.aux2` build、28 tool schema conformance、C#/C++ 40-byte header golden vector
-- M2進捗: 2026-07-19 WP2、W3.1～W3.6完了、W3.8実装中。実named pipe、handshake、in-flight/cancel相関、stale descriptor/registry、fake bridge逆順応答を.NET 56 testで検証済み。W3.7、W3.8再接続とWP4 Native Bridge基盤は実装中
+- M2進捗: 2026-07-19 WP2～WP3完了。実named pipe、handshake、5 domain gateway、in-flight/cancel相関、stale descriptor/registry、fake bridge逆順応答・切断・再接続を.NET 60 testで検証済み。WP4 Native Bridge基盤は実装中
 
 V1の28 tools、5 resources、4 promptsを削減せず実装する。各末端taskは原則15～60分の検証可能な単位とし、失敗時に層を特定できる順で進める。
 
