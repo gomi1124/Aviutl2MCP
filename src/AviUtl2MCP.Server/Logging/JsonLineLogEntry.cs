@@ -7,6 +7,10 @@ public sealed record JsonLineLogEntry(
     int EventId,
     string? EventName,
     string? CorrelationId,
+    string? InstanceId,
+    string? Operation,
+    double? DurationMs,
+    string? ResultCode,
     string Message,
     IReadOnlyDictionary<string, string?> Properties,
     string? Exception);

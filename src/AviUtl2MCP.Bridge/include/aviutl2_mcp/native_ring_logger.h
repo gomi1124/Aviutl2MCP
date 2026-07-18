@@ -29,7 +29,19 @@ struct native_log_entry final {
     std::string component;
     std::string event_id;
     std::optional<std::string> correlation_id;
+    std::optional<std::string> instance_id;
+    std::optional<std::string> operation;
+    std::optional<double> duration_ms;
+    std::optional<std::string> result_code;
     std::string message;
+};
+
+struct native_log_context final {
+    std::optional<std::string_view> correlation_id;
+    std::optional<std::string_view> instance_id;
+    std::optional<std::string_view> operation;
+    std::optional<double> duration_ms;
+    std::optional<std::string_view> result_code;
 };
 
 struct native_log_query final {
@@ -60,7 +72,7 @@ public:
         std::string_view component,
         std::string_view event_id,
         std::string_view message,
-        std::optional<std::string_view> correlation_id = std::nullopt) noexcept;
+        native_log_context context = {}) noexcept;
 
     [[nodiscard]] native_log_snapshot snapshot(const native_log_query& query) const;
     [[nodiscard]] std::size_t capacity() const noexcept;

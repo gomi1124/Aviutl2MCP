@@ -755,6 +755,17 @@ void test_request_dispatcher_and_at_most_once() {
             return entry.event_id == "request.completed" || entry.event_id == "request.rejected";
         }),
         "dispatcher did not record a correlated request outcome");
+    const auto completed_log = std::ranges::find_if(
+        correlation_logs.entries,
+        [](const aviutl2_mcp::native_log_entry& entry) {
+            return entry.event_id == "request.completed";
+        });
+    require(completed_log != correlation_logs.entries.end(), "dispatcher completion log was missing");
+    require(completed_log->instance_id == identity.instance_id, "dispatcher log omitted the instance ID");
+    require(completed_log->operation.has_value(), "dispatcher log omitted the operation");
+    require(completed_log->duration_ms.has_value() && *completed_log->duration_ms >= 0.0,
+        "dispatcher log omitted the duration");
+    require(completed_log->result_code == "ok", "dispatcher log omitted the result code");
     dispatcher.stop();
 }
 
@@ -839,19 +850,25 @@ void test_native_ring_logger_and_host_sink() {
         "dispatcher",
         "request.accepted",
         "token=alpha accepted",
-        "correlation-one");
+        {.correlation_id = "correlation-one"});
     logger.write(
         aviutl2_mcp::native_log_level::warning,
         "dispatcher",
         "request.failed",
         "password: beta",
-        "correlation-two");
+        {
+            .correlation_id = "correlation-two",
+            .instance_id = "instance-one",
+            .operation = "object.move",
+            .duration_ms = 9.5,
+            .result_code = "revision_conflict",
+        });
     logger.write(
         aviutl2_mcp::native_log_level::error,
         "runtime",
         "bridge.failed",
         "Bearer gamma",
-        "correlation-two");
+        {.correlation_id = "correlation-two"});
 
     aviutl2_mcp::native_log_snapshot complete = logger.snapshot({.limit = 10U});
     require(logger.capacity() == 2U, "native log capacity changed");
@@ -860,6 +877,10 @@ void test_native_ring_logger_and_host_sink() {
     require(complete.entries[0].sequence == 2U && complete.entries[1].sequence == 3U,
         "native log sequence was not monotonic");
     require(complete.entries[0].source == "bridge", "native log source was incorrect");
+    require(complete.entries[0].instance_id == "instance-one", "native log omitted the instance ID");
+    require(complete.entries[0].operation == "object.move", "native log omitted the operation");
+    require(complete.entries[0].duration_ms == 9.5, "native log omitted the duration");
+    require(complete.entries[0].result_code == "revision_conflict", "native log omitted the result code");
     require(complete.entries[0].message.find("beta") == std::string::npos,
         "native log retained a password");
     require(complete.entries[1].message.find("gamma") == std::string::npos,
@@ -902,6 +923,8 @@ void test_native_ring_logger_and_host_sink() {
             "host logger retained a secret");
         require(HOST_LOG_MESSAGES[2].second.find(L"correlationId=correlation-two") != std::wstring::npos,
             "host logger omitted the correlation ID");
+        require(HOST_LOG_MESSAGES[1].second.find(L"operation=object.move") != std::wstring::npos,
+            "host logger omitted the operation");
     }
 
     logger.attach(nullptr);

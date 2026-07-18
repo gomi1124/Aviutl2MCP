@@ -124,7 +124,11 @@ std::future<ipc_frame> request_dispatcher::dispatch(
         "dispatcher",
         "request.received",
         "method=" + request.method,
-        request.correlation_id);
+        native_log_context{
+            .correlation_id = request.correlation_id,
+            .instance_id = identity_.instance_id,
+            .operation = request.method,
+        });
 
     operation_handler* handler = nullptr;
     {
@@ -544,6 +548,7 @@ operation_request request_dispatcher::parse_request(const ipc_frame& frame) cons
         .dry_run = document.value("dryRun", false),
         .params_json = document.at("params").dump(),
         .binary = frame.binary,
+        .received_at = std::chrono::steady_clock::now(),
     };
     if (document.contains("expectedRevision") && !document.at("expectedRevision").is_null()) {
         request.expected_revision = document.at("expectedRevision").get<std::string>();
@@ -586,12 +591,20 @@ ipc_frame request_dispatcher::create_response_frame(
         };
     }
     ipc_frame response = create_frame_from_json(request.request_id, document.dump());
+    const double duration_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - request.received_at).count();
     get_native_logger().write(
         result.ok ? native_log_level::information : native_log_level::warning,
         "dispatcher",
         result.ok ? "request.completed" : "request.failed",
         "method=" + request.method + " outcome=" + result.outcome,
-        request.correlation_id);
+        native_log_context{
+            .correlation_id = request.correlation_id,
+            .instance_id = identity_.instance_id,
+            .operation = request.method,
+            .duration_ms = duration_ms,
+            .result_code = result.ok ? std::string_view("ok") : std::string_view(result.error_code),
+        });
     return response;
 }
 
@@ -631,7 +644,11 @@ ipc_frame request_dispatcher::create_error_frame(
         "dispatcher",
         "request.rejected",
         "code=" + code + " outcome=" + outcome,
-        correlation_id);
+        native_log_context{
+            .correlation_id = correlation_id,
+            .instance_id = identity_.instance_id,
+            .result_code = code,
+        });
     return response;
 }
 

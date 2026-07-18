@@ -415,7 +415,11 @@ void named_pipe_server::serve_client(const HANDLE pipe) {
         result.accepted ? "handshake.accepted" : "handshake.rejected",
         "clientProcessId=" + std::to_string(client_process_id)
             + " clientSessionId=" + std::to_string(client_session_id)
-            + " clientInstanceId=" + hello.client_instance_id);
+            + " clientInstanceId=" + hello.client_instance_id,
+        native_log_context{
+            .instance_id = identity_.instance_id,
+            .result_code = result.accepted ? std::string_view("accepted") : std::string_view("rejected"),
+        });
     if (!result.accepted) {
         return;
     }
@@ -430,7 +434,11 @@ void named_pipe_server::serve_client(const HANDLE pipe) {
                 native_log_level::information,
                 "pipe",
                 "session.closed",
-                "clientInstanceId=" + hello.client_instance_id);
+                "clientInstanceId=" + hello.client_instance_id,
+                native_log_context{
+                    .instance_id = identity_.instance_id,
+                    .result_code = "closed",
+                });
             return;
         }
         if (frame.header.kind == message_kind::request) {

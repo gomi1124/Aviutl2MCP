@@ -28,7 +28,7 @@ public sealed class JsonLineLoggerProvider : ILoggerProvider, ISupportExternalSc
             : Path.GetFullPath(configuredDirectory);
 
         return new JsonLineLoggerProvider(
-            Path.Combine(logDirectory, "server.jsonl"),
+            Path.Combine(logDirectory, $"server-{Environment.ProcessId}.jsonl"),
             Console.Error);
     }
 
@@ -78,13 +78,11 @@ public sealed class JsonLineLoggerProvider : ILoggerProvider, ISupportExternalSc
             ArgumentNullException.ThrowIfNull(formatter);
 
             Dictionary<string, string?> properties = new(StringComparer.Ordinal);
-            LogPropertyCollector scopeCollector = new(properties, correlationId: null);
+            LogPropertyCollector collector = new(properties);
             _getScopeProvider().ForEachScope(
-                (scope, collector) => CollectProperties(scope, collector.Properties, ref collector.CorrelationId),
-                scopeCollector);
-
-            LogPropertyCollector stateCollector = new(properties, scopeCollector.CorrelationId);
-            CollectProperties(state, stateCollector.Properties, ref stateCollector.CorrelationId);
+                (scope, propertyCollector) => CollectProperties(scope, propertyCollector),
+                collector);
+            CollectProperties(state, collector);
 
             JsonLineLogEntry entry = new(
                 _timeProvider.GetUtcNow(),
@@ -92,7 +90,11 @@ public sealed class JsonLineLoggerProvider : ILoggerProvider, ISupportExternalSc
                 _component,
                 eventId.Id,
                 eventId.Name,
-                stateCollector.CorrelationId,
+                collector.CorrelationId,
+                collector.InstanceId,
+                collector.Operation,
+                collector.DurationMs,
+                collector.ResultCode,
                 LogSecretMasker.MaskText(formatter(state, exception)) ?? string.Empty,
                 properties,
                 LogSecretMasker.MaskText(exception?.ToString()));
@@ -101,8 +103,7 @@ public sealed class JsonLineLoggerProvider : ILoggerProvider, ISupportExternalSc
 
         private static void CollectProperties(
             object? state,
-            IDictionary<string, string?> properties,
-            ref string? correlationId)
+            LogPropertyCollector collector)
         {
             if (state is not IEnumerable<KeyValuePair<string, object?>> values)
             {
@@ -118,21 +119,52 @@ public sealed class JsonLineLoggerProvider : ILoggerProvider, ISupportExternalSc
 
                 if (string.Equals(value.Key, "correlationId", StringComparison.OrdinalIgnoreCase))
                 {
-                    correlationId = value.Value?.ToString();
+                    collector.CorrelationId = value.Value?.ToString();
+                    continue;
+                }
+                if (string.Equals(value.Key, "instanceId", StringComparison.OrdinalIgnoreCase))
+                {
+                    collector.InstanceId = value.Value?.ToString();
+                    continue;
+                }
+                if (string.Equals(value.Key, "operation", StringComparison.OrdinalIgnoreCase))
+                {
+                    collector.Operation = value.Value?.ToString();
+                    continue;
+                }
+                if (string.Equals(value.Key, "durationMs", StringComparison.OrdinalIgnoreCase)
+                    && double.TryParse(
+                        Convert.ToString(value.Value, System.Globalization.CultureInfo.InvariantCulture),
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double durationMs))
+                {
+                    collector.DurationMs = durationMs;
+                    continue;
+                }
+                if (string.Equals(value.Key, "resultCode", StringComparison.OrdinalIgnoreCase))
+                {
+                    collector.ResultCode = value.Value?.ToString();
                     continue;
                 }
 
-                properties[value.Key] = LogSecretMasker.MaskValue(value.Key, value.Value);
+                collector.Properties[value.Key] = LogSecretMasker.MaskValue(value.Key, value.Value);
             }
         }
 
-        private sealed class LogPropertyCollector(
-            IDictionary<string, string?> properties,
-            string? correlationId)
+        private sealed class LogPropertyCollector(IDictionary<string, string?> properties)
         {
             public IDictionary<string, string?> Properties { get; } = properties;
 
-            public string? CorrelationId = correlationId;
+            public string? CorrelationId { get; set; }
+
+            public string? InstanceId { get; set; }
+
+            public string? Operation { get; set; }
+
+            public double? DurationMs { get; set; }
+
+            public string? ResultCode { get; set; }
         }
     }
 }

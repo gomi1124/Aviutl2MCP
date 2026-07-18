@@ -7,11 +7,11 @@ namespace AviUtl2MCP.StdioTests;
 [TestClass]
 public sealed class JsonLineLoggerTests
 {
-    private static readonly Action<ILogger, string, Exception?> LogCompletedOperation =
-        LoggerMessage.Define<string>(
+    private static readonly Action<ILogger, string, double, string, Exception?> LogCompletedOperation =
+        LoggerMessage.Define<string, double, string>(
             LogLevel.Information,
             new EventId(1201, "request.completed"),
-            "Operation completed with token={Token}");
+            "Operation completed with token={Token} durationMs={DurationMs} resultCode={ResultCode}");
 
     [TestMethod]
     public void WritePreservesCorrelationAndMasksSecretsInBothDestinations()
@@ -42,11 +42,13 @@ public sealed class JsonLineLoggerTests
                 using (logger.BeginScope(new Dictionary<string, object?>
                        {
                            ["correlationId"] = "019beabc-49b0-7000-8000-000000000001",
+                           ["instanceId"] = "019beabc-49b0-7000-8000-000000000002",
+                           ["operation"] = "status.get",
                            ["authorization"] = "Bearer scope-secret",
                        }))
                 {
                     // Act
-                    LogCompletedOperation(logger, "message-secret", null);
+                    LogCompletedOperation(logger, "message-secret", 12.5, "ok", null);
                 }
             }
 
@@ -67,11 +69,50 @@ public sealed class JsonLineLoggerTests
             Assert.AreEqual(
                 "019beabc-49b0-7000-8000-000000000001",
                 root.GetProperty("correlationId").GetString());
+            Assert.AreEqual(
+                "019beabc-49b0-7000-8000-000000000002",
+                root.GetProperty("instanceId").GetString());
+            Assert.AreEqual("status.get", root.GetProperty("operation").GetString());
+            Assert.AreEqual(12.5, root.GetProperty("durationMs").GetDouble());
+            Assert.AreEqual("ok", root.GetProperty("resultCode").GetString());
             Assert.AreEqual("[REDACTED]", root.GetProperty("properties").GetProperty("authorization").GetString());
             Assert.AreEqual("[REDACTED]", root.GetProperty("properties").GetProperty("Token").GetString());
         }
         finally
         {
+            if (Directory.Exists(temporaryDirectory))
+            {
+                Directory.Delete(temporaryDirectory, recursive: true);
+            }
+        }
+    }
+
+    [TestMethod]
+    [DoNotParallelize]
+    public void CreateDefaultUsesProcessScopedJsonLineFile()
+    {
+        // Arrange
+        string temporaryDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "AviUtl2MCP.Tests",
+            Guid.NewGuid().ToString("N"));
+        string? originalDirectory = Environment.GetEnvironmentVariable("AVIUTL2_MCP_LOG_DIRECTORY");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("AVIUTL2_MCP_LOG_DIRECTORY", temporaryDirectory);
+
+            // Act
+            using JsonLineLoggerProvider provider = JsonLineLoggerProvider.CreateDefault();
+
+            // Assert
+            Assert.IsTrue(File.Exists(Path.Combine(
+                temporaryDirectory,
+                $"server-{Environment.ProcessId}.jsonl")));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AVIUTL2_MCP_LOG_DIRECTORY", originalDirectory);
             if (Directory.Exists(temporaryDirectory))
             {
                 Directory.Delete(temporaryDirectory, recursive: true);

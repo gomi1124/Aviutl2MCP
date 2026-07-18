@@ -186,7 +186,7 @@ void native_ring_logger::write(
     const std::string_view component,
     const std::string_view event_id,
     const std::string_view message,
-    const std::optional<std::string_view> correlation_id) noexcept {
+    const native_log_context context) noexcept {
     try {
         if (component.empty() || event_id.empty()) {
             throw std::invalid_argument("native log component and event ID must not be empty");
@@ -197,8 +197,20 @@ void native_ring_logger::write(
         const std::string ring_message = wide_to_utf8(ring_message_wide);
         std::wstring host_message = L"[AviUtl2MCP][" + utf8_to_wide(component) + L"]["
             + utf8_to_wide(event_id) + L"]";
-        if (correlation_id.has_value() && !correlation_id->empty()) {
-            host_message += L"[correlationId=" + utf8_to_wide(*correlation_id) + L"]";
+        if (context.correlation_id.has_value() && !context.correlation_id->empty()) {
+            host_message += L"[correlationId=" + utf8_to_wide(*context.correlation_id) + L"]";
+        }
+        if (context.instance_id.has_value() && !context.instance_id->empty()) {
+            host_message += L"[instanceId=" + utf8_to_wide(*context.instance_id) + L"]";
+        }
+        if (context.operation.has_value() && !context.operation->empty()) {
+            host_message += L"[operation=" + utf8_to_wide(*context.operation) + L"]";
+        }
+        if (context.duration_ms.has_value()) {
+            host_message += L"[durationMs=" + utf8_to_wide(std::to_string(*context.duration_ms)) + L"]";
+        }
+        if (context.result_code.has_value() && !context.result_code->empty()) {
+            host_message += L"[resultCode=" + utf8_to_wide(*context.result_code) + L"]";
         }
         host_message += L" " + ring_message_wide;
         host_message = truncate_message(std::move(host_message));
@@ -210,8 +222,18 @@ void native_ring_logger::write(
             .source = "bridge",
             .component = std::string(component),
             .event_id = std::string(event_id),
-            .correlation_id = correlation_id.has_value() && !correlation_id->empty()
-                ? std::make_optional(std::string(*correlation_id))
+            .correlation_id = context.correlation_id.has_value() && !context.correlation_id->empty()
+                ? std::make_optional(std::string(*context.correlation_id))
+                : std::nullopt,
+            .instance_id = context.instance_id.has_value() && !context.instance_id->empty()
+                ? std::make_optional(std::string(*context.instance_id))
+                : std::nullopt,
+            .operation = context.operation.has_value() && !context.operation->empty()
+                ? std::make_optional(std::string(*context.operation))
+                : std::nullopt,
+            .duration_ms = context.duration_ms,
+            .result_code = context.result_code.has_value() && !context.result_code->empty()
+                ? std::make_optional(std::string(*context.result_code))
                 : std::nullopt,
             .message = ring_message,
         };

@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <future>
 #include <memory>
@@ -30,6 +31,7 @@ struct operation_request final {
     bool dry_run;
     std::string params_json;
     std::vector<std::uint8_t> binary;
+    std::chrono::steady_clock::time_point received_at;
 };
 
 struct operation_result final {

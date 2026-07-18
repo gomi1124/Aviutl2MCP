@@ -48,14 +48,19 @@ bool bridge_runtime::start(const std::uint32_t host_version) noexcept {
             native_log_level::information,
             "runtime",
             "bridge.started",
-            "Bridge started with hostVersion=" + std::to_string(host_version));
+            "Bridge started with hostVersion=" + std::to_string(host_version),
+            native_log_context{
+                .instance_id = identity_->instance_id,
+                .result_code = "ok",
+            });
         return true;
     } catch (const std::exception& exception) {
         get_native_logger().write(
             native_log_level::error,
             "runtime",
             "bridge.start_failed",
-            exception.what());
+            exception.what(),
+            native_log_context{.result_code = "startup_failed"});
         publisher_.reset();
         server_.reset();
         identity_.reset();
@@ -76,11 +81,16 @@ void bridge_runtime::stop() noexcept {
     if (server_ != nullptr) {
         server_->stop();
     }
+    native_log_context log_context{.result_code = "ok"};
+    if (identity_.has_value()) {
+        log_context.instance_id = identity_->instance_id;
+    }
     get_native_logger().write(
         native_log_level::information,
         "runtime",
         "bridge.stopped",
-        "Bridge stopped");
+        "Bridge stopped",
+        log_context);
     publisher_.reset();
     server_.reset();
     identity_.reset();
