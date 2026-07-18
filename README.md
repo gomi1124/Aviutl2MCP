@@ -8,7 +8,7 @@ PSDToolKit2 と GCMZDrops が導入された Windows 環境を対象に、編集
 
 ## 現在の状態
 
-Phase 0（仕様策定）は承認済みです。現在は Phase 1（要件定義）を進めています。
+Phase 0（仕様策定）と Phase 1（要件定義）は承認済みです。現在は Phase 2（設計）を進めています。
 
 - [Phase 0 仕様書](docs/specification.md)
 - [Phase 1 要件定義書](docs/requirements.md)
