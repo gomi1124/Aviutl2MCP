@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Text;
 using AviUtl2MCP.Application.Contracts;
 
 namespace AviUtl2MCP.Application.Validation;
@@ -7,6 +8,39 @@ public static partial class RequestValidator
 {
     private const int MAX_PATH_LENGTH = 32767;
     private const int SHA256_HEX_LENGTH = 64;
+    private const int MAX_TOOL_STRING_UTF8_BYTES = 64 * 1024;
+
+    public static void ValidateCommonInput(CommonInput input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        if (input.InstanceId == Guid.Empty)
+        {
+            throw new ArgumentException("Instance ID must not be empty.", nameof(input));
+        }
+
+        if (input.TimeoutMs.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(input.TimeoutMs.Value, 100);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(input.TimeoutMs.Value, 120_000);
+        }
+    }
+
+    public static void ValidatePageInput(PageInput input)
+    {
+        ValidateCommonInput(input);
+        ArgumentOutOfRangeException.ThrowIfLessThan(input.Limit, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(input.Limit, 1000);
+        if (input.Cursor is not null)
+        {
+            ValidateString(input.Cursor, nameof(input.Cursor), 4096, 4096);
+        }
+    }
+
+    public static void ValidateMutationInput(MutationInput input)
+    {
+        ValidateCommonInput(input);
+        _ = new Revision(input.ExpectedRevision.Value);
+    }
 
     public static void ValidateLocator(ObjectLocator locator)
     {
@@ -60,6 +94,41 @@ public static partial class RequestValidator
         }
 
         return normalizedPath;
+    }
+
+    public static void ValidateString(
+        string value,
+        string parameterName,
+        int maxCharacters,
+        int maxUtf8Bytes = MAX_TOOL_STRING_UTF8_BYTES)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxCharacters, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxUtf8Bytes, 1);
+        if (value.Contains('\0'))
+        {
+            throw new ArgumentException("String must not contain NUL.", parameterName);
+        }
+
+        if (value.Length > maxCharacters || Encoding.UTF8.GetByteCount(value) > maxUtf8Bytes)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, "String exceeds the contract limit.");
+        }
+    }
+
+    public static void ValidateCollectionCount<T>(
+        IReadOnlyCollection<T> values,
+        string parameterName,
+        int minimum,
+        int maximum)
+    {
+        ArgumentNullException.ThrowIfNull(values, parameterName);
+        ArgumentOutOfRangeException.ThrowIfNegative(minimum);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximum, minimum);
+        if (values.Count < minimum || values.Count > maximum)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, values.Count, "Collection count is outside the contract limit.");
+        }
     }
 
     private static void ValidateSceneLayerFrames(int sceneId, int layer, int startFrame, int endFrame)
