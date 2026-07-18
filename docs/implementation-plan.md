@@ -4,9 +4,10 @@
 
 - 作成フェーズ: Phase 3
 - 対象フェーズ: Phase 4 実装・テスト・自動デバッグ
-- 状態: 敵対的レビュー済み・実装開始可能
+- 状態: Phase 4実装中（2026-07-19 M1 Buildable skeleton完了）
 - 設計入力: [Phase 2設計書](design.md)、[Phase 3クラス図](class-diagram.md)
 - 完了証拠: [受け入れテスト対応表](acceptance-test-matrix.md)の33 AC
+- M1証拠: locked restore、C# 8 project build、native `.aux2` build、28 tool schema conformance、C#/C++ 40-byte header golden vector
 
 V1の28 tools、5 resources、4 promptsを削減せず実装する。各末端taskは原則15～60分の検証可能な単位とし、失敗時に層を特定できる順で進める。
 

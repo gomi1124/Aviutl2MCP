@@ -1,5 +1,6 @@
 add_library(AviUtl2MCP.Bridge.Core STATIC
   src/bridge_version.cpp
+  src/ipc_header.cpp
 )
 
 target_include_directories(AviUtl2MCP.Bridge.Core

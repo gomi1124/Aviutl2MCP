@@ -5,6 +5,7 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="MSTest" />
     <ProjectReference Include="../../src/AviUtl2MCP.Server/AviUtl2MCP.Server.csproj" />
   </ItemGroup>

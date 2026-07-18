@@ -1,5 +1,29 @@
 #include "aviutl2_mcp/bridge_version.h"
+#include "aviutl2_mcp/ipc_header.h"
+
+#include <array>
+#include <cstdint>
 
 int main() {
-    return aviutl2_mcp::get_bridge_abi_version() == aviutl2_mcp::BRIDGE_ABI_VERSION ? 0 : 1;
+    if (aviutl2_mcp::get_bridge_abi_version() != aviutl2_mcp::BRIDGE_ABI_VERSION) {
+        return 1;
+    }
+
+    aviutl2_mcp::frame_header header{
+        .kind = aviutl2_mcp::message_kind::response,
+        .flags = aviutl2_mcp::frame_flags::has_binary,
+        .request_id = {0x00U, 0x11U, 0x22U, 0x33U, 0x44U, 0x55U, 0x66U, 0x77U,
+                       0x88U, 0x99U, 0xaaU, 0xbbU, 0xccU, 0xddU, 0xeeU, 0xffU},
+        .json_length = 0x00010203U,
+        .binary_length = 0x0000000000040506ULL,
+    };
+    const auto bytes = aviutl2_mcp::encode_header(header);
+    const std::array<std::uint8_t, aviutl2_mcp::IPC_HEADER_BYTES> expected{
+        0x41U, 0x32U, 0x4dU, 0x50U, 0x28U, 0x00U, 0x01U, 0x00U,
+        0x04U, 0x01U, 0x00U, 0x00U, 0x00U, 0x11U, 0x22U, 0x33U,
+        0x44U, 0x55U, 0x66U, 0x77U, 0x88U, 0x99U, 0xaaU, 0xbbU,
+        0xccU, 0xddU, 0xeeU, 0xffU, 0x03U, 0x02U, 0x01U, 0x00U,
+        0x06U, 0x05U, 0x04U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+    };
+    return bytes == expected ? 0 : 2;
 }
