@@ -6,6 +6,7 @@ using AviUtl2MCP.Application.Instances;
 using AviUtl2MCP.Application.Requests;
 using AviUtl2MCP.Application.Results;
 using AviUtl2MCP.Application.Validation;
+using AviUtl2MCP.Server.Diagnostics;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -17,7 +18,8 @@ public sealed class DiagnosticsToolSet(
     ServerInstanceResolver instanceResolver,
     ServerRuntimeIdentity runtimeIdentity,
     LogQueryService logQueryService,
-    DiagnosticsService diagnosticsService)
+    DiagnosticsService diagnosticsService,
+    LatestDiagnosticsStore latestDiagnosticsStore)
 {
     private const int LOG_DEFAULT_TIMEOUT_MS = 2_000;
     private const int DIAGNOSE_DEFAULT_TIMEOUT_MS = 30_000;
@@ -26,6 +28,7 @@ public sealed class DiagnosticsToolSet(
     private readonly ServerRuntimeIdentity _runtimeIdentity = runtimeIdentity;
     private readonly LogQueryService _logQueryService = logQueryService;
     private readonly DiagnosticsService _diagnosticsService = diagnosticsService;
+    private readonly LatestDiagnosticsStore _latestDiagnosticsStore = latestDiagnosticsStore;
 
     [McpServerTool(
         Name = "aviutl_get_logs",
@@ -187,6 +190,7 @@ public sealed class DiagnosticsToolSet(
                 ToolEnvelope<DiagnoseData> failedEnvelope = ToolResultFactory.CreateEnvelope(
                     ApplicationResult.Failure<DiagnoseData>(selection.Error!),
                     requestContext);
+                _latestDiagnosticsStore.Save(failedEnvelope);
                 return McpToolResultFactory.Create(failedEnvelope);
             }
 
@@ -205,6 +209,7 @@ public sealed class DiagnosticsToolSet(
                 result,
                 requestContext,
                 instance.InstanceId);
+            _latestDiagnosticsStore.Save(envelope);
             return McpToolResultFactory.Create(envelope);
         }
     }

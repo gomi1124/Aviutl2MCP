@@ -92,4 +92,30 @@ public sealed class RequestValidatorTests
         // Assert
         Assert.ThrowsExactly<ArgumentException>(action);
     }
+
+    [TestMethod]
+    public void ValidateReadInputRejectsInvertedTimelineRange()
+    {
+        // Arrange
+        GetTimelineInput input = new() { LayerStart = 3, LayerEnd = 2 };
+
+        // Act
+        Action action = () => RequestValidator.ValidateReadInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(action);
+    }
+
+    [TestMethod]
+    public void ValidateReadInputRejectsEmptyEffectSelector()
+    {
+        // Arrange
+        ListEffectItemsInput input = new() { Effect = new EffectDefinitionSelector(string.Empty) };
+
+        // Act
+        Action action = () => RequestValidator.ValidateReadInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(action);
+    }
 }

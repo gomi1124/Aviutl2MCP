@@ -1,6 +1,8 @@
 using AviUtl2MCP.Application.Diagnostics;
 using AviUtl2MCP.Application.Gateways;
 using AviUtl2MCP.Application.Instances;
+using AviUtl2MCP.Application.Paging;
+using AviUtl2MCP.Application.Queries;
 using AviUtl2MCP.Application.Requests;
 using AviUtl2MCP.Application.Serialization;
 using AviUtl2MCP.BridgeClient.Connections;
@@ -9,6 +11,7 @@ using AviUtl2MCP.BridgeClient.Gateways;
 using AviUtl2MCP.Server;
 using AviUtl2MCP.Server.Diagnostics;
 using AviUtl2MCP.Server.Logging;
+using AviUtl2MCP.Server.Resources;
 using AviUtl2MCP.Server.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -31,7 +34,18 @@ builder.Services.AddSingleton<IBridgeConnectionFactory>(services =>
         services.GetRequiredService<ServerRuntimeIdentity>().ServerVersion));
 builder.Services.AddSingleton<BridgeConnectionRegistry>();
 builder.Services.AddSingleton<ServerInstanceResolver>();
+builder.Services.AddSingleton<IInstanceResolver>(services =>
+    services.GetRequiredService<ServerInstanceResolver>());
 builder.Services.AddSingleton<IBridgeDiagnosticsGateway, BridgeDiagnosticsGateway>();
+builder.Services.AddSingleton<IAviUtlQueryGateway, BridgeQueryGateway>();
+builder.Services.AddSingleton(services => new PagingCursorCodec(
+    services.GetRequiredService<ServerRuntimeIdentity>().CursorSigningKey.Span));
+builder.Services.AddSingleton(services => new AviUtlQueryService(
+    services.GetRequiredService<IInstanceResolver>(),
+    services.GetRequiredService<IAviUtlQueryGateway>(),
+    services.GetRequiredService<IBridgeDiagnosticsGateway>(),
+    services.GetRequiredService<PagingCursorCodec>(),
+    services.GetRequiredService<ServerRuntimeIdentity>().ServerEpoch));
 
 builder.Services.AddSingleton(_ => new ServerJsonLogSource(
     JsonLineLoggerProvider.GetDefaultLogFilePath()));
@@ -49,6 +63,7 @@ builder.Services.AddSingleton(services => new LogCursorCodec(
 builder.Services.AddSingleton<LogQueryService>();
 builder.Services.AddSingleton<IDiagnosticSmokeProbe>(UnavailableDiagnosticSmokeProbe.Instance);
 builder.Services.AddSingleton<DiagnosticContextFactory>();
+builder.Services.AddSingleton<LatestDiagnosticsStore>();
 builder.Services.AddSingleton(services => new DiagnosticsService(
     services.GetRequiredService<DiagnosticContextFactory>(),
     DiagnosticsService.CreateDefaultRules()));
@@ -56,7 +71,9 @@ builder.Services.AddSingleton(services => new DiagnosticsService(
 builder.Services
     .AddMcpServer()
     .WithStdioServerTransport()
-    .WithTools<DiagnosticsToolSet>(ContractJsonSerializer.CreateSerializerOptions());
+    .WithTools<DiagnosticsToolSet>(ContractJsonSerializer.CreateSerializerOptions())
+    .WithTools<ReadToolSet>(ContractJsonSerializer.CreateSerializerOptions())
+    .WithResources<AviUtlResourceSet>();
 
 await builder.Build().RunAsync().ConfigureAwait(false);
 

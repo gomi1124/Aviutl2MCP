@@ -8,6 +8,25 @@ namespace AviUtl2MCP.StdioTests;
 [TestClass]
 public sealed class DiagnosticsToolStdioTests
 {
+    private static readonly string[] READ_TOOL_NAMES =
+    [
+        "aviutl_get_status",
+        "aviutl_get_capabilities",
+        "aviutl_get_project",
+        "aviutl_get_timeline",
+        "aviutl_find_objects",
+        "aviutl_get_object",
+        "aviutl_list_effects",
+        "aviutl_list_effect_items",
+    ];
+    private static readonly string[] RESOURCE_URIS =
+    [
+        "aviutl://status",
+        "aviutl://capabilities",
+        "aviutl://project/current",
+        "aviutl://timeline/current",
+        "aviutl://diagnostics/latest",
+    ];
     private static readonly string[] SERVER_SOURCE = ["server"];
 
     [TestMethod]
@@ -38,8 +57,31 @@ public sealed class DiagnosticsToolStdioTests
             // Act
             IList<McpClientTool> tools = await client.ListToolsAsync(
                 cancellationToken: timeout.Token);
+            IList<McpClientResource> resources = await client.ListResourcesAsync(
+                cancellationToken: timeout.Token);
             McpClientTool logsTool = tools.Single(tool => tool.Name == "aviutl_get_logs");
             McpClientTool diagnoseTool = tools.Single(tool => tool.Name == "aviutl_diagnose");
+            McpClientTool statusTool = tools.Single(tool => tool.Name == "aviutl_get_status");
+            McpClientTool projectTool = tools.Single(tool => tool.Name == "aviutl_get_project");
+            McpClientTool timelineTool = tools.Single(tool => tool.Name == "aviutl_get_timeline");
+            ReadResourceResult statusResource = await client.ReadResourceAsync(
+                "aviutl://status",
+                cancellationToken: timeout.Token);
+            ReadResourceResult diagnosticsResource = await client.ReadResourceAsync(
+                "aviutl://diagnostics/latest",
+                cancellationToken: timeout.Token);
+            CallToolResult statusResult = await client.CallToolAsync(
+                statusTool.Name,
+                new Dictionary<string, object?>(),
+                cancellationToken: timeout.Token);
+            CallToolResult projectResult = await client.CallToolAsync(
+                projectTool.Name,
+                new Dictionary<string, object?>(),
+                cancellationToken: timeout.Token);
+            CallToolResult invalidTimelineResult = await client.CallToolAsync(
+                timelineTool.Name,
+                new Dictionary<string, object?> { ["limit"] = 0 },
+                cancellationToken: timeout.Token);
             CallToolResult logsResult = await client.CallToolAsync(
                 logsTool.Name,
                 new Dictionary<string, object?>
@@ -52,15 +94,59 @@ public sealed class DiagnosticsToolStdioTests
                 diagnoseTool.Name,
                 new Dictionary<string, object?>(),
                 cancellationToken: timeout.Token);
+            ReadResourceResult completedDiagnosticsResource = await client.ReadResourceAsync(
+                "aviutl://diagnostics/latest",
+                cancellationToken: timeout.Token);
             CallToolResult invalidResult = await client.CallToolAsync(
                 logsTool.Name,
                 new Dictionary<string, object?> { ["timeoutMs"] = 99 },
                 cancellationToken: timeout.Token);
 
             // Assert
-            Assert.IsTrue(tools.Count >= 2);
+            Assert.AreEqual(10, tools.Count);
+            CollectionAssert.IsSubsetOf(
+                READ_TOOL_NAMES,
+                tools.Select(tool => tool.Name).ToArray());
+            foreach (string readToolName in READ_TOOL_NAMES)
+            {
+                AssertToolMetadata(tools.Single(tool => tool.Name == readToolName));
+            }
             AssertToolMetadata(logsTool, "sources", "limit");
             AssertToolMetadata(diagnoseTool, "includeReadSmoke", "includePreviewSmoke", "maxLogLines");
+
+            Assert.AreEqual(5, resources.Count);
+            CollectionAssert.AreEquivalent(
+                RESOURCE_URIS,
+                resources.Select(resource => resource.Uri.ToString()).ToArray());
+            Assert.IsTrue(resources.All(resource => resource.MimeType == "application/json"));
+            JsonElement statusResourceEnvelope = ParseResourceEnvelope(statusResource);
+            Assert.IsTrue(statusResourceEnvelope.GetProperty("ok").GetBoolean());
+            Assert.AreEqual(
+                "disconnected",
+                statusResourceEnvelope.GetProperty("data").GetProperty("connectionState").GetString());
+            JsonElement diagnosticsResourceEnvelope = ParseResourceEnvelope(diagnosticsResource);
+            Assert.IsTrue(diagnosticsResourceEnvelope.GetProperty("ok").GetBoolean());
+            Assert.AreEqual(JsonValueKind.Null, diagnosticsResourceEnvelope.GetProperty("data").ValueKind);
+
+            Assert.AreEqual(false, statusResult.IsError);
+            JsonElement statusEnvelope = statusResult.StructuredContent!.Value;
+            Assert.IsTrue(statusEnvelope.GetProperty("ok").GetBoolean());
+            Assert.AreEqual(
+                "disconnected",
+                statusEnvelope.GetProperty("data").GetProperty("connectionState").GetString());
+
+            Assert.AreEqual(true, projectResult.IsError);
+            JsonElement projectEnvelope = projectResult.StructuredContent!.Value;
+            Assert.AreEqual(
+                "aviutl_not_running",
+                projectEnvelope.GetProperty("error").GetProperty("code").GetString());
+
+            Assert.AreEqual(true, invalidTimelineResult.IsError);
+            JsonElement invalidTimelineEnvelope = invalidTimelineResult.StructuredContent!.Value;
+            Assert.AreEqual(
+                "invalid_argument",
+                invalidTimelineEnvelope.GetProperty("error").GetProperty("code").GetString());
+
             Assert.AreEqual(false, logsResult.IsError);
             JsonElement logsEnvelope = logsResult.StructuredContent!.Value;
             Assert.IsTrue(logsEnvelope.GetProperty("ok").GetBoolean());
@@ -74,6 +160,15 @@ public sealed class DiagnosticsToolStdioTests
             Assert.AreEqual(
                 "aviutl_not_running",
                 diagnoseEnvelope.GetProperty("error").GetProperty("code").GetString());
+            JsonElement completedDiagnosticsEnvelope = ParseResourceEnvelope(
+                completedDiagnosticsResource);
+            Assert.IsFalse(completedDiagnosticsEnvelope.GetProperty("ok").GetBoolean());
+            Assert.AreEqual(
+                diagnoseEnvelope.GetProperty("correlationId").GetGuid(),
+                completedDiagnosticsEnvelope.GetProperty("correlationId").GetGuid());
+            Assert.AreEqual(
+                "aviutl_not_running",
+                completedDiagnosticsEnvelope.GetProperty("error").GetProperty("code").GetString());
 
             Assert.AreEqual(true, invalidResult.IsError);
             JsonElement invalidEnvelope = invalidResult.StructuredContent!.Value;
@@ -102,6 +197,15 @@ public sealed class DiagnosticsToolStdioTests
             Assert.IsTrue(properties.TryGetProperty(property, out _), $"Missing input property {property}.");
         }
         Assert.IsFalse(properties.TryGetProperty("input", out _));
+    }
+
+    private static JsonElement ParseResourceEnvelope(ReadResourceResult result)
+    {
+        ResourceContents content = result.Contents.Single();
+        Assert.IsInstanceOfType<TextResourceContents>(content);
+        TextResourceContents textContent = (TextResourceContents)content;
+        using JsonDocument document = JsonDocument.Parse(textContent.Text);
+        return document.RootElement.Clone();
     }
 
     private static string CreateCorrelationDirectory()

@@ -36,6 +36,59 @@ public static partial class RequestValidator
         }
     }
 
+    public static void ValidateReadInput(CommonInput input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        switch (input)
+        {
+            case GetTimelineInput timeline:
+                ValidatePageInput(timeline);
+                ValidateOptionalSceneLayerFrameRanges(
+                    timeline.SceneId,
+                    timeline.LayerStart,
+                    timeline.LayerEnd,
+                    timeline.StartFrame,
+                    timeline.EndFrame);
+                if (!Enum.IsDefined(timeline.Detail))
+                {
+                    throw new ArgumentOutOfRangeException(nameof(input), "Timeline detail is invalid.");
+                }
+                break;
+            case FindObjectsInput find:
+                ValidatePageInput(find);
+                ValidateOptionalSceneLayerFrameRanges(
+                    find.SceneId,
+                    find.LayerStart,
+                    find.LayerEnd,
+                    find.StartFrame,
+                    find.EndFrame);
+                ValidateOptionalString(find.NameContains, nameof(find.NameContains), 4096);
+                ValidateOptionalString(find.EffectName, nameof(find.EffectName), 4096);
+                ValidateOptionalString(find.MediaPath, nameof(find.MediaPath), MAX_PATH_LENGTH);
+                break;
+            case GetObjectInput getObject:
+                ValidateCommonInput(getObject);
+                ValidateLocator(getObject.Locator);
+                break;
+            case ListEffectsInput effects:
+                ValidatePageInput(effects);
+                ValidateOptionalString(effects.NameContains, nameof(effects.NameContains), 4096);
+                if (effects.Category.HasValue && !Enum.IsDefined(effects.Category.Value))
+                {
+                    throw new ArgumentOutOfRangeException(nameof(input), "Effect category is invalid.");
+                }
+                break;
+            case ListEffectItemsInput items:
+                ValidateCommonInput(items);
+                ArgumentNullException.ThrowIfNull(items.Effect);
+                ValidateString(items.Effect.Name, nameof(items.Effect.Name), 4096);
+                break;
+            default:
+                ValidateCommonInput(input);
+                break;
+        }
+    }
+
     public static void ValidateMutationInput(MutationInput input)
     {
         ValidateCommonInput(input);
@@ -57,6 +110,11 @@ public static partial class RequestValidator
         }
 
         ValidateSceneLayerFrames(locator.SceneId, locator.Layer, locator.StartFrame, locator.EndFrame);
+        if (locator.Name.Contains('\0') || locator.Name.Length > 4096
+            || Encoding.UTF8.GetByteCount(locator.Name) > MAX_TOOL_STRING_UTF8_BYTES)
+        {
+            throw new ArgumentOutOfRangeException(nameof(locator), "Locator name exceeds the contract limit.");
+        }
         ValidateSha256(locator.AliasSha256, nameof(locator.AliasSha256));
         ValidateSha256(locator.EffectSignatureSha256, nameof(locator.EffectSignatureSha256));
     }
@@ -137,6 +195,51 @@ public static partial class RequestValidator
         ArgumentOutOfRangeException.ThrowIfLessThan(layer, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(startFrame, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(endFrame, startFrame);
+    }
+
+    private static void ValidateOptionalSceneLayerFrameRanges(
+        int? sceneId,
+        int? layerStart,
+        int? layerEnd,
+        int? startFrame,
+        int? endFrame)
+    {
+        if (sceneId.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(sceneId.Value);
+        }
+        if (layerStart.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(layerStart.Value, 1);
+        }
+        if (layerEnd.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(layerEnd.Value, 1);
+        }
+        if (layerStart.HasValue && layerEnd.HasValue && layerStart > layerEnd)
+        {
+            throw new ArgumentException("Layer start must not exceed layer end.");
+        }
+        if (startFrame.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(startFrame.Value, 1);
+        }
+        if (endFrame.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(endFrame.Value, 1);
+        }
+        if (startFrame.HasValue && endFrame.HasValue && startFrame > endFrame)
+        {
+            throw new ArgumentException("Start frame must not exceed end frame.");
+        }
+    }
+
+    private static void ValidateOptionalString(string? value, string parameterName, int maxCharacters)
+    {
+        if (value is not null)
+        {
+            ValidateString(value, parameterName, maxCharacters);
+        }
     }
 
     private static void ValidateSha256(string value, string parameterName)
