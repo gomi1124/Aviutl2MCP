@@ -580,6 +580,9 @@ ipc_frame request_dispatcher::create_response_frame(
             : nlohmann::json::parse(result.result_json);
         document["warnings"] = nlohmann::json::array();
     } else {
+        if (!result.result_json.empty()) {
+            document["result"] = nlohmann::json::parse(result.result_json);
+        }
         document["error"] = {
             {"code", result.error_code},
             {"message", result.error_message},

@@ -18,7 +18,7 @@ public sealed class BridgeGatewayTests
 {
     private static readonly byte[] expectedPngSignature = [0x89, 0x50, 0x4e, 0x47];
     private static readonly string[] expectedOperations =
-        ["project.get", "object.delete", "preview.render", "psd.validate", "logs.get"];
+        ["project.get", "object.delete", "batch.execute", "preview.render", "psd.validate", "logs.get"];
 
     [TestMethod]
     public async Task FiveDomainGatewaysShareRegistryAndMapTypedResults()
@@ -47,6 +47,21 @@ public sealed class BridgeGatewayTests
                 "object.delete",
                 CreateRequest(instanceId, new DeleteObjectArgs(CreateLocator(instanceId)), isMutation: true),
                 CancellationToken.None);
+            GatewayResponse<BatchData> partialBatch = await edit.ExecuteBatchAsync(
+                CreateRequest(
+                    instanceId,
+                    new ExecuteBatchInput
+                    {
+                        ExpectedRevision = new Revision("revision-1"),
+                        Operations =
+                        [
+                            new BatchDeleteObject(
+                                "delete",
+                                new DeleteObjectArgs(CreateLocator(instanceId))),
+                        ],
+                    },
+                    isMutation: true),
+                CancellationToken.None);
             GatewayResponse<PreviewData> rendered = await preview.RenderPreviewAsync(
                 CreateRequest(instanceId, new RenderPreviewInput { Frame = 1 }),
                 CancellationToken.None);
@@ -60,6 +75,9 @@ public sealed class BridgeGatewayTests
             // Assert
             Assert.AreEqual(1920, project.Data?.Width);
             Assert.IsTrue(deleted.Data?.Deleted);
+            Assert.IsFalse(partialBatch.Ok);
+            Assert.AreEqual("partial_operation", partialBatch.Error?.Code);
+            Assert.IsTrue(partialBatch.Data?.UndoRecommended);
             Assert.AreEqual("image/png", rendered.Data?.MimeType);
             CollectionAssert.AreEqual(expectedPngSignature, rendered.Binary.ToArray());
             Assert.IsNotNull(validated.Data);
@@ -219,6 +237,51 @@ public sealed class BridgeGatewayTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add(request);
+            if (request.Method == "batch.execute")
+            {
+                BatchData partialData = new(
+                    [
+                        new BatchResult(
+                            "delete",
+                            BatchOperationKind.DeleteObject,
+                            BatchResultStatus.Failed,
+                            []),
+                    ],
+                    [],
+                    true);
+                BridgeResponseError error = new(
+                    "partial_operation",
+                    "partial",
+                    false,
+                    "sdk",
+                    "partial",
+                    true,
+                    SerializeElement(new { }));
+                BridgeResponseEnvelope failedEnvelope = new(
+                    false,
+                    request.CorrelationId,
+                    Descriptor.InstanceId,
+                    new Revision("revision-2"),
+                    null,
+                    SerializeElement(partialData),
+                    null,
+                    error);
+                byte[] failedJson = Encoding.UTF8.GetBytes(
+                    ContractJsonSerializer.SerializeContract(failedEnvelope));
+                IpcFrameHeader failedHeader = new(
+                    IpcMessageKind.Response,
+                    IpcFrameOption.ErrorResponse,
+                    request.CorrelationId,
+                    (uint)failedJson.Length,
+                    0);
+                byte[] failedBinary = [];
+                IpcFrame failedFrame = new(
+                    failedHeader,
+                    failedJson,
+                    failedBinary,
+                    IpcFrameCodec.CalculatePayloadHash(failedHeader, failedJson, failedBinary));
+                return ValueTask.FromResult(new BridgeResponse(failedEnvelope, failedFrame));
+            }
             object data = request.Method switch
             {
                 "project.get" => new ProjectData(

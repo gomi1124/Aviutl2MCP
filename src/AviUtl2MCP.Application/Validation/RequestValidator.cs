@@ -182,6 +182,28 @@ public static partial class RequestValidator
                     throw new ArgumentException("At least one layer property is required.", nameof(input));
                 }
                 break;
+            case ExecuteBatchInput batch:
+                ValidateBatchInput(batch);
+                break;
+        }
+    }
+
+    public static void ValidateBatchInput(ExecuteBatchInput input)
+    {
+        ValidateMutationInput(input);
+        ValidateCollectionCount(input.Operations, nameof(input.Operations), 1, 100);
+        HashSet<string> operationIds = new(StringComparer.Ordinal);
+        foreach (BatchOperation operation in input.Operations)
+        {
+            ArgumentNullException.ThrowIfNull(operation);
+            ValidateString(operation.ClientOperationId, nameof(operation.ClientOperationId), 128, 128);
+            if (!operationIds.Add(operation.ClientOperationId))
+            {
+                throw new ArgumentException(
+                    "Batch client operation IDs must be unique.",
+                    nameof(input));
+            }
+            ValidateEditInput(CreateBatchValidationInput(input, operation));
         }
     }
 
@@ -383,6 +405,104 @@ public static partial class RequestValidator
             throw new ArgumentOutOfRangeException(parameterName, "Object name exceeds the contract limit.");
         }
     }
+
+    private static MutationInput CreateBatchValidationInput(
+        ExecuteBatchInput input,
+        BatchOperation operation) => operation switch
+    {
+        BatchCreateObject value => new CreateObjectInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Effect = value.Args.Effect,
+            Placement = value.Args.Placement,
+            Name = value.Args.Name,
+            Items = value.Args.Items,
+        },
+        BatchCreateMediaObject value => new CreateMediaObjectInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            MediaPath = value.Args.MediaPath,
+            Placement = value.Args.Placement,
+            Name = value.Args.Name,
+        },
+        BatchCreateAliasObject value => new CreateAliasObjectInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Alias = value.Args.Alias,
+            Placement = value.Args.Placement,
+            Name = value.Args.Name,
+        },
+        BatchMoveObject value => new MoveObjectInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Locator = value.Args.Locator,
+            Placement = value.Args.Placement,
+        },
+        BatchDeleteObject value => new DeleteObjectInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Locator = value.Args.Locator,
+        },
+        BatchSetObjectName value => new SetObjectNameInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Locator = value.Args.Locator,
+            Name = value.Args.Name,
+        },
+        BatchSetEffectItem value => new SetEffectItemInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Locator = value.Args.Locator,
+            Effect = value.Args.Effect,
+            ItemName = value.Args.ItemName,
+            Value = value.Args.Value,
+        },
+        BatchSetEffectState value => new SetEffectStateInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Locator = value.Args.Locator,
+            Effect = value.Args.Effect,
+            IsEnabled = value.Args.IsEnabled,
+            IsLocked = value.Args.IsLocked,
+        },
+        BatchSetLayer value => new SetLayerInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            SceneId = value.Args.SceneId,
+            Layer = value.Args.Layer,
+            Name = value.Args.Name,
+            IsVisible = value.Args.IsVisible,
+            IsLocked = value.Args.IsLocked,
+        },
+        _ => throw new ArgumentOutOfRangeException(nameof(operation), "Batch operation is unsupported."),
+    };
 
     private static void ValidateEffectItemValue(System.Text.Json.JsonElement value)
     {

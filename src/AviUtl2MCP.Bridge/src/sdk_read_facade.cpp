@@ -17,6 +17,7 @@
 #include <span>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace aviutl2_mcp {
 namespace {
@@ -1140,6 +1141,8 @@ struct object_edit_callback_context final {
     sdk_object_edit_result* result;
     bool dry_run;
     bool was_called = false;
+    OBJECT_HANDLE resolved_object = nullptr;
+    bool is_pre_resolved = false;
 };
 
 void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
@@ -1160,14 +1163,17 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
         }
         const int sdk_layer = locator.layer - 1;
         const int sdk_frame = locator.start_frame - 1;
-        OBJECT_HANDLE object = edit->find_object(sdk_layer, sdk_frame);
+        OBJECT_HANDLE object = context->resolved_object == nullptr
+            ? edit->find_object(sdk_layer, sdk_frame)
+            : context->resolved_object;
         if (object == nullptr) {
             context->result->error_code = "object_not_found";
             context->result->error_message = "The object locator could not be resolved";
             return;
         }
         const OBJECT_LAYER_FRAME position = edit->get_object_layer_frame(object);
-        if (position.layer != sdk_layer || position.start != sdk_frame) {
+        if (!context->is_pre_resolved
+            && (position.layer != sdk_layer || position.start != sdk_frame)) {
             context->result->error_code = "object_not_found";
             context->result->error_message = "The object locator position is stale";
             return;
@@ -1181,17 +1187,19 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
             position,
             selected_objects,
             true);
-        const locator_resolution resolution = resolve_object_locator(
-            locator,
-            *context->current_instance_id,
-            *context->current_project_generation,
-            std::span<const object_candidate>(&before.candidate, 1U));
-        if (resolution.status != locator_resolution_status::resolved) {
-            context->result->error_code = resolution.status == locator_resolution_status::ambiguous
-                ? "object_ambiguous"
-                : "object_not_found";
-            context->result->error_message = "The object locator fingerprint is stale";
-            return;
+        if (!context->is_pre_resolved) {
+            const locator_resolution resolution = resolve_object_locator(
+                locator,
+                *context->current_instance_id,
+                *context->current_project_generation,
+                std::span<const object_candidate>(&before.candidate, 1U));
+            if (resolution.status != locator_resolution_status::resolved) {
+                context->result->error_code = resolution.status == locator_resolution_status::ambiguous
+                    ? "object_ambiguous"
+                    : "object_not_found";
+                context->result->error_message = "The object locator fingerprint is stale";
+                return;
+            }
         }
         if (edit->get_layer_lock != nullptr && edit->get_layer_lock(position.layer)) {
             context->result->error_code = "edit_not_available";
@@ -1386,6 +1394,8 @@ struct effect_edit_callback_context final {
     sdk_effect_edit_result* result;
     bool dry_run;
     bool was_called = false;
+    OBJECT_HANDLE resolved_object = nullptr;
+    bool is_pre_resolved = false;
 };
 
 void edit_sdk_effect(void* raw_context, EDIT_SECTION* edit) noexcept {
@@ -1406,14 +1416,17 @@ void edit_sdk_effect(void* raw_context, EDIT_SECTION* edit) noexcept {
         }
         const int sdk_layer = locator.layer - 1;
         const int sdk_frame = locator.start_frame - 1;
-        OBJECT_HANDLE object = edit->find_object(sdk_layer, sdk_frame);
+        OBJECT_HANDLE object = context->resolved_object == nullptr
+            ? edit->find_object(sdk_layer, sdk_frame)
+            : context->resolved_object;
         if (object == nullptr) {
             context->result->error_code = "object_not_found";
             context->result->error_message = "The effect object locator could not be resolved";
             return;
         }
         const OBJECT_LAYER_FRAME position = edit->get_object_layer_frame(object);
-        if (position.layer != sdk_layer || position.start != sdk_frame) {
+        if (!context->is_pre_resolved
+            && (position.layer != sdk_layer || position.start != sdk_frame)) {
             context->result->error_code = "object_not_found";
             context->result->error_message = "The effect object locator position is stale";
             return;
@@ -1429,17 +1442,19 @@ void edit_sdk_effect(void* raw_context, EDIT_SECTION* edit) noexcept {
             selected_objects,
             true,
             &effect_handles);
-        const locator_resolution resolution = resolve_object_locator(
-            locator,
-            *context->current_instance_id,
-            *context->current_project_generation,
-            std::span<const object_candidate>(&before.candidate, 1U));
-        if (resolution.status != locator_resolution_status::resolved) {
-            context->result->error_code = resolution.status == locator_resolution_status::ambiguous
-                ? "object_ambiguous"
-                : "object_not_found";
-            context->result->error_message = "The effect object locator fingerprint is stale";
-            return;
+        if (!context->is_pre_resolved) {
+            const locator_resolution resolution = resolve_object_locator(
+                locator,
+                *context->current_instance_id,
+                *context->current_project_generation,
+                std::span<const object_candidate>(&before.candidate, 1U));
+            if (resolution.status != locator_resolution_status::resolved) {
+                context->result->error_code = resolution.status == locator_resolution_status::ambiguous
+                    ? "object_ambiguous"
+                    : "object_not_found";
+                context->result->error_message = "The effect object locator fingerprint is stale";
+                return;
+            }
         }
         if (edit->get_layer_lock != nullptr && edit->get_layer_lock(position.layer)) {
             context->result->error_code = "edit_not_available";
@@ -1499,7 +1514,8 @@ void edit_sdk_effect(void* raw_context, EDIT_SECTION* edit) noexcept {
             context->result->has_changed = true;
             context->result->item = find_effect_item_snapshot(
                 *context->edit_handle, *edit, effect_handle, effect_before, *request.item_name);
-            if (!context->result->item.has_value()) {
+            if (!context->result->item.has_value()
+                || context->result->item->value != request.item_value) {
                 throw std::runtime_error("SDK effect item postcondition was unavailable");
             }
         } else {
@@ -1646,6 +1662,655 @@ void edit_sdk_layer(void* raw_context, EDIT_SECTION* edit) noexcept {
     } catch (...) {
         context->result->error_code = "sdk_query_failed";
         context->result->error_message = "SDK layer edit failed with an unknown exception";
+    }
+}
+
+struct batch_planned_object final {
+    OBJECT_HANDLE handle;
+    OBJECT_LAYER_FRAME position;
+    bool is_deleted = false;
+    std::optional<std::string> name;
+};
+
+struct batch_planned_effect final {
+    OBJECT_HANDLE object;
+    std::string name;
+    int occurrence;
+    sdk_effect_summary state;
+    std::unordered_map<std::string, sdk_effect_item_snapshot> items;
+};
+
+struct resolved_batch_object final {
+    OBJECT_HANDLE handle;
+    sdk_object_snapshot snapshot;
+};
+
+struct batch_edit_callback_context final {
+    EDIT_HANDLE* edit_handle;
+    const std::vector<sdk_batch_operation>* operations;
+    const std::string* current_instance_id;
+    const std::string* current_project_generation;
+    sdk_batch_edit_result* result;
+    bool dry_run;
+    bool was_called = false;
+};
+
+template<typename TResult>
+[[nodiscard]] sdk_batch_operation_result create_batch_operation_result(TResult result) {
+    const std::string error_code = result.error_code;
+    const std::string error_message = result.error_message;
+    return sdk_batch_operation_result{
+        .ok = result.ok,
+        .has_changed = result.has_changed,
+        .result = std::move(result),
+        .error_code = error_code,
+        .error_message = error_message,
+    };
+}
+
+template<typename TResult>
+[[nodiscard]] sdk_batch_operation_result create_batch_failure(
+    const std::string& code,
+    const std::string& message) {
+    TResult result{
+        .ok = false,
+        .error_code = code,
+        .error_message = message,
+    };
+    return sdk_batch_operation_result{
+        .ok = false,
+        .has_changed = false,
+        .result = std::move(result),
+        .error_code = code,
+        .error_message = message,
+    };
+}
+
+[[nodiscard]] const object_locator* get_batch_locator(
+    const sdk_batch_request_value& request) noexcept {
+    if (const auto* object = std::get_if<sdk_object_edit_request>(&request)) {
+        return &object->locator;
+    }
+    if (const auto* effect = std::get_if<sdk_effect_edit_request>(&request)) {
+        return &effect->locator;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::optional<resolved_batch_object> resolve_batch_object(
+    EDIT_HANDLE& edit_handle,
+    EDIT_SECTION& edit,
+    const EDIT_INFO& info,
+    const std::vector<object_handle_position>& initial_objects,
+    const std::vector<OBJECT_HANDLE>& selected_objects,
+    const object_locator& locator,
+    const std::string& current_instance_id,
+    const std::string& current_project_generation,
+    std::string& error_code,
+    std::string& error_message) {
+    if (locator.scene_id != info.scene_id) {
+        error_code = "object_not_found";
+        error_message = "The batch locator is not in the active scene";
+        return std::nullopt;
+    }
+    const auto match = std::ranges::find_if(initial_objects, [&locator](const auto& candidate) {
+        return candidate.position.layer == locator.layer - 1
+            && candidate.position.start == locator.start_frame - 1;
+    });
+    if (match == initial_objects.end()) {
+        error_code = "object_not_found";
+        error_message = "The batch locator did not resolve against the initial state";
+        return std::nullopt;
+    }
+    sdk_object_snapshot snapshot = copy_object_snapshot(
+        edit_handle,
+        edit,
+        info,
+        match->handle,
+        match->position,
+        selected_objects,
+        true);
+    const locator_resolution resolution = resolve_object_locator(
+        locator,
+        current_instance_id,
+        current_project_generation,
+        std::span<const object_candidate>(&snapshot.candidate, 1U));
+    if (resolution.status != locator_resolution_status::resolved) {
+        error_code = resolution.status == locator_resolution_status::ambiguous
+            ? "object_ambiguous"
+            : "object_not_found";
+        error_message = "The batch locator fingerprint is stale";
+        return std::nullopt;
+    }
+    return resolved_batch_object{
+        .handle = match->handle,
+        .snapshot = std::move(snapshot),
+    };
+}
+
+[[nodiscard]] batch_planned_object* find_planned_object(
+    std::vector<batch_planned_object>& objects,
+    const OBJECT_HANDLE handle) noexcept {
+    const auto match = std::ranges::find_if(objects, [handle](const auto& object) {
+        return object.handle == handle;
+    });
+    return match == objects.end() ? nullptr : &*match;
+}
+
+[[nodiscard]] bool overlaps_batch_plan(
+    const std::vector<batch_planned_object>& objects,
+    const OBJECT_HANDLE ignored,
+    const int layer,
+    const int start,
+    const int end) noexcept {
+    return std::ranges::any_of(objects, [=](const batch_planned_object& object) {
+        const bool is_ignored = ignored != nullptr && object.handle == ignored;
+        return !object.is_deleted && !is_ignored
+            && object.position.layer == layer
+            && object.position.start <= end
+            && object.position.end >= start;
+    });
+}
+
+[[nodiscard]] batch_planned_effect* find_planned_effect(
+    std::vector<batch_planned_effect>& effects,
+    const OBJECT_HANDLE object,
+    const std::string& name,
+    const int occurrence) noexcept {
+    const auto match = std::ranges::find_if(effects, [&](const batch_planned_effect& effect) {
+        return effect.object == object && effect.name == name && effect.occurrence == occurrence;
+    });
+    return match == effects.end() ? nullptr : &*match;
+}
+
+void fail_batch(
+    sdk_batch_edit_result& result,
+    const std::size_t index,
+    sdk_batch_operation_result operation) {
+    result.failed_index = index;
+    result.error_code = operation.error_code.empty() ? "sdk_query_failed" : operation.error_code;
+    result.error_message = operation.error_message.empty()
+        ? "Batch operation failed without an error classification"
+        : operation.error_message;
+    result.operations.push_back(std::move(operation));
+}
+
+[[nodiscard]] sdk_batch_operation_result plan_batch_create(
+    EDIT_SECTION& edit,
+    const EDIT_INFO& info,
+    const sdk_create_request& request,
+    std::vector<batch_planned_object>& planned_objects,
+    const std::vector<sdk_layer_snapshot>& layers) {
+    if (request.scene_id != info.scene_id || request.layer < 1
+        || request.layer - 1 > info.layer_max || request.start_frame < 1 || request.length < 1) {
+        return create_batch_failure<sdk_create_result>(
+            "invalid_argument", "The batch creation placement is outside the active scene");
+    }
+    const std::int64_t end = static_cast<std::int64_t>(request.start_frame - 1)
+        + request.length - 1;
+    if (end > (std::numeric_limits<int>::max)()) {
+        return create_batch_failure<sdk_create_result>(
+            "invalid_argument", "The batch creation placement exceeds the frame range");
+    }
+    const int sdk_layer = request.layer - 1;
+    if (layers[static_cast<std::size_t>(sdk_layer)].is_locked) {
+        return create_batch_failure<sdk_create_result>(
+            "edit_not_available", "The batch creation destination layer is locked");
+    }
+    const int sdk_start = request.start_frame - 1;
+    const int sdk_end = static_cast<int>(end);
+    if (overlaps_batch_plan(planned_objects, nullptr, sdk_layer, sdk_start, sdk_end)) {
+        return create_batch_failure<sdk_create_result>(
+            "object_collision", "The batch creation overlaps the planned timeline state");
+    }
+    if (request.kind == sdk_create_kind::effect && edit.create_object == nullptr) {
+        return create_batch_failure<sdk_create_result>(
+            "sdk_not_available", "SDK effect object creation is unavailable");
+    }
+    if (request.kind == sdk_create_kind::media) {
+        const std::wstring path = to_wide(request.source);
+        if (edit.is_support_media_file == nullptr
+            || !edit.is_support_media_file(path.c_str(), true)
+            || edit.create_object_from_media_file == nullptr) {
+            return create_batch_failure<sdk_create_result>(
+                "invalid_media_file", "The batch media file is unsupported");
+        }
+    }
+    if (request.kind == sdk_create_kind::alias && edit.create_object_from_alias == nullptr) {
+        return create_batch_failure<sdk_create_result>(
+            "sdk_not_available", "SDK alias object creation is unavailable");
+    }
+    if (request.name.has_value() && edit.set_object_name == nullptr) {
+        return create_batch_failure<sdk_create_result>(
+            "sdk_not_available", "SDK object naming is unavailable");
+    }
+    planned_objects.push_back(batch_planned_object{
+        .handle = nullptr,
+        .position = {.layer = sdk_layer, .start = sdk_start, .end = sdk_end},
+    });
+    return create_batch_operation_result(sdk_create_result{.ok = true});
+}
+
+[[nodiscard]] sdk_batch_operation_result plan_batch_object_edit(
+    EDIT_SECTION& edit,
+    const EDIT_INFO& info,
+    const sdk_object_edit_request& request,
+    const resolved_batch_object& resolved,
+    std::vector<batch_planned_object>& planned_objects,
+    const std::vector<sdk_layer_snapshot>& layers) {
+    batch_planned_object* planned = find_planned_object(planned_objects, resolved.handle);
+    if (planned == nullptr || planned->is_deleted) {
+        return create_batch_failure<sdk_object_edit_result>(
+            "object_not_found", "The batch target was deleted by an earlier operation");
+    }
+    if (layers[static_cast<std::size_t>(planned->position.layer)].is_locked) {
+        return create_batch_failure<sdk_object_edit_result>(
+            "edit_not_available", "The batch target layer is locked in the planned state");
+    }
+    sdk_object_snapshot before = resolved.snapshot;
+    before.candidate.layer = planned->position.layer + 1;
+    before.candidate.start_frame = planned->position.start + 1;
+    before.candidate.end_frame = planned->position.end + 1;
+    if (planned->name.has_value()) {
+        before.candidate.name = *planned->name;
+    } else {
+        planned->name = before.candidate.name;
+    }
+
+    if (request.kind == sdk_object_edit_kind::move) {
+        if (!request.destination_scene_id.has_value()
+            || !request.destination_layer.has_value()
+            || !request.destination_start_frame.has_value()
+            || *request.destination_scene_id != info.scene_id
+            || *request.destination_layer < 1
+            || *request.destination_layer - 1 > info.layer_max
+            || *request.destination_start_frame < 1) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument", "The batch move destination is invalid");
+        }
+        const int destination_layer = *request.destination_layer - 1;
+        if (layers[static_cast<std::size_t>(destination_layer)].is_locked) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "edit_not_available", "The batch move destination layer is locked");
+        }
+        const int destination_start = *request.destination_start_frame - 1;
+        const std::int64_t destination_end = static_cast<std::int64_t>(destination_start)
+            + (planned->position.end - planned->position.start);
+        if (destination_end > (std::numeric_limits<int>::max)()) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument", "The batch move destination exceeds the frame range");
+        }
+        if (overlaps_batch_plan(
+                planned_objects,
+                resolved.handle,
+                destination_layer,
+                destination_start,
+                static_cast<int>(destination_end))) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "object_collision", "The batch move overlaps the planned timeline state");
+        }
+        if (edit.move_object == nullptr) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "sdk_not_available", "SDK object movement is unavailable");
+        }
+        planned->position = {
+            .layer = destination_layer,
+            .start = destination_start,
+            .end = static_cast<int>(destination_end),
+        };
+    } else if (request.kind == sdk_object_edit_kind::delete_object) {
+        if (edit.delete_object == nullptr) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "sdk_not_available", "SDK object deletion is unavailable");
+        }
+        planned->is_deleted = true;
+    } else {
+        if (!request.name.has_value()) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument", "The batch object name is required");
+        }
+        if (edit.set_object_name == nullptr) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "sdk_not_available", "SDK object naming is unavailable");
+        }
+        planned->name = *request.name;
+    }
+    return create_batch_operation_result(sdk_object_edit_result{
+        .ok = true,
+        .object = std::move(before),
+    });
+}
+
+[[nodiscard]] sdk_batch_operation_result plan_batch_effect_edit(
+    EDIT_HANDLE& edit_handle,
+    EDIT_SECTION& edit,
+    const EDIT_INFO& info,
+    const sdk_effect_edit_request& request,
+    const resolved_batch_object& resolved,
+    std::vector<batch_planned_object>& planned_objects,
+    const std::vector<sdk_layer_snapshot>& layers,
+    std::vector<batch_planned_effect>& planned_effects) {
+    batch_planned_object* planned_object = find_planned_object(planned_objects, resolved.handle);
+    if (planned_object == nullptr || planned_object->is_deleted) {
+        return create_batch_failure<sdk_effect_edit_result>(
+            "object_not_found", "The batch effect target was deleted by an earlier operation");
+    }
+    if (layers[static_cast<std::size_t>(planned_object->position.layer)].is_locked) {
+        return create_batch_failure<sdk_effect_edit_result>(
+            "edit_not_available", "The batch effect target layer is locked");
+    }
+    std::vector<EFFECT_HANDLE> effect_handles;
+    const std::vector<OBJECT_HANDLE> selected_objects = copy_selected_objects(edit);
+    const OBJECT_LAYER_FRAME actual_position = edit.get_object_layer_frame(resolved.handle);
+    const sdk_object_snapshot actual = copy_object_snapshot(
+        edit_handle,
+        edit,
+        info,
+        resolved.handle,
+        actual_position,
+        selected_objects,
+        true,
+        &effect_handles);
+    const auto effect_match = std::ranges::find_if(actual.effects, [&](const auto& effect) {
+        return effect.name == request.effect_name
+            && effect.occurrence == request.effect_occurrence;
+    });
+    if (effect_match == actual.effects.end()) {
+        return create_batch_failure<sdk_effect_edit_result>(
+            "invalid_effect_item", "The batch effect occurrence was not found");
+    }
+    const std::size_t effect_index = static_cast<std::size_t>(
+        std::distance(actual.effects.begin(), effect_match));
+    if (effect_index >= effect_handles.size()) {
+        return create_batch_failure<sdk_effect_edit_result>(
+            "sdk_query_failed", "SDK effect handle count did not match the batch target");
+    }
+    batch_planned_effect* planned_effect = find_planned_effect(
+        planned_effects,
+        resolved.handle,
+        request.effect_name,
+        request.effect_occurrence);
+    if (planned_effect == nullptr) {
+        planned_effects.push_back(batch_planned_effect{
+            .object = resolved.handle,
+            .name = request.effect_name,
+            .occurrence = request.effect_occurrence,
+            .state = *effect_match,
+        });
+        planned_effect = &planned_effects.back();
+    }
+    sdk_effect_edit_result result{.ok = true};
+    const EFFECT_HANDLE effect_handle = effect_handles[effect_index];
+    if (request.kind == sdk_effect_edit_kind::set_item) {
+        if (!request.item_name.has_value() || !request.item_value.has_value()) {
+            return create_batch_failure<sdk_effect_edit_result>(
+                "invalid_argument", "The batch effect item name and value are required");
+        }
+        auto item_match = planned_effect->items.find(*request.item_name);
+        if (item_match == planned_effect->items.end()) {
+            std::optional<sdk_effect_item_snapshot> actual_item = find_effect_item_snapshot(
+                edit_handle,
+                edit,
+                effect_handle,
+                *effect_match,
+                *request.item_name);
+            if (!actual_item.has_value() || !actual_item->is_writable) {
+                return create_batch_failure<sdk_effect_edit_result>(
+                    "invalid_effect_item", "The batch effect item is missing or read-only");
+            }
+            item_match = planned_effect->items.emplace(
+                *request.item_name,
+                std::move(*actual_item)).first;
+        }
+        try {
+            static_cast<void>(encode_effect_item_value(item_match->second, *request.item_value));
+        } catch (const std::invalid_argument& exception) {
+            return create_batch_failure<sdk_effect_edit_result>(
+                "invalid_effect_item", exception.what());
+        }
+        result.item = item_match->second;
+        const bool is_noop = item_match->second.value == request.item_value;
+        if (!is_noop && edit.set_effect_item_value == nullptr) {
+            return create_batch_failure<sdk_effect_edit_result>(
+                "sdk_not_available", "SDK effect item editing is unavailable");
+        }
+        item_match->second.value = request.item_value;
+    } else {
+        if (!request.is_enabled.has_value() && !request.is_locked.has_value()) {
+            return create_batch_failure<sdk_effect_edit_result>(
+                "invalid_argument", "The batch effect state has no properties");
+        }
+        result.effect = planned_effect->state;
+        if (request.is_enabled.has_value()
+            && *request.is_enabled != planned_effect->state.is_enabled) {
+            if (edit.set_effect_enable == nullptr) {
+                return create_batch_failure<sdk_effect_edit_result>(
+                    "sdk_not_available", "SDK effect enable editing is unavailable");
+            }
+            planned_effect->state.is_enabled = *request.is_enabled;
+        }
+        if (request.is_locked.has_value()
+            && *request.is_locked != planned_effect->state.is_locked) {
+            if (edit.set_effect_lock == nullptr) {
+                return create_batch_failure<sdk_effect_edit_result>(
+                    "sdk_not_available", "SDK effect lock editing is unavailable");
+            }
+            planned_effect->state.is_locked = *request.is_locked;
+        }
+    }
+    return create_batch_operation_result(std::move(result));
+}
+
+[[nodiscard]] sdk_batch_operation_result plan_batch_layer_edit(
+    EDIT_SECTION& edit,
+    const EDIT_INFO& info,
+    const sdk_layer_edit_request& request,
+    std::vector<sdk_layer_snapshot>& layers) {
+    if ((request.scene_id.has_value() && *request.scene_id != info.scene_id)
+        || request.layer < 1 || request.layer - 1 > info.layer_max) {
+        return create_batch_failure<sdk_layer_edit_result>(
+            "invalid_argument", "The batch layer is outside the active scene");
+    }
+    sdk_layer_snapshot& planned = layers[static_cast<std::size_t>(request.layer - 1)];
+    const sdk_layer_snapshot before = planned;
+    if (request.name.has_value() && *request.name != planned.name) {
+        if (edit.set_layer_name == nullptr) {
+            return create_batch_failure<sdk_layer_edit_result>(
+                "sdk_not_available", "SDK layer naming is unavailable");
+        }
+        planned.name = *request.name;
+    }
+    if (request.is_visible.has_value() && *request.is_visible != planned.is_visible) {
+        if (edit.set_layer_enable == nullptr) {
+            return create_batch_failure<sdk_layer_edit_result>(
+                "sdk_not_available", "SDK layer visibility editing is unavailable");
+        }
+        planned.is_visible = *request.is_visible;
+    }
+    if (request.is_locked.has_value() && *request.is_locked != planned.is_locked) {
+        if (edit.set_layer_lock == nullptr) {
+            return create_batch_failure<sdk_layer_edit_result>(
+                "sdk_not_available", "SDK layer lock editing is unavailable");
+        }
+        planned.is_locked = *request.is_locked;
+    }
+    return create_batch_operation_result(sdk_layer_edit_result{
+        .ok = true,
+        .layer = before,
+    });
+}
+
+[[nodiscard]] sdk_batch_operation_result execute_batch_operation(
+    batch_edit_callback_context& context,
+    EDIT_SECTION& edit,
+    const sdk_batch_operation& operation,
+    const OBJECT_HANDLE resolved_object) {
+    if (const auto* create = std::get_if<sdk_create_request>(&operation.request)) {
+        sdk_create_result result;
+        create_callback_context callback{
+            .edit_handle = context.edit_handle,
+            .request = create,
+            .result = &result,
+            .dry_run = false,
+        };
+        create_sdk_objects(&callback, &edit);
+        return create_batch_operation_result(std::move(result));
+    }
+    if (const auto* object = std::get_if<sdk_object_edit_request>(&operation.request)) {
+        sdk_object_edit_result result;
+        object_edit_callback_context callback{
+            .edit_handle = context.edit_handle,
+            .request = object,
+            .current_instance_id = context.current_instance_id,
+            .current_project_generation = context.current_project_generation,
+            .result = &result,
+            .dry_run = false,
+            .resolved_object = resolved_object,
+            .is_pre_resolved = true,
+        };
+        edit_sdk_object(&callback, &edit);
+        return create_batch_operation_result(std::move(result));
+    }
+    if (const auto* effect = std::get_if<sdk_effect_edit_request>(&operation.request)) {
+        sdk_effect_edit_result result;
+        effect_edit_callback_context callback{
+            .edit_handle = context.edit_handle,
+            .request = effect,
+            .current_instance_id = context.current_instance_id,
+            .current_project_generation = context.current_project_generation,
+            .result = &result,
+            .dry_run = false,
+            .resolved_object = resolved_object,
+            .is_pre_resolved = true,
+        };
+        edit_sdk_effect(&callback, &edit);
+        return create_batch_operation_result(std::move(result));
+    }
+    const auto& layer = std::get<sdk_layer_edit_request>(operation.request);
+    sdk_layer_edit_result result;
+    layer_edit_callback_context callback{
+        .request = &layer,
+        .result = &result,
+        .dry_run = false,
+    };
+    edit_sdk_layer(&callback, &edit);
+    return create_batch_operation_result(std::move(result));
+}
+
+void edit_sdk_batch(void* raw_context, EDIT_SECTION* edit) noexcept {
+    auto* context = static_cast<batch_edit_callback_context*>(raw_context);
+    context->was_called = true;
+    try {
+        if (edit == nullptr || edit->info == nullptr || edit->get_object_layer_frame == nullptr) {
+            throw std::runtime_error("SDK batch callback functions are unavailable");
+        }
+        const EDIT_INFO& info = *edit->info;
+        const std::vector<object_handle_position> initial_objects = scan_object_handles(*edit, info);
+        const std::vector<OBJECT_HANDLE> selected_objects = copy_selected_objects(*edit);
+        std::vector<batch_planned_object> planned_objects;
+        planned_objects.reserve(initial_objects.size() + context->operations->size());
+        for (const object_handle_position& object : initial_objects) {
+            planned_objects.push_back(batch_planned_object{
+                .handle = object.handle,
+                .position = object.position,
+            });
+        }
+        std::vector<sdk_layer_snapshot> layers;
+        layers.reserve(static_cast<std::size_t>(info.layer_max + 1));
+        for (int layer = 0; layer <= info.layer_max; ++layer) {
+            layers.push_back(copy_layer_snapshot(*edit, info.scene_id, layer));
+        }
+        std::vector<batch_planned_effect> planned_effects;
+        std::vector<OBJECT_HANDLE> resolved_handles(context->operations->size(), nullptr);
+        context->result->operations.clear();
+        context->result->operations.reserve(context->operations->size());
+
+        for (std::size_t index = 0U; index < context->operations->size(); ++index) {
+            const sdk_batch_operation& operation = context->operations->at(index);
+            std::optional<resolved_batch_object> resolved;
+            if (const object_locator* locator = get_batch_locator(operation.request)) {
+                std::string error_code;
+                std::string error_message;
+                resolved = resolve_batch_object(
+                    *context->edit_handle,
+                    *edit,
+                    info,
+                    initial_objects,
+                    selected_objects,
+                    *locator,
+                    *context->current_instance_id,
+                    *context->current_project_generation,
+                    error_code,
+                    error_message);
+                if (!resolved.has_value()) {
+                    sdk_batch_operation_result failure =
+                        std::holds_alternative<sdk_object_edit_request>(operation.request)
+                        ? create_batch_failure<sdk_object_edit_result>(error_code, error_message)
+                        : create_batch_failure<sdk_effect_edit_result>(error_code, error_message);
+                    fail_batch(*context->result, index, std::move(failure));
+                    return;
+                }
+                resolved_handles[index] = resolved->handle;
+            }
+
+            sdk_batch_operation_result planned;
+            if (const auto* create = std::get_if<sdk_create_request>(&operation.request)) {
+                planned = plan_batch_create(*edit, info, *create, planned_objects, layers);
+            } else if (const auto* object = std::get_if<sdk_object_edit_request>(&operation.request)) {
+                planned = plan_batch_object_edit(
+                    *edit, info, *object, *resolved, planned_objects, layers);
+            } else if (const auto* effect = std::get_if<sdk_effect_edit_request>(&operation.request)) {
+                planned = plan_batch_effect_edit(
+                    *context->edit_handle,
+                    *edit,
+                    info,
+                    *effect,
+                    *resolved,
+                    planned_objects,
+                    layers,
+                    planned_effects);
+            } else {
+                planned = plan_batch_layer_edit(
+                    *edit,
+                    info,
+                    std::get<sdk_layer_edit_request>(operation.request),
+                    layers);
+            }
+            if (!planned.ok) {
+                fail_batch(*context->result, index, std::move(planned));
+                return;
+            }
+            context->result->operations.push_back(std::move(planned));
+        }
+
+        if (context->dry_run) {
+            context->result->ok = true;
+            return;
+        }
+        context->result->operations.clear();
+        for (std::size_t index = 0U; index < context->operations->size(); ++index) {
+            sdk_batch_operation_result applied = execute_batch_operation(
+                *context,
+                *edit,
+                context->operations->at(index),
+                resolved_handles[index]);
+            context->result->has_changed = context->result->has_changed || applied.has_changed;
+            if (!applied.ok) {
+                fail_batch(*context->result, index, std::move(applied));
+                return;
+            }
+            context->result->operations.push_back(std::move(applied));
+        }
+        context->result->ok = true;
+    } catch (const std::invalid_argument& exception) {
+        context->result->error_code = "invalid_argument";
+        context->result->error_message = exception.what();
+    } catch (const std::exception& exception) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = exception.what();
+    } catch (...) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = "SDK batch edit failed with an unknown exception";
     }
 }
 
@@ -2962,6 +3627,175 @@ sdk_view_edit_result sdk_read_facade::edit_view(
     } catch (...) {
         return {.ok = false, .error_code = "sdk_query_failed",
             .error_message = "SDK view edit failed with an unknown exception"};
+    }
+}
+
+sdk_batch_edit_result sdk_read_facade::edit_batch(
+    const std::vector<sdk_batch_operation>& operations,
+    const std::string& current_instance_id,
+    const std::string& current_project_generation,
+    const bool dry_run) const noexcept {
+    if (operations.empty() || operations.size() > 100U
+        || !is_nonzero_uuid(current_instance_id)
+        || !is_nonzero_uuid(current_project_generation)) {
+        return {.ok = false, .error_code = "invalid_argument",
+            .error_message = "Batch identity or operation count is invalid"};
+    }
+    std::unordered_set<std::string> operation_ids;
+    for (const sdk_batch_operation& operation : operations) {
+        if (operation.client_operation_id.empty() || operation.client_operation_id.size() > 128U
+            || operation.client_operation_id.find('\0') != std::string::npos
+            || !operation_ids.insert(operation.client_operation_id).second) {
+            return {.ok = false, .error_code = "invalid_argument",
+                .error_message = "Batch operation IDs must be unique bounded strings"};
+        }
+        if (const auto* create = std::get_if<sdk_create_request>(&operation.request)) {
+            if (create->source.empty() || create->source.find('\0') != std::string::npos
+                || create->scene_id < 0 || create->layer < 1 || create->start_frame < 1
+                || create->length < 1
+                || (create->name.has_value()
+                    && create->name->find('\0') != std::string::npos)) {
+                return {.ok = false, .error_code = "invalid_argument",
+                    .error_message = "Batch creation parameters are invalid"};
+            }
+            if (create->kind == sdk_create_kind::alias
+                && create->source.size() > MAXIMUM_ALIAS_BYTES) {
+                return {.ok = false, .error_code = "invalid_argument",
+                    .error_message = "Batch alias exceeds the supported size"};
+            }
+            if (create->kind == sdk_create_kind::effect) {
+                const sdk_effect_catalog_query_result catalog = query_effects(sdk_effect_catalog_query{
+                    .name_contains = create->source,
+                    .offset = 0U,
+                    .limit = MAXIMUM_CATALOG_PAGE_ITEMS,
+                });
+                if (!catalog.ok) {
+                    return {.ok = false, .error_code = catalog.error_code,
+                        .error_message = catalog.error_message};
+                }
+                const std::size_t exact_matches = static_cast<std::size_t>(std::ranges::count_if(
+                    catalog.catalog.effects,
+                    [create](const sdk_effect_definition& effect) {
+                        return effect.name == create->source && effect.is_creatable;
+                    }));
+                if (exact_matches != 1U) {
+                    return {.ok = false, .error_code = "invalid_effect_item",
+                        .error_message = exact_matches == 0U
+                            ? "The batch effect definition is not creatable"
+                            : "The batch effect definition is ambiguous"};
+                }
+            }
+            continue;
+        }
+        if (const auto* object = std::get_if<sdk_object_edit_request>(&operation.request)) {
+            const object_locator& locator = object->locator;
+            if (!uuid_equals(locator.instance_id, current_instance_id)
+                || !uuid_equals(locator.project_generation, current_project_generation)
+                || locator.scene_id < 0 || locator.layer < 1 || locator.start_frame < 1
+                || locator.end_frame < locator.start_frame
+                || (object->kind == sdk_object_edit_kind::move
+                    && (!object->destination_scene_id.has_value()
+                        || !object->destination_layer.has_value()
+                        || !object->destination_start_frame.has_value()
+                        || *object->destination_scene_id < 0
+                        || *object->destination_layer < 1
+                        || *object->destination_start_frame < 1))
+                || (object->kind == sdk_object_edit_kind::set_name
+                    && (!object->name.has_value()
+                        || object->name->find('\0') != std::string::npos))) {
+                return {.ok = false, .error_code = "invalid_argument",
+                    .error_message = "Batch object edit parameters are invalid"};
+            }
+            continue;
+        }
+        if (const auto* effect = std::get_if<sdk_effect_edit_request>(&operation.request)) {
+            const object_locator& locator = effect->locator;
+            if (!uuid_equals(locator.instance_id, current_instance_id)
+                || !uuid_equals(locator.project_generation, current_project_generation)
+                || locator.scene_id < 0 || locator.layer < 1 || locator.start_frame < 1
+                || locator.end_frame < locator.start_frame
+                || effect->effect_name.empty() || effect->effect_occurrence < 0
+                || (effect->kind == sdk_effect_edit_kind::set_item
+                    && (!effect->item_name.has_value() || effect->item_name->empty()
+                        || !effect->item_value.has_value()))
+                || (effect->kind == sdk_effect_edit_kind::set_state
+                    && !effect->is_enabled.has_value() && !effect->is_locked.has_value())) {
+                return {.ok = false, .error_code = "invalid_argument",
+                    .error_message = "Batch effect edit parameters are invalid"};
+            }
+            continue;
+        }
+        const auto& layer = std::get<sdk_layer_edit_request>(operation.request);
+        if (layer.layer < 1 || (layer.scene_id.has_value() && *layer.scene_id < 0)
+            || (!layer.name.has_value() && !layer.is_visible.has_value()
+                && !layer.is_locked.has_value())
+            || (layer.name.has_value() && layer.name->find('\0') != std::string::npos)) {
+            return {.ok = false, .error_code = "invalid_argument",
+                .error_message = "Batch layer edit parameters are invalid"};
+        }
+    }
+
+    const sdk_status_snapshot status = query_status();
+    if (!status.is_sdk_ready) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available"};
+    }
+    if (status.has_query_error) {
+        return {.ok = false, .error_code = "sdk_query_failed",
+            .error_message = status.query_error};
+    }
+    if (status.project_state != sdk_project_state::saved
+        && status.project_state != sdk_project_state::unsaved) {
+        return {.ok = false, .error_code = "project_not_open",
+            .error_message = "No AviUtl2 project is open"};
+    }
+    if (status.edit_state != sdk_edit_state::edit) {
+        return {.ok = false, .error_code = "edit_not_available",
+            .error_message = "AviUtl2 is not currently editable"};
+    }
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr || edit_handle->call_read_section_param == nullptr
+        || (!dry_run && edit_handle->call_edit_section_param == nullptr)) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK batch edit section is not available"};
+    }
+    sdk_batch_edit_result result;
+    batch_edit_callback_context callback{
+        .edit_handle = edit_handle,
+        .operations = &operations,
+        .current_instance_id = &current_instance_id,
+        .current_project_generation = &current_project_generation,
+        .result = &result,
+        .dry_run = dry_run,
+    };
+    try {
+        const bool was_scheduled = dry_run
+            ? edit_handle->call_read_section_param(&callback, &edit_sdk_batch)
+            : edit_handle->call_edit_section_param(&callback, &edit_sdk_batch);
+        if (!was_scheduled) {
+            return {.ok = false,
+                .error_code = dry_run ? "read_not_available" : "edit_not_available",
+                .error_message = "AviUtl2 rejected the batch edit section"};
+        }
+        if (!callback.was_called) {
+            return {.ok = false, .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 did not invoke the batch edit callback"};
+        }
+        if (!result.ok && result.error_code.empty()) {
+            result.error_code = "sdk_query_failed";
+            result.error_message = "Batch edit failed without an SDK error classification";
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        return {.ok = false, .error_code = "sdk_query_failed",
+            .error_message = exception.what()};
+    } catch (...) {
+        return {.ok = false, .error_code = "sdk_query_failed",
+            .error_message = "SDK batch edit failed with an unknown exception"};
     }
 }
 

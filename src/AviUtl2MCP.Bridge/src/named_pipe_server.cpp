@@ -1,4 +1,5 @@
 #include "aviutl2_mcp/named_pipe_server.h"
+#include "aviutl2_mcp/native_batch_request_handler.h"
 #include "aviutl2_mcp/native_capabilities_request_handler.h"
 #include "aviutl2_mcp/native_create_request_handler.h"
 #include "aviutl2_mcp/native_effect_edit_request_handler.h"
@@ -279,6 +280,8 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
         identity_, get_sdk_read_facade(), "effect.setState", sdk_effect_edit_kind::set_state));
     dispatcher_.register_handler(std::make_unique<native_layer_request_handler>(get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_view_request_handler>(get_sdk_read_facade()));
+    dispatcher_.register_handler(std::make_unique<native_batch_request_handler>(
+        identity_, get_sdk_read_facade()));
     project_load_callback_state_ = std::make_shared<project_load_callback_state>();
     project_load_callback_state_->revisions = &dispatcher_.revisions();
     const std::weak_ptr<project_load_callback_state> callback_state(project_load_callback_state_);

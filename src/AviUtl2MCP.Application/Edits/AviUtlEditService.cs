@@ -133,6 +133,35 @@ public sealed class AviUtlEditService(
                     input),
                 cancellationToken));
 
+    public ValueTask<QueryExecutionResult<BatchData>> ExecuteBatchAsync(
+        ExecuteBatchInput input,
+        RequestContext context)
+    {
+        ExecuteBatchInput normalized = input with
+        {
+            Operations = input.Operations.Select(NormalizeBatchOperation).ToArray(),
+        };
+        IReadOnlyList<ObjectLocator> locators = normalized.Operations
+            .Select(GetBatchLocator)
+            .Where(locator => locator is not null)
+            .Cast<ObjectLocator>()
+            .ToArray();
+        return ExecuteCoreAsync(
+            normalized,
+            locators,
+            context,
+            (instance, cancellationToken) => _editGateway.ExecuteBatchAsync(
+                new GatewayRequest<ExecuteBatchInput>(
+                    instance.InstanceId,
+                    context.CorrelationId,
+                    context.Deadline,
+                    context.TimeoutMs,
+                    normalized.ExpectedRevision,
+                    normalized.DryRun,
+                    normalized),
+                cancellationToken));
+    }
+
     private ValueTask<QueryExecutionResult<TData>> ExecuteAsync<TArgs, TData>(
         string operation,
         MutationInput input,
@@ -196,7 +225,7 @@ public sealed class AviUtlEditService(
                         gatewayError.CanRetry,
                         ConvertDetails(gatewayError.Details));
                 return new QueryExecutionResult<TData>(
-                    ApplicationResult.Failure<TData>(error, warnings: response.Warnings),
+                    ApplicationResult.Failure(error, response.Data, response.Warnings),
                     response.InstanceId,
                     response.Revision,
                     response.ViewRevision);
@@ -251,4 +280,23 @@ public sealed class AviUtlEditService(
             property => JsonNode.Parse(property.Value.GetRawText()),
             StringComparer.Ordinal);
     }
+
+    private static BatchOperation NormalizeBatchOperation(BatchOperation operation) => operation switch
+    {
+        BatchCreateMediaObject value => value with
+        {
+            Args = value.Args with { MediaPath = RequestValidator.NormalizePath(value.Args.MediaPath) },
+        },
+        _ => operation,
+    };
+
+    private static ObjectLocator? GetBatchLocator(BatchOperation operation) => operation switch
+    {
+        BatchMoveObject value => value.Args.Locator,
+        BatchDeleteObject value => value.Args.Locator,
+        BatchSetObjectName value => value.Args.Locator,
+        BatchSetEffectItem value => value.Args.Locator,
+        BatchSetEffectState value => value.Args.Locator,
+        _ => null,
+    };
 }

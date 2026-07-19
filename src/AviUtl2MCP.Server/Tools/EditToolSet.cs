@@ -311,6 +311,34 @@ public sealed class EditToolSet(
             cancellationToken);
 
     [McpServerTool(
+        Name = "aviutl_execute_batch",
+        Title = "AviUtl2 batch編集",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = false,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<BatchData>))]
+    [Description("9種類の編集を全件事前検証し、1つのUndo単位として順番に実行します。")]
+    public ValueTask<CallToolResult> ExecuteBatchAsync(
+        Revision expectedRevision,
+        IReadOnlyList<BatchOperation> operations,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new ExecuteBatchInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Operations = operations,
+            },
+            _editService.ExecuteBatchAsync,
+            cancellationToken);
+
+    [McpServerTool(
         Name = "aviutl_set_cursor",
         Title = "AviUtl2 cursor変更",
         ReadOnly = false,

@@ -226,6 +226,69 @@ public sealed class RequestValidatorTests
         action();
     }
 
+    [TestMethod]
+    public void ValidateBatchInputRejectsDuplicateOperationIds()
+    {
+        // Arrange
+        ExecuteBatchInput input = new()
+        {
+            ExpectedRevision = new Revision("r1"),
+            Operations =
+            [
+                new BatchDeleteObject("duplicate", new DeleteObjectArgs(CreateValidLocator())),
+                new BatchSetObjectName(
+                    "duplicate",
+                    new SetObjectNameArgs(CreateValidLocator(), "renamed")),
+            ],
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidateBatchInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(action);
+    }
+
+    [TestMethod]
+    public void ValidateBatchInputAcceptsSupportedDiscriminators()
+    {
+        // Arrange
+        ObjectLocator locator = CreateValidLocator();
+        using JsonDocument document = JsonDocument.Parse("42");
+        ExecuteBatchInput input = new()
+        {
+            ExpectedRevision = new Revision("r1"),
+            DryRun = true,
+            Operations =
+            [
+                new BatchCreateObject(
+                    "create",
+                    new CreateObjectArgs(
+                        new EffectDefinitionSelector("Text"),
+                        new Placement(0, 2, 31, DurationFrames: 30))),
+                new BatchMoveObject(
+                    "move",
+                    new MoveObjectArgs(locator, new MovePlacement(0, 3, 61))),
+                new BatchSetEffectItem(
+                    "item",
+                    new SetEffectItemArgs(
+                        locator,
+                        new EffectInstanceSelector("Audio File"),
+                        "Volume",
+                        document.RootElement.Clone())),
+                new BatchSetLayer(
+                    "layer",
+                    new SetLayerArgs(2) { IsVisible = false }),
+            ],
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidateBatchInput(input);
+
+        // Assert
+        action();
+    }
+
     private static ObjectLocator CreateValidLocator() => new(
         Guid.CreateVersion7(),
         Guid.CreateVersion7(),

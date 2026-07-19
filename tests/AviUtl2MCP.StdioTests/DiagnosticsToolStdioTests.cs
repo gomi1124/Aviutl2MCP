@@ -30,6 +30,7 @@ public sealed class DiagnosticsToolStdioTests
         "aviutl_set_effect_item",
         "aviutl_set_effect_state",
         "aviutl_set_layer",
+        "aviutl_execute_batch",
     ];
     private static readonly string[] RESOURCE_URIS =
     [
@@ -77,6 +78,7 @@ public sealed class DiagnosticsToolStdioTests
             McpClientTool projectTool = tools.Single(tool => tool.Name == "aviutl_get_project");
             McpClientTool timelineTool = tools.Single(tool => tool.Name == "aviutl_get_timeline");
             McpClientTool deleteTool = tools.Single(tool => tool.Name == "aviutl_delete_object");
+            McpClientTool batchTool = tools.Single(tool => tool.Name == "aviutl_execute_batch");
             ReadResourceResult statusResource = await client.ReadResourceAsync(
                 "aviutl://status",
                 cancellationToken: timeout.Token);
@@ -114,6 +116,36 @@ public sealed class DiagnosticsToolStdioTests
                     },
                 },
                 cancellationToken: timeout.Token);
+            CallToolResult offlineBatchResult = await client.CallToolAsync(
+                batchTool.Name,
+                new Dictionary<string, object?>
+                {
+                    ["expectedRevision"] = "epoch:generation:0",
+                    ["operations"] = new object[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["op"] = "deleteObject",
+                            ["clientOperationId"] = "delete-1",
+                            ["args"] = new Dictionary<string, object?>
+                            {
+                                ["locator"] = new Dictionary<string, object?>
+                                {
+                                    ["instanceId"] = Guid.CreateVersion7(),
+                                    ["projectGeneration"] = Guid.CreateVersion7(),
+                                    ["sceneId"] = 0,
+                                    ["layer"] = 1,
+                                    ["startFrame"] = 1,
+                                    ["endFrame"] = 30,
+                                    ["name"] = "voice",
+                                    ["aliasSha256"] = new string('a', 64),
+                                    ["effectSignatureSha256"] = new string('b', 64),
+                                },
+                            },
+                        },
+                    },
+                },
+                cancellationToken: timeout.Token);
             CallToolResult logsResult = await client.CallToolAsync(
                 logsTool.Name,
                 new Dictionary<string, object?>
@@ -135,7 +167,7 @@ public sealed class DiagnosticsToolStdioTests
                 cancellationToken: timeout.Token);
 
             // Assert
-            Assert.AreEqual(20, tools.Count);
+            Assert.AreEqual(21, tools.Count);
             CollectionAssert.IsSubsetOf(
                 READ_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());
@@ -192,6 +224,12 @@ public sealed class DiagnosticsToolStdioTests
             Assert.AreEqual(
                 "aviutl_not_running",
                 offlineDeleteEnvelope.GetProperty("error").GetProperty("code").GetString());
+
+            Assert.AreEqual(true, offlineBatchResult.IsError);
+            JsonElement offlineBatchEnvelope = offlineBatchResult.StructuredContent!.Value;
+            Assert.AreEqual(
+                "aviutl_not_running",
+                offlineBatchEnvelope.GetProperty("error").GetProperty("code").GetString());
 
             Assert.AreEqual(false, logsResult.IsError);
             JsonElement logsEnvelope = logsResult.StructuredContent!.Value;

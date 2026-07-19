@@ -305,6 +305,40 @@ struct sdk_view_edit_result final {
     std::string error_message;
 };
 
+using sdk_batch_request_value = std::variant<
+    sdk_create_request,
+    sdk_object_edit_request,
+    sdk_effect_edit_request,
+    sdk_layer_edit_request>;
+
+struct sdk_batch_operation final {
+    std::string client_operation_id;
+    sdk_batch_request_value request;
+};
+
+using sdk_batch_result_value = std::variant<
+    sdk_create_result,
+    sdk_object_edit_result,
+    sdk_effect_edit_result,
+    sdk_layer_edit_result>;
+
+struct sdk_batch_operation_result final {
+    bool ok = false;
+    bool has_changed = false;
+    sdk_batch_result_value result = sdk_create_result{};
+    std::string error_code;
+    std::string error_message;
+};
+
+struct sdk_batch_edit_result final {
+    bool ok = false;
+    bool has_changed = false;
+    std::vector<sdk_batch_operation_result> operations;
+    std::optional<std::size_t> failed_index;
+    std::string error_code;
+    std::string error_message;
+};
+
 class sdk_read_facade final {
 public:
     sdk_read_facade() = default;
@@ -348,6 +382,11 @@ public:
         bool dry_run) const noexcept;
     [[nodiscard]] sdk_view_edit_result edit_view(
         const sdk_view_edit_request& request,
+        bool dry_run) const noexcept;
+    [[nodiscard]] sdk_batch_edit_result edit_batch(
+        const std::vector<sdk_batch_operation>& operations,
+        const std::string& current_instance_id,
+        const std::string& current_project_generation,
         bool dry_run) const noexcept;
 
     void capture_project(PROJECT_FILE* project, bool is_load = true) noexcept;

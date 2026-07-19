@@ -9,6 +9,7 @@
 #include "aviutl2_mcp/ipc_header.h"
 #include "aviutl2_mcp/locator_resolver.h"
 #include "aviutl2_mcp/named_pipe_server.h"
+#include "aviutl2_mcp/native_batch_request_handler.h"
 #include "aviutl2_mcp/native_capabilities_request_handler.h"
 #include "aviutl2_mcp/native_create_request_handler.h"
 #include "aviutl2_mcp/native_effect_edit_request_handler.h"
@@ -323,6 +324,9 @@ struct fake_sdk_state final {
     bool should_throw_edit_state = false;
     bool has_duplicate_effect_name = false;
     bool is_read_active = false;
+    bool should_reject_move = false;
+    int read_section_count = 0;
+    int edit_section_count = 0;
     std::array<created_object, 8> created_objects{};
     std::size_t created_object_count = 0U;
 };
@@ -356,6 +360,7 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
 [[nodiscard]] bool call_fake_read_section(
     void* parameter,
     void (*callback)(void*, EDIT_SECTION*)) {
+    ++ACTIVE_FAKE_SDK->read_section_count;
     ACTIVE_FAKE_SDK->is_read_active = true;
     callback(parameter, &ACTIVE_FAKE_SDK->edit_section);
     ACTIVE_FAKE_SDK->is_read_active = false;
@@ -365,6 +370,7 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
 [[nodiscard]] bool call_fake_edit_section(
     void* parameter,
     void (*callback)(void*, EDIT_SECTION*)) {
+    ++ACTIVE_FAKE_SDK->edit_section_count;
     ACTIVE_FAKE_SDK->is_read_active = true;
     callback(parameter, &ACTIVE_FAKE_SDK->edit_section);
     ACTIVE_FAKE_SDK->is_read_active = false;
@@ -805,6 +811,9 @@ void set_fake_object_name(const OBJECT_HANDLE object, const LPCWSTR name) {
     const OBJECT_HANDLE object,
     const int layer,
     const int frame) {
+    if (ACTIVE_FAKE_SDK->should_reject_move) {
+        return false;
+    }
     OBJECT_LAYER_FRAME* position = nullptr;
     if (object == &ACTIVE_FAKE_SDK->first_object && !ACTIVE_FAKE_SDK->is_first_deleted) {
         position = &ACTIVE_FAKE_SDK->first_position;
@@ -2778,6 +2787,270 @@ void test_native_effect_layer_view_request_handlers() {
     ACTIVE_FAKE_SDK = nullptr;
 }
 
+void test_native_batch_request_handler() {
+    fake_sdk_state fake;
+    configure_fake_sdk(fake);
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "batch fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(
+        std::make_unique<aviutl2_mcp::native_batch_request_handler>(identity, facade));
+    const aviutl2_mcp::sdk_timeline_query_result initial_timeline = facade.query_timeline(
+        aviutl2_mcp::sdk_timeline_query{
+            .limit = 100U,
+            .include_effects = true,
+            .use_display_defaults = false,
+        });
+    require(initial_timeline.ok && initial_timeline.timeline.objects.size() == 2U,
+        "batch fixture timeline was unavailable");
+    const aviutl2_mcp::object_locator initial_locator = aviutl2_mcp::create_object_locator(
+        identity.instance_id,
+        dispatcher.revisions().project_generation(),
+        initial_timeline.timeline.objects.front().candidate);
+    const auto serialize_locator = [](const aviutl2_mcp::object_locator& locator) {
+        return nlohmann::json{
+            {"instanceId", locator.instance_id},
+            {"projectGeneration", locator.project_generation},
+            {"sceneId", locator.scene_id},
+            {"layer", locator.layer},
+            {"startFrame", locator.start_frame},
+            {"endFrame", locator.end_frame},
+            {"name", locator.name},
+            {"aliasSha256", locator.alias_sha256},
+            {"effectSignatureSha256", locator.effect_signature_sha256},
+        };
+    };
+    const nlohmann::json locator_json = serialize_locator(initial_locator);
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string initial_revision = dispatcher.revisions().content_revision();
+
+    const nlohmann::json collision_batch{
+        {"operations", nlohmann::json::array({
+            nlohmann::json{
+                {"op", "createObject"},
+                {"clientOperationId", "create-reservation"},
+                {"args", {
+                    {"effect", {{"name", "Text"}}},
+                    {"placement", {
+                        {"sceneId", 7},
+                        {"layer", 6},
+                        {"startFrame", 41},
+                        {"durationFrames", 5},
+                    }},
+                }},
+            },
+            nlohmann::json{
+                {"op", "moveObject"},
+                {"clientOperationId", "move-into-reservation"},
+                {"args", {
+                    {"locator", locator_json},
+                    {"placement", {
+                        {"sceneId", 7},
+                        {"layer", 6},
+                        {"startFrame", 41},
+                    }},
+                }},
+            },
+        })},
+    };
+    const int edit_count_before_collision = fake.edit_section_count;
+    const nlohmann::json collision = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 101U),
+            "batch.execute",
+            correlation_id,
+            collision_batch.dump(),
+            initial_revision),
+        identity.instance_id).get()));
+    require(!collision.at("ok").get<bool>()
+            && collision.at("error").at("code") == "object_collision"
+            && fake.edit_section_count == edit_count_before_collision
+            && fake.created_object_count == 0U,
+        "native batch planner missed a collision in the planned state");
+
+    const nlohmann::json batch{
+        {"operations", nlohmann::json::array({
+            nlohmann::json{
+                {"op", "setObjectName"},
+                {"clientOperationId", "name"},
+                {"args", {{"locator", locator_json}, {"name", "Batch Voice"}}},
+            },
+            nlohmann::json{
+                {"op", "moveObject"},
+                {"clientOperationId", "move"},
+                {"args", {
+                    {"locator", locator_json},
+                    {"placement", {
+                        {"sceneId", 7},
+                        {"layer", 3},
+                        {"startFrame", 31},
+                    }},
+                }},
+            },
+            nlohmann::json{
+                {"op", "setEffectItem"},
+                {"clientOperationId", "volume"},
+                {"args", {
+                    {"locator", locator_json},
+                    {"effect", {{"name", "Audio File"}, {"occurrence", 0}}},
+                    {"itemName", "Volume"},
+                    {"value", 88},
+                }},
+            },
+            nlohmann::json{
+                {"op", "setLayer"},
+                {"clientOperationId", "layer"},
+                {"args", {{"sceneId", 7}, {"layer", 2}, {"name", "Batch Layer"}}},
+            },
+            nlohmann::json{
+                {"op", "createObject"},
+                {"clientOperationId", "create"},
+                {"args", {
+                    {"effect", {{"name", "Text"}}},
+                    {"placement", {
+                        {"sceneId", 7},
+                        {"layer", 6},
+                        {"startFrame", 41},
+                        {"durationFrames", 5},
+                    }},
+                }},
+            },
+        })},
+    };
+    const int edit_count_before_dry_run = fake.edit_section_count;
+    const nlohmann::json dry_run = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 102U),
+            "batch.execute",
+            correlation_id,
+            batch.dump(),
+            initial_revision,
+            true),
+        identity.instance_id).get()));
+    require(dry_run.at("ok").get<bool>()
+            && dry_run.at("result").at("results").size() == 5U
+            && dry_run.at("result").at("results").at(0).at("status") == "planned"
+            && dry_run.at("result").at("appliedOperationIds").empty()
+            && fake.edit_section_count == edit_count_before_dry_run
+            && fake.first_name == L"Voice"
+            && fake.first_position.layer == 1
+            && fake.first_effect_volume == "42"
+            && fake.created_object_count == 0U
+            && dispatcher.revisions().content_revision() == initial_revision,
+        "native batch dry-run changed SDK or revision state");
+
+    const auto batch_request_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 103U);
+    const aviutl2_mcp::ipc_frame batch_frame = create_request_frame(
+        batch_request_id,
+        "batch.execute",
+        correlation_id,
+        batch.dump(),
+        initial_revision);
+    const int edit_count_before_commit = fake.edit_section_count;
+    const nlohmann::json committed = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        batch_frame,
+        identity.instance_id).get()));
+    require(committed.at("ok").get<bool>()
+            && committed.at("result").at("results").size() == 5U
+            && committed.at("result").at("appliedOperationIds").size() == 5U
+            && !committed.at("result").at("undoRecommended").get<bool>()
+            && fake.edit_section_count == edit_count_before_commit + 1
+            && fake.first_name == L"Batch Voice"
+            && fake.first_position.layer == 2
+            && fake.first_position.start == 30
+            && fake.first_effect_volume == "88"
+            && fake.layer_names[1] == L"Batch Layer"
+            && fake.created_object_count == 1U
+            && committed.at("revision") != initial_revision,
+        "native batch did not apply five operations in one SDK edit section");
+    const int edit_count_after_commit = fake.edit_section_count;
+    const nlohmann::json replayed = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        batch_frame,
+        identity.instance_id).get()));
+    require(replayed == committed && fake.edit_section_count == edit_count_after_commit,
+        "native batch replay violated at-most-once execution");
+
+    const aviutl2_mcp::sdk_timeline_query_result current_timeline = facade.query_timeline(
+        aviutl2_mcp::sdk_timeline_query{
+            .limit = 100U,
+            .include_effects = true,
+            .use_display_defaults = false,
+        });
+    const auto current_object = std::ranges::find_if(
+        current_timeline.timeline.objects,
+        [](const aviutl2_mcp::sdk_object_snapshot& object) {
+            return object.candidate.name == "Batch Voice";
+        });
+    require(current_timeline.ok && current_object != current_timeline.timeline.objects.end(),
+        "native batch post-state object was unavailable");
+    const aviutl2_mcp::object_locator current_locator = aviutl2_mcp::create_object_locator(
+        identity.instance_id,
+        dispatcher.revisions().project_generation(),
+        current_object->candidate);
+    const nlohmann::json partial_batch{
+        {"operations", nlohmann::json::array({
+            nlohmann::json{
+                {"op", "setObjectName"},
+                {"clientOperationId", "partial-name"},
+                {"args", {
+                    {"locator", serialize_locator(current_locator)},
+                    {"name", "Partial Name"},
+                }},
+            },
+            nlohmann::json{
+                {"op", "moveObject"},
+                {"clientOperationId", "partial-move"},
+                {"args", {
+                    {"locator", serialize_locator(current_locator)},
+                    {"placement", {
+                        {"sceneId", 7},
+                        {"layer", 7},
+                        {"startFrame", 61},
+                    }},
+                }},
+            },
+            nlohmann::json{
+                {"op", "setLayer"},
+                {"clientOperationId", "partial-skipped"},
+                {"args", {{"sceneId", 7}, {"layer", 8}, {"name", "Skipped"}}},
+            },
+        })},
+    };
+    fake.should_reject_move = true;
+    const std::string revision_before_partial = committed.at("revision").get<std::string>();
+    const int edit_count_before_partial = fake.edit_section_count;
+    const nlohmann::json partial = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 104U),
+            "batch.execute",
+            correlation_id,
+            partial_batch.dump(),
+            revision_before_partial),
+        identity.instance_id).get()));
+    require(!partial.at("ok").get<bool>()
+            && partial.at("error").at("code") == "partial_operation"
+            && partial.at("error").at("undoRecommended").get<bool>()
+            && partial.contains("result")
+            && partial.at("result").at("undoRecommended").get<bool>()
+            && partial.at("result").at("appliedOperationIds").size() == 1U
+            && partial.at("result").at("results").at(0).at("status") == "applied"
+            && partial.at("result").at("results").at(1).at("status") == "failed"
+            && partial.at("result").at("results").at(2).at("status") == "skipped"
+            && fake.edit_section_count == edit_count_before_partial + 1
+            && fake.first_name == L"Partial Name"
+            && fake.first_position.layer == 2
+            && fake.layer_names[7] != L"Skipped"
+            && partial.at("revision") != revision_before_partial,
+        "native batch partial failure omitted applied IDs, state, or Undo guidance");
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -2806,6 +3079,7 @@ int main() {
         std::pair{"native create request handlers", &test_native_create_request_handlers},
         std::pair{"native object edit request handlers", &test_native_object_edit_request_handlers},
         std::pair{"native effect/layer/view request handlers", &test_native_effect_layer_view_request_handlers},
+        std::pair{"native batch request handler", &test_native_batch_request_handler},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

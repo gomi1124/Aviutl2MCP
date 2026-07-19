@@ -175,6 +175,74 @@ public sealed class AviUtlEditServiceTests
         Assert.AreEqual(expectedViewRevision, parameters.ExpectedViewRevision);
     }
 
+    [TestMethod]
+    public async Task ExecuteBatchUsesLocatorsAndPreservesPartialData()
+    {
+        // Arrange
+        ObjectLocator locator = CreateLocator();
+        BatchData partialData = new(
+            [
+                new BatchResult(
+                    "rename",
+                    BatchOperationKind.SetObjectName,
+                    BatchResultStatus.Applied,
+                    [new Change("setName", "object")]),
+                new BatchResult(
+                    "move",
+                    BatchOperationKind.MoveObject,
+                    BatchResultStatus.Failed,
+                    [new Change("move", "object")]),
+            ],
+            ["rename"],
+            true);
+        JsonElement details = JsonDocument.Parse("{}").RootElement.Clone();
+        GatewayResponse<BatchData> response = new(
+            false,
+            Guid.CreateVersion7(),
+            INSTANCE_ID,
+            new Revision("epoch:generation:5"),
+            new Revision("epoch:generation:2"),
+            partialData,
+            [],
+            new GatewayError(
+                "partial_operation",
+                "partial",
+                false,
+                "sdk",
+                "partial",
+                true,
+                details),
+            ReadOnlyMemory<byte>.Empty);
+        StubResolver resolver = new(CreateInstance());
+        CapturingEditGateway gateway = new(response);
+        AviUtlEditService service = new(resolver, gateway);
+        ExecuteBatchInput input = new()
+        {
+            ExpectedRevision = EXPECTED_REVISION,
+            Operations =
+            [
+                new BatchSetObjectName(
+                    "rename",
+                    new SetObjectNameArgs(locator, "renamed")),
+                new BatchMoveObject(
+                    "move",
+                    new MoveObjectArgs(locator, new MovePlacement(0, 2, 31))),
+            ],
+        };
+        using RequestContext context = CreateContext();
+
+        // Act
+        QueryExecutionResult<BatchData> result = await service.ExecuteBatchAsync(input, context);
+
+        // Assert
+        Assert.IsFalse(result.Result.IsSuccess);
+        Assert.AreEqual("partial_operation", result.Result.Error!.Code);
+        Assert.AreSame(partialData, result.Result.Value);
+        Assert.AreEqual(2, resolver.Locators.Count);
+        Assert.AreEqual("batch.execute", gateway.Operation);
+        Assert.AreEqual(EXPECTED_REVISION, gateway.ExpectedRevision!.Value);
+    }
+
     private static GatewayResponse<TData> CreateSuccess<TData>(TData data) => new(
         true,
         Guid.CreateVersion7(),
@@ -247,7 +315,14 @@ public sealed class AviUtlEditServiceTests
 
         public ValueTask<GatewayResponse<BatchData>> ExecuteBatchAsync(
             GatewayRequest<ExecuteBatchInput> request,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
+            CancellationToken cancellationToken)
+        {
+            Operation = "batch.execute";
+            ExpectedRevision = request.ExpectedRevision;
+            DryRun = request.DryRun;
+            Parameters = request.Parameters;
+            return ValueTask.FromResult((GatewayResponse<BatchData>)response!);
+        }
 
         public ValueTask<GatewayResponse<CursorData>> SetCursorAsync(
             GatewayRequest<SetCursorInput> request,
