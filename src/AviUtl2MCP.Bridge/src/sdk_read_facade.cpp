@@ -1183,21 +1183,21 @@ void create_sdk_objects(void* raw_context, EDIT_SECTION* edit) noexcept {
             edit->set_object_name(created, wide_name.c_str());
         }
 
-        std::vector<object_handle_position> created_objects;
+        std::vector<object_handle_position> created_objects{
+            {created, edit->get_object_layer_frame(created)},
+        };
         if (request.kind == sdk_create_kind::alias) {
             const std::vector<object_handle_position> after = scan_object_handles(*edit, info);
             for (const object_handle_position& object : after) {
-                if (std::ranges::none_of(before, [&object](const object_handle_position& previous) {
+                const bool existed_before = std::ranges::any_of(
+                    before,
+                    [&object](const object_handle_position& previous) {
                         return previous.handle == object.handle;
-                    })) {
+                    });
+                if (!existed_before && object.handle != created) {
                     created_objects.push_back(object);
                 }
             }
-        } else {
-            created_objects.push_back({created, edit->get_object_layer_frame(created)});
-        }
-        if (created_objects.empty()) {
-            throw std::runtime_error("SDK creation succeeded without an observable object");
         }
         const std::vector<OBJECT_HANDLE> selected_objects = copy_selected_objects(*edit);
         context->result->objects.reserve(created_objects.size());

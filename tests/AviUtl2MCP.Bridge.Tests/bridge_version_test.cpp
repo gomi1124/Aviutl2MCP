@@ -347,6 +347,7 @@ struct fake_sdk_state final {
     std::string psd_voice_audio = "C:\\Media\\voice.wav";
     bool is_read_active = false;
     bool should_reject_move = false;
+    bool should_hide_created_objects_from_enumeration = false;
     int read_section_count = 0;
     int edit_section_count = 0;
     int render_frame = 0;
@@ -570,9 +571,11 @@ void wait_fake_rendering_task() {
     if (!ACTIVE_FAKE_SDK->is_second_deleted) {
         consider(&ACTIVE_FAKE_SDK->second_object, ACTIVE_FAKE_SDK->second_position);
     }
-    for (std::size_t index = 0U; index < ACTIVE_FAKE_SDK->created_object_count; ++index) {
-        fake_sdk_state::created_object& created = ACTIVE_FAKE_SDK->created_objects[index];
-        consider(&created.handle, created.position);
+    if (!ACTIVE_FAKE_SDK->should_hide_created_objects_from_enumeration) {
+        for (std::size_t index = 0U; index < ACTIVE_FAKE_SDK->created_object_count; ++index) {
+            fake_sdk_state::created_object& created = ACTIVE_FAKE_SDK->created_objects[index];
+            consider(&created.handle, created.position);
+        }
     }
     return result;
 }
@@ -2628,6 +2631,30 @@ void test_native_create_request_handlers() {
     require(replayed_alias == created_alias && fake.created_object_count == count_after_alias,
         "native alias create did not preserve at-most-once behavior");
 
+    fake.should_hide_created_objects_from_enumeration = true;
+    const std::string hidden_alias_params = nlohmann::json{
+        {"alias", "[Object]\r\neffect.name=Text\r\n"},
+        {"placement", {
+            {"sceneId", 7},
+            {"layer", 10},
+            {"startFrame", 41},
+            {"durationFrames", 10},
+        }},
+    }.dump();
+    const nlohmann::json hidden_alias = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 176U),
+            "object.createAlias",
+            correlation_id,
+            hidden_alias_params,
+            created_alias.at("revision").get<std::string>()),
+        identity.instance_id).get()));
+    require(hidden_alias.at("ok").get<bool>()
+            && hidden_alias.at("result").at("objects").size() == 1U
+            && fake.created_object_count == count_after_alias + 1U,
+        "native alias create ignored the SDK-returned object handle");
+    fake.should_hide_created_objects_from_enumeration = false;
+
     const std::string collision_params = nlohmann::json{
         {"effect", {{"name", "Text"}}},
         {"placement", {
@@ -2643,7 +2670,7 @@ void test_native_create_request_handlers() {
             "object.create",
             correlation_id,
             collision_params,
-            created_alias.at("revision").get<std::string>(),
+            hidden_alias.at("revision").get<std::string>(),
             true),
         identity.instance_id).get()));
     require(!collision.at("ok").get<bool>()
