@@ -7,12 +7,15 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
 
 namespace aviutl2_mcp {
+
+struct project_load_callback_state;
 
 struct pipe_session_diagnostics final {
     std::uint32_t client_process_id;
@@ -45,6 +48,7 @@ private:
     bridge_identity identity_;
     std::string host_version_;
     request_dispatcher dispatcher_;
+    std::shared_ptr<project_load_callback_state> project_load_callback_state_;
     HANDLE stop_event_ = nullptr;
     std::atomic<HANDLE> active_pipe_ = nullptr;
     std::atomic<bool> is_running_ = false;

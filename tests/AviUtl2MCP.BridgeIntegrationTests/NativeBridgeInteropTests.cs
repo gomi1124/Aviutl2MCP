@@ -121,6 +121,32 @@ public sealed class NativeBridgeInteropTests
                     == JsonValueKind.Null);
             }
 
+            Guid timelineRequestId = Guid.CreateVersion7();
+            string timelineRequestJson = JsonSerializer.Serialize(new
+            {
+                method = "timeline.get",
+                correlationId = timelineRequestId,
+                timeoutMs = 5000,
+                dryRun = false,
+                @params = new { limit = 1 },
+            });
+            IpcEncodedFrame timelineRequest = IpcFrameCodec.EncodeFrame(
+                IpcMessageKind.Request,
+                IpcFrameOption.None,
+                timelineRequestId,
+                Encoding.UTF8.GetBytes(timelineRequestJson),
+                []);
+            await transport.WriteAsync(timelineRequest.Bytes, timeout.Token);
+            IpcFrame timelineResponse = await IpcFrameCodec.DecodeFrameAsync(transport, timeout.Token);
+            Assert.AreEqual(timelineRequestId, timelineResponse.Header.RequestId);
+            Assert.AreEqual(IpcFrameOption.ErrorResponse, timelineResponse.Header.Flags);
+            using (JsonDocument timelineDocument = JsonDocument.Parse(timelineResponse.JsonBytes))
+            {
+                JsonElement timeline = timelineDocument.RootElement;
+                Assert.IsFalse(timeline.GetProperty("ok").GetBoolean());
+                Assert.AreEqual("sdk_not_available", timeline.GetProperty("error").GetProperty("code").GetString());
+            }
+
             Guid logRequestId = Guid.CreateVersion7();
             string logRequestJson = JsonSerializer.Serialize(new
             {

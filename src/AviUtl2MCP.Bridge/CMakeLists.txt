@@ -17,6 +17,7 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/native_project_request_handler.cpp
   src/native_ring_logger.cpp
   src/native_status_request_handler.cpp
+  src/native_timeline_request_handlers.cpp
   src/pipe_security.cpp
   src/request_dispatcher.cpp
   src/revision_tracker.cpp

@@ -15,6 +15,7 @@
 #include "aviutl2_mcp/native_project_request_handler.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/native_status_request_handler.h"
+#include "aviutl2_mcp/native_timeline_request_handlers.h"
 #include "aviutl2_mcp/pipe_security.h"
 #include "aviutl2_mcp/request_dispatcher.h"
 #include "aviutl2_mcp/revision_tracker.h"
@@ -267,9 +268,17 @@ struct fake_sdk_state final {
     int edit_state = EDIT_HANDLE::EDIT_STATE_EDIT;
     int first_object = 1;
     int second_object = 2;
+    int first_effect = 3;
+    int second_effect = 4;
+    int third_effect = 5;
+    std::string first_alias = "[Object]\r\nfile=C:\\Media\\Voice.wav\r\n";
+    std::string second_alias = "[Object]\r\ntext=hello\r\n";
+    std::wstring first_name = L"Voice";
+    std::wstring second_name = L"Caption";
     void (*project_load_handler)(PROJECT_FILE*) = nullptr;
     void (*project_save_handler)(PROJECT_FILE*) = nullptr;
     bool should_throw_edit_state = false;
+    bool is_read_active = false;
 };
 
 fake_sdk_state* ACTIVE_FAKE_SDK = nullptr;
@@ -301,7 +310,9 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
 [[nodiscard]] bool call_fake_read_section(
     void* parameter,
     void (*callback)(void*, EDIT_SECTION*)) {
+    ACTIVE_FAKE_SDK->is_read_active = true;
     callback(parameter, &ACTIVE_FAKE_SDK->edit_section);
+    ACTIVE_FAKE_SDK->is_read_active = false;
     return true;
 }
 
@@ -333,6 +344,105 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
     return ACTIVE_FAKE_SDK->scene_name.c_str();
 }
 
+[[nodiscard]] OBJECT_HANDLE find_fake_object(const int layer, const int frame) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake object handle was used outside a read callback");
+    if (layer == 1 && frame <= 9) {
+        return &ACTIVE_FAKE_SDK->first_object;
+    }
+    if (layer == 3 && frame <= 20) {
+        return &ACTIVE_FAKE_SDK->second_object;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] LPCSTR get_fake_object_alias(const OBJECT_HANDLE object) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake alias was read outside a read callback");
+    return object == &ACTIVE_FAKE_SDK->first_object ? ACTIVE_FAKE_SDK->first_alias.c_str()
+        : object == &ACTIVE_FAKE_SDK->second_object ? ACTIVE_FAKE_SDK->second_alias.c_str()
+        : nullptr;
+}
+
+[[nodiscard]] LPCWSTR get_fake_object_name(const OBJECT_HANDLE object) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake object name was read outside a read callback");
+    return object == &ACTIVE_FAKE_SDK->first_object ? ACTIVE_FAKE_SDK->first_name.c_str()
+        : object == &ACTIVE_FAKE_SDK->second_object ? ACTIVE_FAKE_SDK->second_name.c_str()
+        : nullptr;
+}
+
+[[nodiscard]] int get_fake_effect_list(
+    const OBJECT_HANDLE object,
+    EFFECT_HANDLE* effects,
+    const int effect_count) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake effect list was read outside a read callback");
+    const std::array first_effects{
+        static_cast<EFFECT_HANDLE>(&ACTIVE_FAKE_SDK->first_effect),
+        static_cast<EFFECT_HANDLE>(&ACTIVE_FAKE_SDK->second_effect),
+    };
+    const std::array second_effects{
+        static_cast<EFFECT_HANDLE>(&ACTIVE_FAKE_SDK->third_effect),
+    };
+    const auto copy_effects = [effects, effect_count](const auto& source) {
+        if (effects == nullptr) {
+            return static_cast<int>(source.size());
+        }
+        const int copy_count = (std::min)(effect_count, static_cast<int>(source.size()));
+        std::ranges::copy_n(source.begin(), copy_count, effects);
+        return copy_count;
+    };
+    return object == &ACTIVE_FAKE_SDK->first_object ? copy_effects(first_effects)
+        : object == &ACTIVE_FAKE_SDK->second_object ? copy_effects(second_effects)
+        : 0;
+}
+
+[[nodiscard]] LPCWSTR get_fake_effect_name(const EFFECT_HANDLE effect) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake effect name was read outside a read callback");
+    return effect == &ACTIVE_FAKE_SDK->first_effect ? L"Audio File"
+        : effect == &ACTIVE_FAKE_SDK->second_effect ? L"Standard Playback"
+        : effect == &ACTIVE_FAKE_SDK->third_effect ? L"Text"
+        : nullptr;
+}
+
+[[nodiscard]] bool get_fake_effect_enable(const EFFECT_HANDLE effect) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake effect state was read outside a read callback");
+    return effect != &ACTIVE_FAKE_SDK->second_effect;
+}
+
+[[nodiscard]] bool get_fake_effect_lock(const EFFECT_HANDLE effect) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake effect lock was read outside a read callback");
+    return effect == &ACTIVE_FAKE_SDK->second_effect;
+}
+
+[[nodiscard]] bool enumerate_fake_effect_items(
+    const LPCWSTR effect,
+    void* parameter,
+    void (*callback)(void*, LPCWSTR, int)) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake effect items were read outside a read callback");
+    if (effect == nullptr) {
+        return false;
+    }
+    if (std::wstring_view(effect) == L"Audio File") {
+        callback(parameter, L"File", EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE);
+    } else if (std::wstring_view(effect) == L"Text") {
+        callback(parameter, L"Text", EDIT_HANDLE::EFFECT_ITEM_TYPE_TEXT);
+    }
+    return true;
+}
+
+[[nodiscard]] LPCWSTR get_fake_layer_name(const int layer) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake layer name was read outside a read callback");
+    return layer == 1 ? L"Voice Layer" : nullptr;
+}
+
+[[nodiscard]] bool get_fake_layer_enable(const int layer) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake layer visibility was read outside a read callback");
+    return layer != 3;
+}
+
+[[nodiscard]] bool get_fake_layer_lock(const int layer) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake layer lock was read outside a read callback");
+    return layer == 3;
+}
+
 void configure_fake_sdk(fake_sdk_state& state) {
     ACTIVE_FAKE_SDK = &state;
     state.edit_info = {
@@ -359,11 +469,22 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_handle.get_edit_info = &get_fake_edit_info;
     state.edit_handle.get_edit_state = &get_fake_edit_state;
     state.edit_handle.call_read_section_param = &call_fake_read_section;
+    state.edit_handle.enum_effect_item = &enumerate_fake_effect_items;
     state.edit_section.info = &state.edit_info;
+    state.edit_section.find_object = &find_fake_object;
+    state.edit_section.get_object_alias = &get_fake_object_alias;
     state.edit_section.get_selected_object_num = &get_fake_selected_object_count;
     state.edit_section.get_selected_object = &get_fake_selected_object;
     state.edit_section.get_object_layer_frame = &get_fake_object_position;
+    state.edit_section.get_object_name = &get_fake_object_name;
+    state.edit_section.get_layer_name = &get_fake_layer_name;
+    state.edit_section.get_layer_enable = &get_fake_layer_enable;
+    state.edit_section.get_layer_lock = &get_fake_layer_lock;
     state.edit_section.get_scene_name = &get_fake_scene_name;
+    state.edit_section.get_effect_list = &get_fake_effect_list;
+    state.edit_section.get_effect_name = &get_fake_effect_name;
+    state.edit_section.get_effect_enable = &get_fake_effect_enable;
+    state.edit_section.get_effect_lock = &get_fake_effect_lock;
     state.project_file.get_project_file_path = &get_fake_project_path;
     state.host.create_edit_handle = &create_fake_edit_handle;
     state.host.register_project_load_handler = &register_fake_project_load_handler;
@@ -574,6 +695,19 @@ void test_runtime_lifecycle() {
     runtime.stop();
     require(!std::filesystem::exists(descriptor), "runtime did not remove its descriptor before shutdown");
     runtime.stop();
+}
+
+void test_project_load_resets_revision_generation() {
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::named_pipe_server server(identity, "2003300");
+    const std::string initial_generation = server.dispatcher().revisions().project_generation();
+    aviutl2_mcp::get_sdk_read_facade().capture_project(nullptr, true);
+    const std::string loaded_generation = server.dispatcher().revisions().project_generation();
+    require(initial_generation != loaded_generation,
+        "project load did not reset the revision generation");
+    aviutl2_mcp::get_sdk_read_facade().capture_project(nullptr, false);
+    require(server.dispatcher().revisions().project_generation() == loaded_generation,
+        "project save unexpectedly reset the revision generation");
 }
 
 void test_command_gate_serialization_and_shutdown() {
@@ -1200,6 +1334,55 @@ void test_sdk_read_facade() {
             && project.project.scenes[0].name == "Main",
         "SDK facade did not copy the current scene");
 
+    aviutl2_mcp::sdk_timeline_query timeline_query{
+        .offset = 0U,
+        .limit = 1U,
+        .include_effects = true,
+        .use_display_defaults = true,
+    };
+    const aviutl2_mcp::sdk_timeline_query_result first_page = facade.query_timeline(timeline_query);
+    require(first_page.ok && first_page.timeline.objects.size() == 1U
+            && first_page.timeline.is_truncated && first_page.timeline.next_offset == 1U,
+        "SDK facade did not page the timeline");
+    const aviutl2_mcp::sdk_object_snapshot& voice = first_page.timeline.objects[0];
+    require(voice.candidate.layer == 2 && voice.candidate.start_frame == 10
+            && voice.candidate.end_frame == 20 && voice.candidate.name == "Voice",
+        "SDK facade copied incorrect object coordinates or name");
+    require(voice.is_selected && voice.media_path == "C:\\Media\\Voice.wav",
+        "SDK facade did not copy selection or media path");
+    require(voice.effects.size() == 2U
+            && voice.effects[0].name == "Audio File"
+            && voice.effects[1].occurrence == 0
+            && !voice.effects[1].is_enabled
+            && voice.effects[1].is_locked,
+        "SDK facade did not copy ordered effect state");
+    require(voice.candidate.effects.size() == 2U
+            && voice.candidate.effects[0].items.size() == 1U,
+        "SDK facade did not copy effect fingerprints inside the callback");
+
+    timeline_query.offset = first_page.timeline.next_offset;
+    const aviutl2_mcp::sdk_timeline_query_result second_page = facade.query_timeline(timeline_query);
+    require(second_page.ok && second_page.timeline.objects.size() == 1U
+            && !second_page.timeline.is_truncated
+            && second_page.timeline.objects[0].candidate.name == "Caption",
+        "SDK facade did not resume timeline paging");
+    fake.second_name = L"Mutated after callback";
+    require(second_page.timeline.objects[0].candidate.name == "Caption",
+        "SDK facade retained a callback-owned object name pointer");
+
+    aviutl2_mcp::sdk_timeline_query find_query{
+        .name_contains = "Voice",
+        .effect_name = "Audio File",
+        .media_path = "c:/media/voice.wav",
+        .limit = 100U,
+        .include_effects = true,
+        .use_display_defaults = false,
+    };
+    const aviutl2_mcp::sdk_timeline_query_result found = facade.query_timeline(find_query);
+    require(found.ok && found.timeline.objects.size() == 1U
+            && found.timeline.objects[0].candidate.name == "Voice",
+        "SDK facade did not apply object search filters");
+
     fake.project_path.clear();
     fake.project_save_handler(&fake.project_file);
     require(facade.query_status().project_state == aviutl2_mcp::sdk_project_state::unsaved,
@@ -1240,6 +1423,12 @@ void test_native_query_request_handlers() {
         "2003300",
         facade));
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_project_request_handler>(facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_timeline_request_handler>(
+        identity,
+        facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_find_objects_request_handler>(
+        identity,
+        facade));
     const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
 
     const nlohmann::json status = nlohmann::json::parse(get_json(dispatcher.dispatch(
@@ -1307,6 +1496,61 @@ void test_native_query_request_handlers() {
     require(!invalid.at("ok").get<bool>() && invalid.at("error").at("code") == "invalid_argument",
         "native project query accepted an invalid includeScenes value");
 
+    const nlohmann::json timeline = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 55U),
+            "timeline.get",
+            correlation_id,
+            R"({"detail":"effects","limit":1})"),
+        identity.instance_id).get()));
+    require(timeline.at("ok").get<bool>()
+            && timeline.at("result").at("objects").size() == 1U
+            && timeline.at("result").at("isTruncated").get<bool>()
+            && timeline.at("result").at("nextCursor") == "timeline:1",
+        "native timeline handler did not return the first page");
+    const nlohmann::json& first_object = timeline.at("result").at("objects")[0];
+    require(first_object.at("locator").at("instanceId") == identity.instance_id
+            && first_object.at("locator").at("projectGeneration")
+                == dispatcher.revisions().project_generation()
+            && first_object.at("locator").at("aliasSha256").get<std::string>().size() == 64U
+            && first_object.at("effects").size() == 2U,
+        "native timeline handler returned an invalid locator or effect summary");
+
+    const nlohmann::json second_timeline_page = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 56U),
+            "timeline.get",
+            correlation_id,
+            R"({"detail":"summary","limit":1,"cursor":"timeline:1"})"),
+        identity.instance_id).get()));
+    require(second_timeline_page.at("ok").get<bool>()
+            && second_timeline_page.at("result").at("objects")[0].at("name") == "Caption"
+            && second_timeline_page.at("result").at("objects")[0].at("effects").empty(),
+        "native timeline handler did not resume or honor summary detail");
+
+    const nlohmann::json found_objects = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 57U),
+            "object.find",
+            correlation_id,
+            R"({"effectName":"Audio File","mediaPath":"c:/media/voice.wav"})"),
+        identity.instance_id).get()));
+    require(found_objects.at("ok").get<bool>()
+            && found_objects.at("result").at("objects").size() == 1U
+            && found_objects.at("result").at("objects")[0].at("name") == "Voice",
+        "native find objects handler did not apply filters");
+
+    const nlohmann::json invalid_cursor = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 58U),
+            "object.find",
+            correlation_id,
+            R"({"cursor":"timeline:1"})"),
+        identity.instance_id).get()));
+    require(!invalid_cursor.at("ok").get<bool>()
+            && invalid_cursor.at("error").at("code") == "invalid_argument",
+        "native find objects handler accepted a foreign cursor");
+
     dispatcher.stop();
     facade.detach();
     ACTIVE_FAKE_SDK = nullptr;
@@ -1325,6 +1569,7 @@ int main() {
         std::pair{"handshake negotiation", &test_handshake_negotiation},
         std::pair{"named pipe handshake", &test_named_pipe_handshake},
         std::pair{"runtime lifecycle", &test_runtime_lifecycle},
+        std::pair{"project load revision reset", &test_project_load_resets_revision_generation},
         std::pair{"command gate serialization and shutdown", &test_command_gate_serialization_and_shutdown},
         std::pair{"cancellation state machine", &test_cancellation_state_machine},
         std::pair{"at-most-once store", &test_at_most_once_store},

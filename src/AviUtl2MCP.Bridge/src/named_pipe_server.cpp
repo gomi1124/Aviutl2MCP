@@ -4,6 +4,7 @@
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
 #include "aviutl2_mcp/native_status_request_handler.h"
+#include "aviutl2_mcp/native_timeline_request_handlers.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
 
 #include "aviutl2_mcp/handshake.h"
@@ -22,6 +23,12 @@
 #include <vector>
 
 namespace aviutl2_mcp {
+
+struct project_load_callback_state final {
+    std::mutex mutex;
+    revision_tracker* revisions = nullptr;
+};
+
 namespace {
 
 constexpr DWORD PIPE_BUFFER_BYTES = 64U * 1024U;
@@ -235,9 +242,33 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
         host_version_,
         get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_project_request_handler>(get_sdk_read_facade()));
+    dispatcher_.register_handler(std::make_unique<native_timeline_request_handler>(
+        identity_,
+        get_sdk_read_facade()));
+    dispatcher_.register_handler(std::make_unique<native_find_objects_request_handler>(
+        identity_,
+        get_sdk_read_facade()));
+    project_load_callback_state_ = std::make_shared<project_load_callback_state>();
+    project_load_callback_state_->revisions = &dispatcher_.revisions();
+    const std::weak_ptr<project_load_callback_state> callback_state(project_load_callback_state_);
+    get_sdk_read_facade().set_project_loaded_callback([callback_state] {
+        const std::shared_ptr<project_load_callback_state> state = callback_state.lock();
+        if (state == nullptr) {
+            return;
+        }
+        std::scoped_lock lock(state->mutex);
+        if (state->revisions != nullptr) {
+            state->revisions->reset_project(create_bridge_identity().instance_id);
+        }
+    });
 }
 
 named_pipe_server::~named_pipe_server() {
+    get_sdk_read_facade().clear_project_loaded_callback();
+    if (project_load_callback_state_ != nullptr) {
+        std::scoped_lock lock(project_load_callback_state_->mutex);
+        project_load_callback_state_->revisions = nullptr;
+    }
     stop();
 }
 
