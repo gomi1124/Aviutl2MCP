@@ -131,6 +131,11 @@ public sealed class PagingCursorCodec
     {
         string base64 = value.Replace('-', '+').Replace('_', '/');
         int padding = (4 - (base64.Length % 4)) % 4;
-        return Convert.FromBase64String(base64 + new string('=', padding));
+        byte[] decoded = Convert.FromBase64String(base64 + new string('=', padding));
+        if (!string.Equals(EncodeBase64Url(decoded), value, StringComparison.Ordinal))
+        {
+            throw new FormatException("Paging cursor contains a non-canonical base64url segment.");
+        }
+        return decoded;
     }
 }
