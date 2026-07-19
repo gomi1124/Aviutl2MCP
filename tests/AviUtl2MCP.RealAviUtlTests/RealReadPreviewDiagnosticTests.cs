@@ -53,7 +53,7 @@ public sealed class RealReadPreviewDiagnosticTests
 
         IList<McpClientTool> tools = await client.ListToolsAsync(
             cancellationToken: timeout.Token);
-        Assert.AreEqual(22, tools.Count);
+        Assert.AreEqual(28, tools.Count);
 
         JsonElement status = RequireSuccess(await client.CallToolAsync(
             "aviutl_get_status",
@@ -174,6 +174,7 @@ public sealed class RealReadPreviewDiagnosticTests
             BridgeConnectionFactory connectionFactory = new(Guid.NewGuid(), "0.1.0-real-test");
             await using BridgeConnectionRegistry registry = new(watcher, connectionFactory);
             BridgeQueryGateway query = new(registry);
+            BridgeEditGateway edit = new(registry);
             BridgePsdGateway psd = new(registry);
 
             GatewayResponse<ProjectData> project = await query.GetProjectAsync(
@@ -182,6 +183,37 @@ public sealed class RealReadPreviewDiagnosticTests
             Assert.IsTrue(project.Ok, project.Error?.Message);
             Assert.IsNotNull(project.Revision);
             Revision beforeRevision = project.Revision.Value;
+
+            GatewayResponse<ObjectsPageData> existingSetups = await query.FindObjectsAsync(
+                CreateGatewayRequest(
+                    harness.InstanceId,
+                    new FindObjectsInput
+                    {
+                        EffectName = "最初に置くやつ@PSDToolKit",
+                        Limit = 100,
+                    }),
+                timeout.Token);
+            Assert.IsTrue(existingSetups.Ok, existingSetups.Error?.Message);
+            foreach (ObjectSummary existingSetup in existingSetups.Data!.Objects)
+            {
+                DeleteObjectInput deleteInput = new()
+                {
+                    ExpectedRevision = beforeRevision,
+                    Locator = existingSetup.Locator,
+                };
+                GatewayResponse<DeleteData> deleted =
+                    await edit.ExecuteEditAsync<DeleteObjectInput, DeleteData>(
+                        "object.delete",
+                        CreateGatewayRequest(
+                            harness.InstanceId,
+                            deleteInput,
+                            beforeRevision),
+                        timeout.Token);
+                Assert.IsTrue(deleted.Ok, deleted.Error?.Message);
+                Assert.AreEqual(true, deleted.Data!.Deleted);
+                Assert.IsNotNull(deleted.Revision);
+                beforeRevision = deleted.Revision.Value;
+            }
 
             PsdSetupInput parameters = new()
             {
