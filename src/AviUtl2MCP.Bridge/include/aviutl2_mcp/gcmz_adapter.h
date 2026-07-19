@@ -64,18 +64,34 @@ struct gcmz_send_result final {
 
 [[nodiscard]] std::string create_gcmz_drop_payload(const gcmz_drop_request& request);
 
-class gcmz_adapter final {
+class gcmz_client {
+public:
+    virtual ~gcmz_client() = default;
+
+    [[nodiscard]] virtual gcmz_probe_result probe(
+        std::uint32_t expected_process_id,
+        const std::optional<std::filesystem::path>& expected_project_path,
+        std::uint32_t timeout_ms = 2'000U) const noexcept = 0;
+
+    [[nodiscard]] virtual gcmz_send_result send_files(
+        const gcmz_drop_request& request,
+        std::uint32_t expected_process_id,
+        const std::optional<std::filesystem::path>& expected_project_path,
+        std::uint32_t timeout_ms = 10'000U) const noexcept = 0;
+};
+
+class gcmz_adapter final : public gcmz_client {
 public:
     [[nodiscard]] gcmz_probe_result probe(
         std::uint32_t expected_process_id,
         const std::optional<std::filesystem::path>& expected_project_path,
-        std::uint32_t timeout_ms = 2'000U) const noexcept;
+        std::uint32_t timeout_ms = 2'000U) const noexcept override;
 
     [[nodiscard]] gcmz_send_result send_files(
         const gcmz_drop_request& request,
         std::uint32_t expected_process_id,
         const std::optional<std::filesystem::path>& expected_project_path,
-        std::uint32_t timeout_ms = 10'000U) const noexcept;
+        std::uint32_t timeout_ms = 10'000U) const noexcept override;
 };
 
 }  // namespace aviutl2_mcp

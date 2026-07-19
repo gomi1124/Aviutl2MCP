@@ -3,6 +3,7 @@
 #include "aviutl2_mcp/native_capabilities_request_handler.h"
 #include "aviutl2_mcp/native_create_request_handler.h"
 #include "aviutl2_mcp/native_effect_edit_request_handler.h"
+#include "aviutl2_mcp/gcmz_adapter.h"
 #include "aviutl2_mcp/native_effect_request_handlers.h"
 #include "aviutl2_mcp/native_layer_view_request_handlers.h"
 #include "aviutl2_mcp/native_project_request_handler.h"
@@ -297,6 +298,8 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
         identity_, get_sdk_read_facade(), native_psd_item_operation::layer_state));
     dispatcher_.register_handler(std::make_unique<native_psd_validate_request_handler>(
         identity_, get_sdk_read_facade()));
+    dispatcher_.register_handler(std::make_unique<native_psd_create_request_handler>(
+        identity_, get_sdk_read_facade(), std::make_shared<gcmz_adapter>()));
     project_load_callback_state_ = std::make_shared<project_load_callback_state>();
     project_load_callback_state_->revisions = &dispatcher_.revisions();
     const std::weak_ptr<project_load_callback_state> callback_state(project_load_callback_state_);

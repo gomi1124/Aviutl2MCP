@@ -1,16 +1,20 @@
 #include "aviutl2_mcp/native_psd_request_handlers.h"
 
+#include "aviutl2_mcp/gcmz_adapter.h"
 #include "aviutl2_mcp/locator_resolver.h"
 #include "aviutl2_mcp/native_operation_result.h"
 #include "aviutl2_mcp/psd_codecs.h"
 #include "aviutl2_mcp/psd_contract.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
 
+#include <Windows.h>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cwctype>
 #include <filesystem>
@@ -21,6 +25,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -461,13 +466,17 @@ struct psd_object_contract final {
     return result;
 }
 
-[[nodiscard]] bool is_supported_psd_file(const std::string& raw_path) {
+[[nodiscard]] std::filesystem::path utf8_to_filesystem_path(const std::string_view raw_path) {
     std::u8string utf8_path;
     utf8_path.reserve(raw_path.size());
     for (const unsigned char character : raw_path) {
         utf8_path.push_back(static_cast<char8_t>(character));
     }
-    const std::filesystem::path path = std::filesystem::path(utf8_path).lexically_normal();
+    return std::filesystem::path(utf8_path).lexically_normal();
+}
+
+[[nodiscard]] bool is_supported_psd_file(const std::string& raw_path) {
+    const std::filesystem::path path = utf8_to_filesystem_path(raw_path);
     std::wstring extension = path.extension().wstring();
     std::ranges::transform(extension, extension.begin(), [](const wchar_t character) {
         return static_cast<wchar_t>(std::towlower(character));
@@ -475,6 +484,155 @@ struct psd_object_contract final {
     std::error_code error;
     return path.is_absolute() && (extension == L".psd" || extension == L".psb")
         && std::filesystem::is_regular_file(path, error) && !error;
+}
+
+[[nodiscard]] bool paths_identify_same_file(
+    const std::filesystem::path& left,
+    const std::filesystem::path& right) noexcept {
+    std::error_code error;
+    const bool is_equivalent = std::filesystem::equivalent(left, right, error);
+    return !error && is_equivalent;
+}
+
+struct psd_create_parameters final {
+    std::filesystem::path psd_path;
+    int scene_id;
+    int layer;
+    int start_frame;
+    std::optional<std::string> name;
+};
+
+[[nodiscard]] psd_create_parameters parse_psd_create_parameters(
+    const nlohmann::json& params) {
+    const std::string raw_path = parse_required_string(params, "psdPath");
+    if (!is_supported_psd_file(raw_path)) {
+        throw std::invalid_argument("psdPath must identify an existing absolute PSD or PSB file");
+    }
+    const auto placement_value = params.find("placement");
+    if (placement_value == params.end() || !placement_value->is_object()) {
+        throw std::invalid_argument("placement must be an object");
+    }
+    const nlohmann::json& placement = *placement_value;
+    const int scene_id = parse_required_integer(placement, "sceneId", 0);
+    const int layer = parse_required_integer(placement, "layer", 1);
+    const int start_frame = parse_required_integer(placement, "startFrame", 1);
+    const bool has_end = placement.contains("endFrame")
+        && !placement.at("endFrame").is_null();
+    const bool has_duration = placement.contains("durationFrames")
+        && !placement.at("durationFrames").is_null();
+    if (has_end == has_duration) {
+        throw std::invalid_argument(
+            "placement must contain exactly one of endFrame or durationFrames");
+    }
+    if (has_end) {
+        static_cast<void>(parse_required_integer(placement, "endFrame", start_frame));
+    } else {
+        static_cast<void>(parse_required_integer(placement, "durationFrames", 1));
+    }
+    std::optional<std::string> name;
+    const auto name_value = params.find("name");
+    if (name_value != params.end() && !name_value->is_null()) {
+        name = parse_required_string(params, "name", true);
+    }
+    return {
+        .psd_path = utf8_to_filesystem_path(raw_path),
+        .scene_id = scene_id,
+        .layer = layer,
+        .start_frame = start_frame,
+        .name = std::move(name),
+    };
+}
+
+[[nodiscard]] std::optional<std::filesystem::path> get_project_path(
+    const sdk_status_snapshot& status) {
+    if (!status.project_path.has_value()) {
+        return std::nullopt;
+    }
+    return utf8_to_filesystem_path(*status.project_path);
+}
+
+[[nodiscard]] nlohmann::json create_psd_create_change(
+    const psd_create_parameters& parameters) {
+    return nlohmann::json::array({nlohmann::json{
+        {"kind", "createPsd"},
+        {"target", "scene:" + std::to_string(parameters.scene_id)
+            + "/layer:" + std::to_string(parameters.layer)
+            + "/frame:" + std::to_string(parameters.start_frame)},
+    }});
+}
+
+[[nodiscard]] std::optional<sdk_object_detail_snapshot> find_created_psd_object(
+    sdk_read_facade& sdk,
+    const bridge_identity& identity,
+    const std::string& project_generation,
+    const psd_create_parameters& parameters) {
+    const sdk_timeline_query_result timeline = sdk.query_timeline({
+        .scene_id = parameters.scene_id,
+        .layer_start = parameters.layer,
+        .layer_end = parameters.layer,
+        .start_frame = parameters.start_frame,
+        .end_frame = parameters.start_frame,
+        .effect_name = PSD_FILE_EFFECT,
+        .offset = 0U,
+        .limit = 100U,
+        .include_effects = true,
+        .use_display_defaults = false,
+    });
+    if (!timeline.ok || timeline.timeline.is_truncated) {
+        return std::nullopt;
+    }
+    std::optional<sdk_object_detail_snapshot> match;
+    for (const sdk_object_snapshot& object : timeline.timeline.objects) {
+        if (object.candidate.layer != parameters.layer
+            || object.candidate.start_frame != parameters.start_frame
+            || !has_effect(object, PSD_FILE_EFFECT)) {
+            continue;
+        }
+        const object_locator locator = create_object_locator(
+            identity.instance_id,
+            project_generation,
+            object.candidate);
+        const sdk_object_query_result detail = sdk.query_object(
+            locator,
+            identity.instance_id,
+            project_generation,
+            false,
+            true);
+        if (!detail.ok) {
+            return std::nullopt;
+        }
+        const auto contract = validate_psd_object_contract(
+            detail.detail,
+            native_psd_item_operation::layer_state);
+        if (!contract.has_value() || !contract->psd_path.has_value()
+            || !paths_identify_same_file(
+                utf8_to_filesystem_path(*contract->psd_path),
+                parameters.psd_path)) {
+            continue;
+        }
+        if (match.has_value()) {
+            return std::nullopt;
+        }
+        match = detail.detail;
+    }
+    return match;
+}
+
+[[nodiscard]] operation_result create_external_partial_failure(
+    const std::string& message,
+    nlohmann::json result,
+    operation_execution_context& context) {
+    return operation_result{
+        .ok = false,
+        .outcome = "partial",
+        .result_json = std::move(result).dump(),
+        .error_code = "partial_operation",
+        .error_message = message,
+        .revision = context.revisions().content_revision(),
+        .view_revision = context.revisions().view_revision(),
+        .retryable = false,
+        .undo_recommended = true,
+    };
 }
 
 [[nodiscard]] std::optional<sdk_object_snapshot> find_updated_object(
@@ -1281,6 +1439,237 @@ operation_result native_psd_validate_request_handler::execute(
     } catch (const nlohmann::json::exception&) {
         return create_native_failure(
             "invalid_argument", "PSD validation request JSON is invalid", context);
+    } catch (const std::invalid_argument& exception) {
+        return create_native_failure("invalid_argument", exception.what(), context);
+    } catch (const std::exception& exception) {
+        return create_native_failure("sdk_query_failed", exception.what(), context, true);
+    }
+}
+
+native_psd_create_request_handler::native_psd_create_request_handler(
+    bridge_identity identity,
+    sdk_read_facade& sdk,
+    std::shared_ptr<gcmz_client> gcmz)
+    : identity_(std::move(identity)),
+      sdk_(sdk),
+      gcmz_(std::move(gcmz)) {
+    if (gcmz_ == nullptr) {
+        throw std::invalid_argument("PSD create requires a GCMZDrops client");
+    }
+}
+
+std::string native_psd_create_request_handler::operation() const {
+    return "psd.create";
+}
+
+bool native_psd_create_request_handler::is_mutating() const noexcept {
+    return true;
+}
+
+operation_result native_psd_create_request_handler::execute(
+    const operation_request& request,
+    operation_execution_context& context) {
+    try {
+        if (!request.expected_revision.has_value()
+            || !context.revisions().matches_content(*request.expected_revision)) {
+            return create_native_failure(
+                "revision_conflict",
+                "The expected content revision does not match the current revision",
+                context);
+        }
+        const nlohmann::json params = nlohmann::json::parse(request.params_json);
+        if (!params.is_object()) {
+            throw std::invalid_argument("PSD create parameters must be an object");
+        }
+        const psd_create_parameters parameters = parse_psd_create_parameters(params);
+        const psd_profile_detection profile = detect_runtime_psd_profile(sdk_);
+        if (!profile.is_match) {
+            return create_native_failure(
+                "capability_not_available",
+                "The active PSDToolKit2 effect and item profile is not supported: "
+                    + summarize_profile_failures(profile),
+                context);
+        }
+        const sdk_status_snapshot status = sdk_.query_status();
+        if (!status.is_sdk_ready || status.has_query_error
+            || (status.project_state != sdk_project_state::saved
+                && status.project_state != sdk_project_state::unsaved)
+            || status.edit_state != sdk_edit_state::edit) {
+            return create_native_failure(
+                status.has_query_error ? "sdk_query_failed" : "edit_not_available",
+                status.has_query_error
+                    ? status.query_error
+                    : "AviUtl2 is not ready for a PSD create operation",
+                context,
+                status.has_query_error);
+        }
+        const sdk_project_query_result project = sdk_.query_project(false);
+        if (!project.ok) {
+            return create_native_failure(
+                project.error_code,
+                project.error_message,
+                context,
+                project.error_code == "sdk_query_failed");
+        }
+        if (parameters.scene_id != project.project.current_scene_id) {
+            return create_native_failure(
+                "invalid_argument",
+                "PSD creation can only target the active SDK scene",
+                context);
+        }
+        const sdk_timeline_query_result occupied = sdk_.query_timeline({
+            .scene_id = parameters.scene_id,
+            .layer_start = parameters.layer,
+            .layer_end = parameters.layer,
+            .start_frame = parameters.start_frame,
+            .end_frame = parameters.start_frame,
+            .offset = 0U,
+            .limit = 2U,
+            .include_effects = false,
+            .use_display_defaults = false,
+        });
+        if (!occupied.ok || occupied.timeline.is_truncated) {
+            return create_native_failure(
+                occupied.ok ? "sdk_query_failed" : occupied.error_code,
+                occupied.ok
+                    ? "PSD placement collision scan was ambiguous"
+                    : occupied.error_message,
+                context,
+                true);
+        }
+        if (!occupied.timeline.objects.empty()) {
+            return create_native_failure(
+                "object_collision",
+                "PSD placement overlaps an existing object",
+                context);
+        }
+        const std::optional<std::filesystem::path> project_path = get_project_path(status);
+        const std::uint32_t process_id = GetCurrentProcessId();
+        const std::uint32_t probe_timeout = (std::min)(request.timeout_ms, 2'000U);
+        const gcmz_probe_result probe = gcmz_->probe(
+            process_id,
+            project_path,
+            probe_timeout);
+        if (!probe.ok) {
+            return create_native_failure(
+                probe.error_code,
+                probe.error_message,
+                context,
+                probe.error_code == "gcmz_timeout");
+        }
+        const nlohmann::json changes = create_psd_create_change(parameters);
+        if (request.dry_run) {
+            return create_native_success(nlohmann::json{
+                {"object", nullptr},
+                {"plannedChanges", changes},
+            }.dump(), context);
+        }
+        if (!context.reach_commit_point()) {
+            return create_native_failure(
+                "operation_cancelled",
+                "PSD creation was cancelled before cursor positioning",
+                context);
+        }
+        const sdk_view_edit_result cursor = sdk_.edit_view({
+            .scene_id = parameters.scene_id,
+            .frame = parameters.start_frame,
+        }, false);
+        if (!cursor.ok) {
+            return create_native_failure(
+                cursor.error_code,
+                cursor.error_message,
+                context,
+                cursor.error_code == "sdk_query_failed");
+        }
+        if (cursor.has_changed) {
+            static_cast<void>(context.revisions().commit_view_change());
+        }
+        const sdk_project_query_result positioned = sdk_.query_project(false);
+        if (!positioned.ok
+            || positioned.project.current_scene_id != parameters.scene_id
+            || positioned.project.current_frame != parameters.start_frame) {
+            return create_native_failure(
+                "view_changed",
+                "The AviUtl2 cursor changed before GCMZDrops delivery",
+                context);
+        }
+        const std::uint32_t send_timeout = (std::min)(request.timeout_ms, 10'000U);
+        const gcmz_send_result sent = gcmz_->send_files(
+            gcmz_drop_request{
+                .layer = parameters.layer,
+                .frame_advance = 0,
+                .margin = -1,
+                .files = {parameters.psd_path},
+            },
+            process_id,
+            project_path,
+            send_timeout);
+        if (!sent.ok && !sent.target.ok) {
+            return create_native_failure(
+                sent.error_code,
+                sent.error_message,
+                context,
+                sent.error_code == "gcmz_timeout");
+        }
+
+        const std::string project_generation = context.revisions().project_generation();
+        const auto maximum_poll = std::chrono::milliseconds((std::min)(request.timeout_ms, 10'000U));
+        const auto deadline = std::chrono::steady_clock::now() + maximum_poll;
+        std::optional<sdk_object_detail_snapshot> created;
+        do {
+            created = find_created_psd_object(
+                sdk_, identity_, project_generation, parameters);
+            if (created.has_value()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        } while (std::chrono::steady_clock::now() < deadline);
+        if (!created.has_value()) {
+            static_cast<void>(context.revisions().commit_content_change());
+            return create_external_partial_failure(
+                sent.ok
+                    ? "GCMZDrops accepted the PSD but its created object could not be verified"
+                    : "GCMZDrops timed out and no unique created PSD object could be verified",
+                nlohmann::json{
+                    {"object", nullptr},
+                    {"appliedChanges", changes},
+                },
+                context);
+        }
+
+        sdk_object_snapshot final_object = created->object;
+        if (parameters.name.has_value()
+            && final_object.candidate.name != *parameters.name) {
+            const object_locator locator = create_object_locator(
+                identity_.instance_id,
+                project_generation,
+                final_object.candidate);
+            const sdk_object_edit_result named = sdk_.edit_object({
+                .kind = sdk_object_edit_kind::set_name,
+                .locator = locator,
+                .name = parameters.name,
+            }, identity_.instance_id, project_generation, false);
+            if (!named.ok || !named.object.has_value()) {
+                static_cast<void>(context.revisions().commit_content_change());
+                return create_external_partial_failure(
+                    "The PSD object was created but its requested name could not be verified",
+                    nlohmann::json{
+                        {"object", serialize_object(
+                            final_object, identity_, project_generation)},
+                        {"appliedChanges", changes},
+                    },
+                    context);
+            }
+            final_object = *named.object;
+        }
+        static_cast<void>(context.revisions().commit_content_change());
+        return create_native_success(nlohmann::json{
+            {"object", serialize_object(final_object, identity_, project_generation)},
+            {"appliedChanges", changes},
+        }.dump(), context);
+    } catch (const nlohmann::json::exception&) {
+        return create_native_failure(
+            "invalid_argument", "PSD create request JSON is invalid", context);
     } catch (const std::invalid_argument& exception) {
         return create_native_failure("invalid_argument", exception.what(), context);
     } catch (const std::exception& exception) {

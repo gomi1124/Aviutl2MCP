@@ -47,6 +47,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <optional>
@@ -358,6 +359,70 @@ struct fake_sdk_state final {
     std::vector<std::uint8_t> render_buffer;
     std::array<created_object, 8> created_objects{};
     std::size_t created_object_count = 0U;
+};
+
+class fake_gcmz_client final : public aviutl2_mcp::gcmz_client {
+public:
+    fake_gcmz_client() {
+        probe_response.ok = true;
+        probe_response.api_version = aviutl2_mcp::GCMZ_REQUIRED_API_VERSION;
+        send_response.ok = true;
+        send_response.target = probe_response;
+    }
+
+    [[nodiscard]] aviutl2_mcp::gcmz_probe_result probe(
+        const std::uint32_t expected_process_id,
+        const std::optional<std::filesystem::path>& expected_project_path,
+        const std::uint32_t timeout_ms) const noexcept override {
+        ++probe_count;
+        last_process_id = expected_process_id;
+        last_project_path = expected_project_path;
+        last_timeout_ms = timeout_ms;
+        aviutl2_mcp::gcmz_probe_result response = probe_response;
+        if (response.ok) {
+            response.process_id = expected_process_id;
+            response.project_path = expected_project_path;
+        }
+        return response;
+    }
+
+    [[nodiscard]] aviutl2_mcp::gcmz_send_result send_files(
+        const aviutl2_mcp::gcmz_drop_request& request,
+        const std::uint32_t expected_process_id,
+        const std::optional<std::filesystem::path>& expected_project_path,
+        const std::uint32_t timeout_ms) const noexcept override {
+        ++send_count;
+        last_request = request;
+        last_process_id = expected_process_id;
+        last_project_path = expected_project_path;
+        last_timeout_ms = timeout_ms;
+        try {
+            if (on_send) {
+                on_send(request);
+            }
+            aviutl2_mcp::gcmz_send_result response = send_response;
+            if (response.target.ok) {
+                response.target.process_id = expected_process_id;
+                response.target.project_path = expected_project_path;
+            }
+            return response;
+        } catch (const std::exception& exception) {
+            return {
+                .error_code = "fake_gcmz_failed",
+                .error_message = exception.what(),
+            };
+        }
+    }
+
+    aviutl2_mcp::gcmz_probe_result probe_response;
+    aviutl2_mcp::gcmz_send_result send_response;
+    std::function<void(const aviutl2_mcp::gcmz_drop_request&)> on_send;
+    mutable int probe_count = 0;
+    mutable int send_count = 0;
+    mutable std::optional<aviutl2_mcp::gcmz_drop_request> last_request;
+    mutable std::uint32_t last_process_id = 0U;
+    mutable std::optional<std::filesystem::path> last_project_path;
+    mutable std::uint32_t last_timeout_ms = 0U;
 };
 
 fake_sdk_state* ACTIVE_FAKE_SDK = nullptr;
@@ -3882,6 +3947,188 @@ void test_native_psd_item_request_handlers() {
     ACTIVE_FAKE_SDK = nullptr;
 }
 
+void test_native_psd_create_request_handler() {
+    const std::filesystem::path root = create_test_directory(
+        aviutl2_mcp::create_bridge_identity().instance_id);
+    directory_cleanup cleanup(root);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path psd_path = root / L"created.psd";
+    {
+        std::ofstream output(psd_path, std::ios::binary);
+        output << "8BPSfixture";
+    }
+
+    fake_sdk_state fake;
+    fake.has_psd_effects = true;
+    configure_fake_sdk(fake);
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "PSD create fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+    auto gcmz = std::make_shared<fake_gcmz_client>();
+    gcmz->on_send = [&fake, &psd_path](const aviutl2_mcp::gcmz_drop_request& request) {
+        require(request.layer == 6 && request.files.size() == 1U
+                && request.files[0] == psd_path,
+            "PSD create sent an incorrect GCMZDrops request");
+        fake.has_psd_file_object = true;
+        fake.psd_effect_file = psd_path.string();
+        fake.second_position = {.layer = 5, .start = 49, .end = 148};
+        fake.second_alias =
+            "[Object]\r\n"
+            "[Object.0]\r\n"
+            "effect.name=PSDファイル@PSDToolKit\r\n"
+            "PSDファイル=" + fake.psd_effect_file + "\r\n"
+            "セーフガード=1\r\n"
+            "キャラクターID=\r\n"
+            "レイヤー=L.0\r\n";
+    };
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_psd_create_request_handler>(
+        identity,
+        facade,
+        gcmz));
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string initial_revision = dispatcher.revisions().content_revision();
+    const std::string initial_view_revision = dispatcher.revisions().view_revision();
+    const nlohmann::json parameters{
+        {"psdPath", psd_path.string()},
+        {"placement", {
+            {"sceneId", 7},
+            {"layer", 6},
+            {"startFrame", 50},
+            {"durationFrames", 100},
+        }},
+        {"name", "Created PSD"},
+    };
+
+    const nlohmann::json dry_run = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 129U),
+            "psd.create",
+            correlation_id,
+            parameters.dump(),
+            initial_revision,
+            true),
+        identity.instance_id).get()));
+    require(dry_run.at("ok").get<bool>()
+            && dry_run.at("result").at("object").is_null()
+            && dry_run.at("result").at("plannedChanges").size() == 1U
+            && dry_run.at("revision") == initial_revision
+            && dry_run.at("viewRevision") == initial_view_revision
+            && gcmz->probe_count == 1
+            && gcmz->send_count == 0
+            && !fake.has_psd_file_object,
+        "PSD create dry-run sent files, moved the cursor, or omitted its plan");
+
+    gcmz->probe_response = {
+        .error_code = "gcmzdrops_not_available",
+        .error_message = "GCMZDrops is unavailable",
+    };
+    const nlohmann::json unavailable = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 130U),
+            "psd.create",
+            correlation_id,
+            parameters.dump(),
+            initial_revision),
+        identity.instance_id).get()));
+    require(!unavailable.at("ok").get<bool>()
+            && unavailable.at("error").at("code") == "gcmzdrops_not_available"
+            && unavailable.at("revision") == initial_revision
+            && gcmz->probe_count == 2
+            && gcmz->send_count == 0,
+        "PSD create did not fail closed before mutation when GCMZDrops was unavailable");
+    gcmz->probe_response = {
+        .ok = true,
+        .api_version = aviutl2_mcp::GCMZ_REQUIRED_API_VERSION,
+    };
+
+    fake.second_position = {.layer = 5, .start = 49, .end = 59};
+    const nlohmann::json collision = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 131U),
+            "psd.create",
+            correlation_id,
+            parameters.dump(),
+            initial_revision),
+        identity.instance_id).get()));
+    require(!collision.at("ok").get<bool>()
+            && collision.at("error").at("code") == "object_collision"
+            && collision.at("revision") == initial_revision
+            && gcmz->probe_count == 2
+            && gcmz->send_count == 0,
+        "PSD create contacted GCMZDrops despite a placement collision");
+    fake.second_position = {.layer = 3, .start = 20, .end = 29};
+
+    const nlohmann::json created = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 132U),
+            "psd.create",
+            correlation_id,
+            parameters.dump(),
+            initial_revision),
+        identity.instance_id).get()));
+    require(created.at("ok").get<bool>()
+            && created.at("result").at("object").at("name") == "Created PSD"
+            && created.at("result").at("object").at("layer") == 6
+            && created.at("result").at("object").at("startFrame") == 50
+            && created.at("result").at("object").at("effects")[0].at("name")
+                == "PSDファイル@PSDToolKit"
+            && created.at("result").at("appliedChanges").size() == 1U
+            && created.at("revision") != initial_revision
+            && created.at("viewRevision") != initial_view_revision
+            && gcmz->probe_count == 3
+            && gcmz->send_count == 1
+            && gcmz->last_request.has_value()
+            && gcmz->last_request->margin == -1
+            && gcmz->last_request->frame_advance == 0
+            && fake.edit_info.frame == 49,
+        "PSD create did not verify its GCMZDrops result and requested placement");
+
+    const nlohmann::json stale = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 133U),
+            "psd.create",
+            correlation_id,
+            parameters.dump(),
+            initial_revision),
+        identity.instance_id).get()));
+    require(!stale.at("ok").get<bool>()
+            && stale.at("error").at("code") == "revision_conflict"
+            && gcmz->send_count == 1,
+        "PSD create accepted a stale revision or sent a duplicate GCMZDrops request");
+
+    const std::string verified_revision = dispatcher.revisions().content_revision();
+    fake.has_psd_file_object = false;
+    fake.second_position = {.layer = 3, .start = 20, .end = 29};
+    fake.second_alias = "[Object]\r\ntext=hello\r\n";
+    gcmz->on_send = {};
+    const nlohmann::json partial = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 134U),
+            "psd.create",
+            correlation_id,
+            parameters.dump(),
+            verified_revision,
+            false,
+            20U),
+        identity.instance_id).get()));
+    require(!partial.at("ok").get<bool>()
+            && partial.at("error").at("code") == "partial_operation"
+            && partial.at("error").at("outcome") == "partial"
+            && partial.at("error").at("undoRecommended").get<bool>()
+            && partial.at("result").at("object").is_null()
+            && partial.at("result").at("appliedChanges").size() == 1U
+            && partial.at("revision") != verified_revision
+            && gcmz->send_count == 2,
+        "PSD create did not report an unverifiable GCMZDrops delivery as partial");
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -3918,6 +4165,7 @@ int main() {
         std::pair{"PSD value and alias codecs", &test_psd_value_and_alias_codecs},
         std::pair{"native PSD setup request handler", &test_native_psd_setup_request_handler},
         std::pair{"native PSD item request handlers", &test_native_psd_item_request_handlers},
+        std::pair{"native PSD create request handler", &test_native_psd_create_request_handler},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
