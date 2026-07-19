@@ -15,6 +15,7 @@ public sealed class KnownLogClassifierTests
     ];
 
     [TestMethod]
+    [TestProperty("TestId", "diagnostics.known-log-rules")]
     public void ClassifyReturnsAllThreePsdToolKitRulesWithEvidence()
     {
         // Arrange

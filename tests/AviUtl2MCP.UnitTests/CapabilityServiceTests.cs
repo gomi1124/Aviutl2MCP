@@ -23,6 +23,7 @@ public sealed class CapabilityServiceTests
     }
 
     [TestMethod]
+    [TestProperty("TestId", "app.psd-capability-isolation")]
     public void GetCapabilitiesIsolatesGcmzDropsFailure()
     {
         // Arrange
