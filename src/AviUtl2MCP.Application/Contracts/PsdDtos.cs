@@ -10,6 +10,37 @@ public enum PsdPlacementStatus
     Ambiguous,
 }
 
+public sealed record PsdCreateArgs(string PsdPath, Placement Placement)
+{
+    public string? Name { get; init; }
+}
+
+public sealed record PsdSetupArgs
+{
+    public int? SceneId { get; init; }
+
+    public int? PreferredLayer { get; init; }
+
+    public int? PreferredFrame { get; init; }
+
+    public bool CreateIfMissing { get; init; } = true;
+}
+
+public sealed record PsdSetCharacterArgs(ObjectLocator Locator, string CharacterId);
+
+public sealed record PsdSetLayerStateArgs(ObjectLocator Locator, string LayerState);
+
+public sealed record PsdCreateVoiceArgs(
+    string AudioPath,
+    string TextPath,
+    string CharacterId,
+    Placement Placement)
+{
+    public string? LabPath { get; init; }
+
+    public ObjectLocator? PsdLocator { get; init; }
+}
+
 public sealed record PsdSetupData(
     IReadOnlyList<ObjectSummary> Objects,
     bool Created,

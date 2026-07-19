@@ -207,6 +207,106 @@ public static partial class RequestValidator
         }
     }
 
+    public static void ValidatePsdMutationInput(MutationInput input)
+    {
+        ValidateMutationInput(input);
+        switch (input)
+        {
+            case PsdCreateInput create:
+                ValidatePlacement(create.Placement);
+                ValidateExistingFile(create.PsdPath, nameof(create.PsdPath), ".psd", ".psb");
+                ValidateOptionalObjectName(create.Name, nameof(create.Name));
+                break;
+            case PsdSetupInput setup:
+                if (setup.SceneId.HasValue)
+                {
+                    ArgumentOutOfRangeException.ThrowIfNegative(setup.SceneId.Value);
+                }
+                if (setup.PreferredLayer.HasValue)
+                {
+                    ArgumentOutOfRangeException.ThrowIfLessThan(setup.PreferredLayer.Value, 1);
+                }
+                if (setup.PreferredFrame.HasValue)
+                {
+                    ArgumentOutOfRangeException.ThrowIfLessThan(setup.PreferredFrame.Value, 1);
+                }
+                break;
+            case PsdSetCharacterInput character:
+                ValidateLocator(character.Locator);
+                ValidatePsdCharacterId(character.CharacterId);
+                break;
+            case PsdSetLayerStateInput layerState:
+                ValidateLocator(layerState.Locator);
+                ValidatePsdLayerState(layerState.LayerState);
+                break;
+            case PsdCreateVoiceInput voice:
+                ValidatePlacement(voice.Placement);
+                ValidatePsdCharacterId(voice.CharacterId);
+                if (voice.PsdLocator is not null)
+                {
+                    ValidateLocator(voice.PsdLocator);
+                }
+                string audioPath = ValidateExistingFile(
+                    voice.AudioPath,
+                    nameof(voice.AudioPath),
+                    ".wav");
+                string textPath = voice.TextPath is null
+                    ? Path.ChangeExtension(audioPath, ".txt")
+                    : ValidateExistingFile(voice.TextPath, nameof(voice.TextPath), ".txt");
+                if (voice.TextPath is null)
+                {
+                    textPath = ValidateExistingFile(textPath, nameof(voice.TextPath), ".txt");
+                }
+                ValidateCompanionBasename(audioPath, textPath, nameof(voice.TextPath));
+                FileInfo textFile = new(textPath);
+                if (textFile.Length > MAX_TOOL_STRING_UTF8_BYTES)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(input),
+                        "Voice text exceeds the 64 KiB contract limit.");
+                }
+                if (voice.LabPath is not null)
+                {
+                    string labPath = ValidateExistingFile(
+                        voice.LabPath,
+                        nameof(voice.LabPath),
+                        ".lab");
+                    ValidateCompanionBasename(audioPath, labPath, nameof(voice.LabPath));
+                }
+                break;
+        }
+    }
+
+    public static void ValidatePsdValidateInput(PsdValidateInput input)
+    {
+        ValidateCommonInput(input);
+        if (!Enum.IsDefined(input.Scope))
+        {
+            throw new ArgumentOutOfRangeException(nameof(input));
+        }
+        if (input.Scope == PsdValidationScope.SingleObject && input.Locator is null)
+        {
+            throw new ArgumentException(
+                "locator is required when PSD validation scope is object.",
+                nameof(input));
+        }
+        if (input.Locator is not null)
+        {
+            ValidateLocator(input.Locator);
+        }
+        if (input.Checks is not null)
+        {
+            ValidateCollectionCount(input.Checks, nameof(input.Checks), 1, 5);
+            if (input.Checks.Any(check => !Enum.IsDefined(check))
+                || input.Checks.Distinct().Count() != input.Checks.Count)
+            {
+                throw new ArgumentException(
+                    "PSD validation checks must be known and unique.",
+                    nameof(input));
+            }
+        }
+    }
+
     public static void ValidateCursorInput(SetCursorInput input)
     {
         ValidateCommonInput(input);
@@ -426,6 +526,82 @@ public static partial class RequestValidator
             || Encoding.UTF8.GetByteCount(value) > MAX_TOOL_STRING_UTF8_BYTES)
         {
             throw new ArgumentOutOfRangeException(parameterName, "Object name exceeds the contract limit.");
+        }
+    }
+
+    private static string ValidateExistingFile(
+        string path,
+        string parameterName,
+        params string[] allowedExtensions)
+    {
+        string normalized = NormalizePath(path);
+        if (!allowedExtensions.Contains(
+                Path.GetExtension(normalized),
+                StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "File extension is not supported for this PSD operation.",
+                parameterName);
+        }
+        if (!File.Exists(normalized)
+            || (File.GetAttributes(normalized) & FileAttributes.Directory) != 0)
+        {
+            throw new ArgumentException(
+                "Path must identify an existing regular file.",
+                parameterName);
+        }
+        return normalized;
+    }
+
+    private static void ValidateCompanionBasename(
+        string audioPath,
+        string companionPath,
+        string parameterName)
+    {
+        bool hasSameDirectory = string.Equals(
+            Path.GetDirectoryName(audioPath),
+            Path.GetDirectoryName(companionPath),
+            StringComparison.OrdinalIgnoreCase);
+        bool hasSameStem = string.Equals(
+            Path.GetFileNameWithoutExtension(audioPath),
+            Path.GetFileNameWithoutExtension(companionPath),
+            StringComparison.OrdinalIgnoreCase);
+        if (!hasSameDirectory || !hasSameStem)
+        {
+            throw new ArgumentException(
+                "Voice companion files must have the same directory and basename.",
+                parameterName);
+        }
+    }
+
+    private static void ValidatePsdCharacterId(string characterId)
+    {
+        if (string.IsNullOrEmpty(characterId)
+            || characterId.Contains('\0')
+            || characterId.Contains('\r')
+            || characterId.Contains('\n')
+            || characterId.EnumerateRunes().Count() > 256)
+        {
+            throw new ArgumentException(
+                "PSD character ID must be a single line of 1 to 256 Unicode characters.",
+                nameof(characterId));
+        }
+    }
+
+    private static void ValidatePsdLayerState(string layerState)
+    {
+        if (string.IsNullOrEmpty(layerState)
+            || layerState.Contains('\0')
+            || layerState.Contains('\r')
+            || layerState.Contains('\n')
+            || Encoding.UTF8.GetByteCount(layerState) > MAX_TOOL_STRING_UTF8_BYTES
+            || (layerState != "L.0"
+                && !layerState.Contains("v0.", StringComparison.Ordinal)
+                && !layerState.Contains("v1.", StringComparison.Ordinal)))
+        {
+            throw new ArgumentException(
+                "PSD layer state is not a supported canonical value.",
+                nameof(layerState));
         }
     }
 

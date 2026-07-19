@@ -4,6 +4,7 @@ using AviUtl2MCP.Application.Gateways;
 using AviUtl2MCP.Application.Instances;
 using AviUtl2MCP.Application.Paging;
 using AviUtl2MCP.Application.Previews;
+using AviUtl2MCP.Application.Psd;
 using AviUtl2MCP.Application.Queries;
 using AviUtl2MCP.Application.Requests;
 using AviUtl2MCP.Application.Serialization;
@@ -13,6 +14,7 @@ using AviUtl2MCP.BridgeClient.Gateways;
 using AviUtl2MCP.Server;
 using AviUtl2MCP.Server.Diagnostics;
 using AviUtl2MCP.Server.Logging;
+using AviUtl2MCP.Server.Prompts;
 using AviUtl2MCP.Server.Resources;
 using AviUtl2MCP.Server.Tools;
 using Microsoft.Extensions.DependencyInjection;
@@ -42,8 +44,10 @@ builder.Services.AddSingleton<IBridgeDiagnosticsGateway, BridgeDiagnosticsGatewa
 builder.Services.AddSingleton<IAviUtlQueryGateway, BridgeQueryGateway>();
 builder.Services.AddSingleton<IAviUtlEditGateway, BridgeEditGateway>();
 builder.Services.AddSingleton<IAviUtlPreviewGateway, BridgePreviewGateway>();
+builder.Services.AddSingleton<IAviUtlPsdGateway, BridgePsdGateway>();
 builder.Services.AddSingleton<AviUtlEditService>();
 builder.Services.AddSingleton<AviUtlPreviewService>();
+builder.Services.AddSingleton<PsdService>();
 builder.Services.AddSingleton(services => new PagingCursorCodec(
     services.GetRequiredService<ServerRuntimeIdentity>().CursorSigningKey.Span));
 builder.Services.AddSingleton(services => new AviUtlQueryService(
@@ -80,6 +84,8 @@ builder.Services
     .WithTools<DiagnosticsToolSet>(ContractJsonSerializer.CreateSerializerOptions())
     .WithTools<ReadToolSet>(ContractJsonSerializer.CreateSerializerOptions())
     .WithTools<EditToolSet>(ContractJsonSerializer.CreateSerializerOptions())
+    .WithTools<PsdToolSet>(ContractJsonSerializer.CreateSerializerOptions())
+    .WithPrompts<AviUtlPromptProvider>(ContractJsonSerializer.CreateSerializerOptions())
     .WithResources<AviUtlResourceSet>();
 
 await builder.Build().RunAsync().ConfigureAwait(false);

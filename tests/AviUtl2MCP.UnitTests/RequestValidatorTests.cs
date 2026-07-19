@@ -341,6 +341,91 @@ public sealed class RequestValidatorTests
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(dimensionAction);
     }
 
+    [TestMethod]
+    public void ValidatePsdMutationInputAcceptsSameBasenameVoiceCompanions()
+    {
+        // Arrange
+        string directory = Path.Combine(Path.GetTempPath(), $"AviUtl2MCP-{Guid.CreateVersion7():D}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string audioPath = Path.Combine(directory, "alice.wav");
+            File.WriteAllBytes(audioPath, [1]);
+            File.WriteAllText(Path.Combine(directory, "alice.txt"), "hello");
+            File.WriteAllText(Path.Combine(directory, "alice.lab"), "0 1000000 a");
+            PsdCreateVoiceInput input = new()
+            {
+                ExpectedRevision = new Revision("r1"),
+                AudioPath = audioPath,
+                CharacterId = "alice",
+                Placement = new Placement(0, 1, 1, DurationFrames: 30),
+            };
+
+            // Act
+            Action action = () => RequestValidator.ValidatePsdMutationInput(input);
+
+            // Assert
+            action();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void ValidatePsdMutationInputRejectsMismatchedTextBasename()
+    {
+        // Arrange
+        string directory = Path.Combine(Path.GetTempPath(), $"AviUtl2MCP-{Guid.CreateVersion7():D}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string audioPath = Path.Combine(directory, "alice.wav");
+            string textPath = Path.Combine(directory, "bob.txt");
+            File.WriteAllBytes(audioPath, [1]);
+            File.WriteAllText(textPath, "hello");
+            PsdCreateVoiceInput input = new()
+            {
+                ExpectedRevision = new Revision("r1"),
+                AudioPath = audioPath,
+                TextPath = textPath,
+                CharacterId = "alice",
+                Placement = new Placement(0, 1, 1, DurationFrames: 30),
+            };
+
+            // Act
+            Action action = () => RequestValidator.ValidatePsdMutationInput(input);
+
+            // Assert
+            Assert.ThrowsExactly<ArgumentException>(action);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void ValidatePsdValidateInputEnforcesScopeLocatorContract()
+    {
+        // Arrange
+        PsdValidateInput objectScope = new();
+        PsdValidateInput sceneScope = new()
+        {
+            Scope = PsdValidationScope.Scene,
+            Checks = [PsdValidationCheck.Setup, PsdValidationCheck.Subtitle],
+        };
+
+        // Act
+        Action objectAction = () => RequestValidator.ValidatePsdValidateInput(objectScope);
+        Action sceneAction = () => RequestValidator.ValidatePsdValidateInput(sceneScope);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(objectAction);
+        sceneAction();
+    }
+
     private static ObjectLocator CreateValidLocator() => new(
         Guid.CreateVersion7(),
         Guid.CreateVersion7(),

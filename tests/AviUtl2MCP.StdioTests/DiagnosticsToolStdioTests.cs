@@ -33,6 +33,21 @@ public sealed class DiagnosticsToolStdioTests
         "aviutl_set_layer",
         "aviutl_execute_batch",
     ];
+    private static readonly string[] PSD_EDIT_TOOL_NAMES =
+    [
+        "aviutl_psd_create",
+        "aviutl_psd_setup",
+        "aviutl_psd_set_character",
+        "aviutl_psd_set_layer_state",
+        "aviutl_psd_create_voice",
+    ];
+    private static readonly string[] PROMPT_NAMES =
+    [
+        "edit_timeline_safely",
+        "setup_psd_character",
+        "add_voice_and_subtitle",
+        "diagnose_aviutl",
+    ];
     private static readonly string[] RESOURCE_URIS =
     [
         "aviutl://status",
@@ -73,6 +88,8 @@ public sealed class DiagnosticsToolStdioTests
                 cancellationToken: timeout.Token);
             IList<McpClientResource> resources = await client.ListResourcesAsync(
                 cancellationToken: timeout.Token);
+            IList<McpClientPrompt> prompts = await client.ListPromptsAsync(
+                cancellationToken: timeout.Token);
             McpClientTool logsTool = tools.Single(tool => tool.Name == "aviutl_get_logs");
             McpClientTool diagnoseTool = tools.Single(tool => tool.Name == "aviutl_diagnose");
             McpClientTool statusTool = tools.Single(tool => tool.Name == "aviutl_get_status");
@@ -81,6 +98,8 @@ public sealed class DiagnosticsToolStdioTests
             McpClientTool timelineTool = tools.Single(tool => tool.Name == "aviutl_get_timeline");
             McpClientTool deleteTool = tools.Single(tool => tool.Name == "aviutl_delete_object");
             McpClientTool batchTool = tools.Single(tool => tool.Name == "aviutl_execute_batch");
+            McpClientTool psdValidateTool = tools.Single(
+                tool => tool.Name == "aviutl_psd_validate");
             ReadResourceResult statusResource = await client.ReadResourceAsync(
                 "aviutl://status",
                 cancellationToken: timeout.Token);
@@ -152,6 +171,10 @@ public sealed class DiagnosticsToolStdioTests
                     },
                 },
                 cancellationToken: timeout.Token);
+            CallToolResult offlinePsdValidateResult = await client.CallToolAsync(
+                psdValidateTool.Name,
+                new Dictionary<string, object?> { ["scope"] = "scene" },
+                cancellationToken: timeout.Token);
             CallToolResult logsResult = await client.CallToolAsync(
                 logsTool.Name,
                 new Dictionary<string, object?>
@@ -171,9 +194,33 @@ public sealed class DiagnosticsToolStdioTests
                 logsTool.Name,
                 new Dictionary<string, object?> { ["timeoutMs"] = 99 },
                 cancellationToken: timeout.Token);
+            GetPromptResult editPrompt = await client.GetPromptAsync(
+                "edit_timeline_safely",
+                new Dictionary<string, object?> { ["objective"] = "字幕を移動する" },
+                cancellationToken: timeout.Token);
+            GetPromptResult psdPrompt = await client.GetPromptAsync(
+                "setup_psd_character",
+                new Dictionary<string, object?>
+                {
+                    ["psdPath"] = "C:\\fixture\\alice.psd",
+                    ["characterId"] = "alice",
+                },
+                cancellationToken: timeout.Token);
+            GetPromptResult voicePrompt = await client.GetPromptAsync(
+                "add_voice_and_subtitle",
+                new Dictionary<string, object?>
+                {
+                    ["audioPath"] = "C:\\fixture\\alice.wav",
+                    ["characterId"] = "alice",
+                },
+                cancellationToken: timeout.Token);
+            GetPromptResult diagnosePrompt = await client.GetPromptAsync(
+                "diagnose_aviutl",
+                new Dictionary<string, object?> { ["includePreview"] = true },
+                cancellationToken: timeout.Token);
 
             // Assert
-            Assert.AreEqual(22, tools.Count);
+            Assert.AreEqual(28, tools.Count);
             CollectionAssert.IsSubsetOf(
                 READ_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());
@@ -188,6 +235,14 @@ public sealed class DiagnosticsToolStdioTests
             {
                 AssertEditToolMetadata(tools.Single(tool => tool.Name == editToolName));
             }
+            CollectionAssert.IsSubsetOf(
+                PSD_EDIT_TOOL_NAMES,
+                tools.Select(tool => tool.Name).ToArray());
+            foreach (string psdEditToolName in PSD_EDIT_TOOL_NAMES)
+            {
+                AssertEditToolMetadata(tools.Single(tool => tool.Name == psdEditToolName));
+            }
+            AssertToolMetadata(psdValidateTool, "scope", "checks", "locator");
             AssertCursorToolMetadata(tools.Single(tool => tool.Name == "aviutl_set_cursor"));
             AssertToolMetadata(logsTool, "sources", "limit");
             AssertToolMetadata(diagnoseTool, "includeReadSmoke", "includePreviewSmoke", "maxLogLines");
@@ -198,6 +253,14 @@ public sealed class DiagnosticsToolStdioTests
                 RESOURCE_URIS,
                 resources.Select(resource => resource.Uri.ToString()).ToArray());
             Assert.IsTrue(resources.All(resource => resource.MimeType == "application/json"));
+            Assert.AreEqual(4, prompts.Count);
+            CollectionAssert.AreEquivalent(
+                PROMPT_NAMES,
+                prompts.Select(prompt => prompt.Name).ToArray());
+            AssertPromptText(editPrompt, "dryRun=true", "字幕を移動する");
+            AssertPromptText(psdPrompt, "aviutl_psd_setup", "alice.psd");
+            AssertPromptText(voicePrompt, "aviutl_psd_create_voice", "alice.wav");
+            AssertPromptText(diagnosePrompt, "includePreviewSmoke=true", "自動修復");
             JsonElement statusResourceEnvelope = ParseResourceEnvelope(statusResource);
             Assert.IsTrue(statusResourceEnvelope.GetProperty("ok").GetBoolean());
             Assert.AreEqual(
@@ -244,6 +307,13 @@ public sealed class DiagnosticsToolStdioTests
             Assert.AreEqual(
                 "aviutl_not_running",
                 offlineBatchEnvelope.GetProperty("error").GetProperty("code").GetString());
+
+            Assert.AreEqual(true, offlinePsdValidateResult.IsError);
+            JsonElement offlinePsdValidateEnvelope =
+                offlinePsdValidateResult.StructuredContent!.Value;
+            Assert.AreEqual(
+                "aviutl_not_running",
+                offlinePsdValidateEnvelope.GetProperty("error").GetProperty("code").GetString());
 
             Assert.AreEqual(false, logsResult.IsError);
             JsonElement logsEnvelope = logsResult.StructuredContent!.Value;
@@ -304,6 +374,16 @@ public sealed class DiagnosticsToolStdioTests
         TextResourceContents textContent = (TextResourceContents)content;
         using JsonDocument document = JsonDocument.Parse(textContent.Text);
         return document.RootElement.Clone();
+    }
+
+    private static void AssertPromptText(GetPromptResult result, params string[] expectedText)
+    {
+        PromptMessage message = result.Messages.Single();
+        TextContentBlock content = Assert.IsInstanceOfType<TextContentBlock>(message.Content);
+        foreach (string expected in expectedText)
+        {
+            StringAssert.Contains(content.Text, expected);
+        }
     }
 
     private static void AssertEditToolMetadata(McpClientTool tool)
