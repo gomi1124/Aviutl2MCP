@@ -12,8 +12,11 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace aviutl2_mcp {
+
+inline constexpr std::uint32_t MAXIMUM_BRIDGE_CONNECTIONS = 8U;
 
 struct project_load_callback_state;
 
@@ -39,10 +42,12 @@ public:
     [[nodiscard]] request_dispatcher& dispatcher() noexcept;
 
 private:
-    [[nodiscard]] HANDLE create_pipe() const;
+    [[nodiscard]] HANDLE create_pipe(bool is_first_instance) const;
     void run(HANDLE initial_pipe) noexcept;
     [[nodiscard]] bool connect_client(HANDLE pipe) const;
     void serve_client(HANDLE pipe);
+    void register_pipe(HANDLE pipe);
+    void close_pipe(HANDLE pipe) noexcept;
     void set_last_session(pipe_session_diagnostics diagnostics);
 
     bridge_identity identity_;
@@ -50,9 +55,11 @@ private:
     request_dispatcher dispatcher_;
     std::shared_ptr<project_load_callback_state> project_load_callback_state_;
     HANDLE stop_event_ = nullptr;
-    std::atomic<HANDLE> active_pipe_ = nullptr;
     std::atomic<bool> is_running_ = false;
-    std::thread worker_;
+    std::atomic<std::uint32_t> active_listener_count_ = 0U;
+    std::mutex pipes_mutex_;
+    std::vector<HANDLE> active_pipes_;
+    std::vector<std::thread> workers_;
     mutable std::mutex diagnostics_mutex_;
     std::optional<pipe_session_diagnostics> last_session_;
 };

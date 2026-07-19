@@ -26,6 +26,7 @@ public sealed class RealReadPreviewDiagnosticTests
     [TestProperty("TestId", "real.preview-image")]
     [TestProperty("TestId", "smoke.before-after-diff")]
     [TestProperty("TestId", "bridge.render-lifetime-stress")]
+    [TestProperty("TestId", "bridge.concurrent-sessions")]
     [Timeout(180_000)]
     public async Task RealAviUtlReadsRendersAndDiagnosesIsolatedFixture()
     {
@@ -41,6 +42,7 @@ public sealed class RealReadPreviewDiagnosticTests
             "real.preview-image",
             "smoke.before-after-diff",
             "bridge.render-lifetime-stress",
+            "bridge.concurrent-sessions",
             "real.fixture-process-guard");
         try
         {
@@ -74,10 +76,37 @@ public sealed class RealReadPreviewDiagnosticTests
             harness.InstanceId,
             status.GetProperty("data").GetProperty("selectedInstance").GetGuid());
 
+        StdioClientTransport secondTransport = new(new StdioClientTransportOptions
+        {
+            Name = "AviUtl2MCP second real isolated session",
+            Command = "dotnet",
+            Arguments = [typeof(ServerMarker).Assembly.Location],
+            WorkingDirectory = Path.GetDirectoryName(typeof(ServerMarker).Assembly.Location),
+            EnvironmentVariables = new Dictionary<string, string?>
+            {
+                ["AVIUTL2_MCP_INSTANCE_DIRECTORY"] = harness.InstanceDirectory,
+                ["AVIUTL2_MCP_LOG_DIRECTORY"] = harness.ServerLogDirectory,
+                ["AVIUTL2_LOG_DIRECTORY"] = harness.AviUtlLogDirectory,
+            },
+        });
+        await using McpClient secondClient = await McpClient.CreateAsync(
+            secondTransport,
+            cancellationToken: timeout.Token);
+        JsonElement secondStatus = RequireSuccess(await secondClient.CallToolAsync(
+            "aviutl_get_status",
+            CreateInstanceArguments(harness.InstanceId),
+            cancellationToken: timeout.Token));
+        Assert.AreEqual(
+            harness.InstanceId,
+            secondStatus.GetProperty("data").GetProperty("selectedInstance").GetGuid());
+
         JsonElement capabilities = RequireSuccess(await client.CallToolAsync(
             "aviutl_get_capabilities",
             CreateInstanceArguments(harness.InstanceId),
             cancellationToken: timeout.Token));
+        Assert.AreEqual(
+            8,
+            capabilities.GetProperty("data").GetProperty("limits").GetProperty("bridgeConnections").GetInt32());
         JsonElement project = await WaitForProjectAsync(client, harness.InstanceId, timeout.Token);
         Assert.AreEqual(1920, project.GetProperty("data").GetProperty("width").GetInt32());
         Assert.AreEqual(1080, project.GetProperty("data").GetProperty("height").GetInt32());

@@ -327,7 +327,7 @@ named_pipe_server::~named_pipe_server() {
 }
 
 void named_pipe_server::start() {
-    if (is_running_.load() || worker_.joinable()) {
+    if (is_running_.load() || !workers_.empty()) {
         throw std::logic_error("named pipe server is already running");
     }
     stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -335,15 +335,41 @@ void named_pipe_server::start() {
         throw_last_error("CreateEventW failed for server stop event");
     }
     try {
-        const HANDLE pipe = create_pipe();
-        active_pipe_.store(pipe);
+        active_pipes_.reserve(MAXIMUM_BRIDGE_CONNECTIONS);
+        workers_.reserve(MAXIMUM_BRIDGE_CONNECTIONS);
+        std::array<HANDLE, MAXIMUM_BRIDGE_CONNECTIONS> initial_pipes{};
+        for (std::size_t index = 0U; index < initial_pipes.size(); ++index) {
+            const HANDLE pipe = create_pipe(index == 0U);
+            register_pipe(pipe);
+            initial_pipes[index] = pipe;
+        }
         is_running_.store(true);
-        worker_ = std::thread(&named_pipe_server::run, this, pipe);
+        for (const HANDLE pipe : initial_pipes) {
+            workers_.emplace_back(&named_pipe_server::run, this, pipe);
+        }
     } catch (...) {
         is_running_.store(false);
-        const HANDLE pipe = active_pipe_.exchange(nullptr);
-        if (pipe != nullptr && pipe != INVALID_HANDLE_VALUE) {
-            CloseHandle(pipe);
+        if (stop_event_ != nullptr) {
+            SetEvent(stop_event_);
+        }
+        {
+            std::scoped_lock lock(pipes_mutex_);
+            for (const HANDLE pipe : active_pipes_) {
+                CancelIoEx(pipe, nullptr);
+            }
+        }
+        for (std::thread& worker : workers_) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        workers_.clear();
+        {
+            std::scoped_lock lock(pipes_mutex_);
+            for (const HANDLE pipe : active_pipes_) {
+                CloseHandle(pipe);
+            }
+            active_pipes_.clear();
         }
         CloseHandle(stop_event_);
         stop_event_ = nullptr;
@@ -353,21 +379,32 @@ void named_pipe_server::start() {
 
 void named_pipe_server::stop() noexcept {
     const bool was_running = is_running_.exchange(false);
-    if (!was_running && !worker_.joinable()) {
+    if (!was_running && workers_.empty()) {
         return;
     }
     if (stop_event_ != nullptr) {
         SetEvent(stop_event_);
     }
-    const HANDLE pipe = active_pipe_.load();
-    if (pipe != nullptr && pipe != INVALID_HANDLE_VALUE) {
-        CancelIoEx(pipe, nullptr);
+    {
+        std::scoped_lock lock(pipes_mutex_);
+        for (const HANDLE pipe : active_pipes_) {
+            CancelIoEx(pipe, nullptr);
+        }
     }
-    if (worker_.joinable()) {
-        worker_.join();
+    for (std::thread& worker : workers_) {
+        if (worker.joinable()) {
+            worker.join();
+        }
     }
+    workers_.clear();
     dispatcher_.stop();
-    active_pipe_.store(nullptr);
+    {
+        std::scoped_lock lock(pipes_mutex_);
+        for (const HANDLE pipe : active_pipes_) {
+            CloseHandle(pipe);
+        }
+        active_pipes_.clear();
+    }
     if (stop_event_ != nullptr) {
         CloseHandle(stop_event_);
         stop_event_ = nullptr;
@@ -387,14 +424,16 @@ request_dispatcher& named_pipe_server::dispatcher() noexcept {
     return dispatcher_;
 }
 
-HANDLE named_pipe_server::create_pipe() const {
+HANDLE named_pipe_server::create_pipe(const bool is_first_instance) const {
     user_only_security security;
     const std::wstring pipe_path = L"\\\\.\\pipe\\" + std::wstring(identity_.pipe_name.begin(), identity_.pipe_name.end());
+    const DWORD open_mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED
+        | (is_first_instance ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0U);
     const HANDLE pipe = CreateNamedPipeW(
         pipe_path.c_str(),
-        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        open_mode,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-        1U,
+        MAXIMUM_BRIDGE_CONNECTIONS,
         PIPE_BUFFER_BYTES,
         PIPE_BUFFER_BYTES,
         0U,
@@ -406,8 +445,8 @@ HANDLE named_pipe_server::create_pipe() const {
 }
 
 void named_pipe_server::run(HANDLE pipe) noexcept {
+    active_listener_count_.fetch_add(1U);
     while (pipe != INVALID_HANDLE_VALUE) {
-        active_pipe_.store(pipe);
         try {
             if (connect_client(pipe)) {
                 serve_client(pipe);
@@ -425,16 +464,20 @@ void named_pipe_server::run(HANDLE pipe) noexcept {
                 "session.failed",
                 exception.what());
         }
-        DisconnectNamedPipe(pipe);
-        CloseHandle(pipe);
-        active_pipe_.store(nullptr);
+        close_pipe(pipe);
+        pipe = INVALID_HANDLE_VALUE;
 
         if (!is_running_.load() || WaitForSingleObject(stop_event_, 0U) == WAIT_OBJECT_0) {
             break;
         }
         try {
-            pipe = create_pipe();
+            pipe = create_pipe(false);
+            register_pipe(pipe);
         } catch (const std::exception& exception) {
+            if (pipe != INVALID_HANDLE_VALUE) {
+                CloseHandle(pipe);
+                pipe = INVALID_HANDLE_VALUE;
+            }
             get_native_logger().write(
                 native_log_level::error,
                 "pipe",
@@ -443,7 +486,11 @@ void named_pipe_server::run(HANDLE pipe) noexcept {
             break;
         }
     }
-    is_running_.store(false);
+    if (active_listener_count_.fetch_sub(1U) == 1U && is_running_.exchange(false)) {
+        if (stop_event_ != nullptr) {
+            SetEvent(stop_event_);
+        }
+    }
 }
 
 bool named_pipe_server::connect_client(const HANDLE pipe) const {
@@ -582,6 +629,21 @@ void named_pipe_server::serve_client(const HANDLE pipe) {
         }
         throw std::invalid_argument("unsupported frame received in established session");
     }
+}
+
+void named_pipe_server::register_pipe(const HANDLE pipe) {
+    std::scoped_lock lock(pipes_mutex_);
+    active_pipes_.push_back(pipe);
+}
+
+void named_pipe_server::close_pipe(const HANDLE pipe) noexcept {
+    std::scoped_lock lock(pipes_mutex_);
+    const auto position = std::ranges::find(active_pipes_, pipe);
+    if (position != active_pipes_.end()) {
+        active_pipes_.erase(position);
+    }
+    DisconnectNamedPipe(pipe);
+    CloseHandle(pipe);
 }
 
 void named_pipe_server::set_last_session(const pipe_session_diagnostics diagnostics) {

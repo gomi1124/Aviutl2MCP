@@ -62,6 +62,15 @@ public sealed class NativeBridgeInteropTests
             Assert.AreEqual(descriptor.ProcessCreationTime, session.AviutlProcessCreationTime);
             Assert.AreNotEqual(Guid.Empty, session.ServerEpoch);
 
+            await using NamedPipeBridgeTransport secondTransport = new();
+            BridgeHandshakeClient secondHandshake = new(secondTransport, Guid.CreateVersion7(), "0.1.0-test");
+            BridgeSessionInfo secondSession = await secondHandshake.HandshakeAsync(
+                descriptor.PipeName,
+                descriptor.InstanceId,
+                timeout.Token);
+            Assert.AreEqual(session.InstanceId, secondSession.InstanceId);
+            Assert.AreEqual(session.ServerEpoch, secondSession.ServerEpoch);
+
             Guid requestId = Guid.CreateVersion7();
             string requestJson = JsonSerializer.Serialize(new
             {

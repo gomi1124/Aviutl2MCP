@@ -18,12 +18,12 @@
 ```
 
 - `instanceId`はプラグイン起動ごとに生成する128-bit UUID。
-- V1は `nMaxInstances=1` とし、同じAviUtl2へ同時接続するMCPサーバーを1つに限定する。
-- `PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE`
+- V1は `nMaxInstances=8` とし、同じAviUtl2へ最大8つのMCPサーバーが同時接続できる。
+- 全instanceで `PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED` を使い、最初の待受instanceだけ `FILE_FLAG_FIRST_PIPE_INSTANCE` を付ける。
 - `PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS`
 - 入出力pipe bufferは64 KiBを目安とし、フレームサイズや境界をpipe bufferへ依存させない。
 
-接続中に別クライアントが来た場合は既存クライアントを切断せず、有限時間の待機後に `bridge_busy` とする。V1で複数MCPクライアントを同時利用する場合は、別AviUtl2インスタンスを選択する。
+各pipe instanceは独立してhandshakeとIPCを処理する。AviUtl2 SDK操作は全sessionで共有するcommand gateへ投入して直列化し、同時接続中もSDK呼び出しを競合させない。9つ目以降のクライアントは空きinstanceができるまで待機し、クライアント側の接続timeout内に空かなければ接続失敗とする。
 
 ## 3. Windows認可
 

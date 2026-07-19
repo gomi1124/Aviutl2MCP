@@ -1464,6 +1464,46 @@ void test_descriptor_publish_remove() {
     };
 }
 
+[[nodiscard]] aviutl2_mcp::ipc_frame create_client_hello_frame(
+    const aviutl2_mcp::bridge_identity& identity) {
+    const aviutl2_mcp::client_hello hello = create_client_hello(identity, GetCurrentProcessId());
+    const std::string hello_json = "{\"clientInstanceId\":\"" + hello.client_instance_id
+        + "\",\"clientProcessId\":" + std::to_string(hello.client_process_id)
+        + ",\"targetInstanceId\":\"" + hello.target_instance_id
+        + "\",\"protocol\":{\"minMajor\":1,\"minMinor\":0,\"maxMajor\":1,\"maxMinor\":0}"
+          ",\"clientVersion\":\"0.1.0\",\"limits\":{\"jsonBytes\":8388608,\"binaryBytes\":16777216,\"inFlight\":8}}";
+    const std::vector<std::uint8_t> hello_bytes(hello_json.begin(), hello_json.end());
+    aviutl2_mcp::ipc_frame frame{
+        .header = create_header(
+            aviutl2_mcp::message_kind::client_hello,
+            aviutl2_mcp::frame_flags::none,
+            static_cast<std::uint32_t>(hello_bytes.size()),
+            0U),
+        .json = hello_bytes,
+        .binary = {},
+        .payload_hash = {},
+    };
+    frame.payload_hash = aviutl2_mcp::calculate_payload_hash(frame.header, frame.json, frame.binary);
+    return frame;
+}
+
+[[nodiscard]] aviutl2_mcp::ipc_frame create_close_frame() {
+    aviutl2_mcp::ipc_frame frame{
+        .header = aviutl2_mcp::frame_header{
+            .kind = aviutl2_mcp::message_kind::close,
+            .flags = aviutl2_mcp::frame_flags::none,
+            .request_id = {},
+            .json_length = 0U,
+            .binary_length = 0U,
+        },
+        .json = {},
+        .binary = {},
+        .payload_hash = {},
+    };
+    frame.payload_hash = aviutl2_mcp::calculate_payload_hash(frame.header, frame.json, frame.binary);
+    return frame;
+}
+
 void test_handshake_negotiation() {
     const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
     const aviutl2_mcp::handshake_handler handler(identity, "2003300");
@@ -1496,23 +1536,7 @@ void test_named_pipe_handshake() {
     require(pipe != INVALID_HANDLE_VALUE, "test client could not connect to the secured named pipe");
     handle_transport transport(pipe);
 
-    const aviutl2_mcp::client_hello hello = create_client_hello(identity, GetCurrentProcessId());
-    const std::string hello_json = "{\"clientInstanceId\":\"" + hello.client_instance_id
-        + "\",\"clientProcessId\":" + std::to_string(hello.client_process_id)
-        + ",\"targetInstanceId\":\"" + hello.target_instance_id
-        + "\",\"protocol\":{\"minMajor\":1,\"minMinor\":0,\"maxMajor\":1,\"maxMinor\":0}"
-          ",\"clientVersion\":\"0.1.0\",\"limits\":{\"jsonBytes\":8388608,\"binaryBytes\":16777216,\"inFlight\":8}}";
-    const std::vector<std::uint8_t> hello_bytes(hello_json.begin(), hello_json.end());
-    aviutl2_mcp::ipc_frame request{
-        .header = create_header(
-            aviutl2_mcp::message_kind::client_hello,
-            aviutl2_mcp::frame_flags::none,
-            static_cast<std::uint32_t>(hello_bytes.size()),
-            0U),
-        .json = hello_bytes,
-        .binary = {},
-        .payload_hash = {},
-    };
+    aviutl2_mcp::ipc_frame request = create_client_hello_frame(identity);
     aviutl2_mcp::write_frame(transport, request);
     const aviutl2_mcp::ipc_frame response = aviutl2_mcp::read_frame(transport);
     require(response.header.kind == aviutl2_mcp::message_kind::server_hello, "server did not return ServerHello");
@@ -1531,24 +1555,67 @@ void test_named_pipe_handshake() {
         get_json(unsupported_response).find("operation_not_supported") != std::string::npos,
         "established named pipe session did not route Request through dispatcher");
 
-    aviutl2_mcp::ipc_frame close{
-        .header = aviutl2_mcp::frame_header{
-            .kind = aviutl2_mcp::message_kind::close,
-            .flags = aviutl2_mcp::frame_flags::none,
-            .request_id = {},
-            .json_length = 0U,
-            .binary_length = 0U,
-        },
-        .json = {},
-        .binary = {},
-        .payload_hash = {},
-    };
+    aviutl2_mcp::ipc_frame close = create_close_frame();
     aviutl2_mcp::write_frame(transport, close);
     CloseHandle(pipe);
     server.stop();
     const auto diagnostics = server.last_session();
     require(diagnostics.has_value() && diagnostics->handshake_accepted, "accepted session was not recorded");
     require(diagnostics->client_process_id == GetCurrentProcessId(), "actual named pipe client PID was not recorded");
+}
+
+void test_named_pipe_concurrent_sessions() {
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::named_pipe_server server(identity, "2003300");
+    server.start();
+
+    const std::wstring path = L"\\\\.\\pipe\\" + std::wstring(identity.pipe_name.begin(), identity.pipe_name.end());
+    const HANDLE first_pipe = CreateFileW(
+        path.c_str(), GENERIC_READ | GENERIC_WRITE, 0U, nullptr, OPEN_EXISTING, 0U, nullptr);
+    require(first_pipe != INVALID_HANDLE_VALUE, "first concurrent client could not connect");
+    const HANDLE second_pipe = CreateFileW(
+        path.c_str(), GENERIC_READ | GENERIC_WRITE, 0U, nullptr, OPEN_EXISTING, 0U, nullptr);
+    require(second_pipe != INVALID_HANDLE_VALUE, "second concurrent client could not connect");
+    handle_transport first_transport(first_pipe);
+    handle_transport second_transport(second_pipe);
+
+    aviutl2_mcp::write_frame(first_transport, create_client_hello_frame(identity));
+    aviutl2_mcp::write_frame(second_transport, create_client_hello_frame(identity));
+    const aviutl2_mcp::ipc_frame first_hello = aviutl2_mcp::read_frame(first_transport);
+    const aviutl2_mcp::ipc_frame second_hello = aviutl2_mcp::read_frame(second_transport);
+    require(first_hello.header.kind == aviutl2_mcp::message_kind::server_hello
+            && get_json(first_hello).find("\"accepted\":true") != std::string::npos,
+        "first concurrent handshake was rejected");
+    require(second_hello.header.kind == aviutl2_mcp::message_kind::server_hello
+            && get_json(second_hello).find("\"accepted\":true") != std::string::npos,
+        "second concurrent handshake was rejected");
+
+    const std::string first_correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string second_correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    aviutl2_mcp::write_frame(
+        first_transport,
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 8U),
+            "status.missing",
+            first_correlation_id));
+    aviutl2_mcp::write_frame(
+        second_transport,
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 9U),
+            "status.missing",
+            second_correlation_id));
+    const aviutl2_mcp::ipc_frame first_response = aviutl2_mcp::read_frame(first_transport);
+    const aviutl2_mcp::ipc_frame second_response = aviutl2_mcp::read_frame(second_transport);
+    require(get_json(first_response).find("operation_not_supported") != std::string::npos,
+        "first concurrent session did not receive a dispatcher response");
+    require(get_json(second_response).find("operation_not_supported") != std::string::npos,
+        "second concurrent session did not receive a dispatcher response");
+
+    aviutl2_mcp::write_frame(first_transport, create_close_frame());
+    aviutl2_mcp::write_frame(second_transport, create_close_frame());
+    CloseHandle(first_pipe);
+    CloseHandle(second_pipe);
+    server.stop();
 }
 
 void test_runtime_lifecycle() {
@@ -2486,6 +2553,8 @@ void test_native_query_request_handlers() {
         "native capabilities enabled an incomplete PSDToolKit profile");
     require(capabilities.at("result").at("versions").at("sdk") == "2003300"
             && capabilities.at("result").at("versions").at("psdToolKit") == "2.0.0alpha10"
+            && capabilities.at("result").at("limits").at("bridgeConnections")
+                == aviutl2_mcp::MAXIMUM_BRIDGE_CONNECTIONS
             && capabilities.at("result").at("limits").at("pagingCursorTtlSeconds") == 300,
         "native capabilities returned incorrect versions or limits");
 
@@ -4815,6 +4884,7 @@ int main() {
         std::pair{"descriptor publish/remove", &test_descriptor_publish_remove},
         std::pair{"handshake negotiation", &test_handshake_negotiation},
         std::pair{"named pipe handshake", &test_named_pipe_handshake},
+        std::pair{"named pipe concurrent sessions", &test_named_pipe_concurrent_sessions},
         std::pair{"runtime lifecycle", &test_runtime_lifecycle},
         std::pair{"project load revision reset", &test_project_load_resets_revision_generation},
         std::pair{"command gate serialization and shutdown", &test_command_gate_serialization_and_shutdown},

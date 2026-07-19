@@ -2,6 +2,7 @@
 
 #include "aviutl2_mcp/gcmz_adapter.h"
 #include "aviutl2_mcp/native_environment_probe.h"
+#include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_operation_result.h"
 #include "aviutl2_mcp/psd_contract.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
@@ -217,7 +218,7 @@ operation_result native_capabilities_request_handler::execute(
                 {"ipcJsonBytes", 8 * 1024 * 1024},
                 {"ipcBinaryBytes", 16 * 1024 * 1024},
                 {"ipcInFlight", 8},
-                {"bridgeConnections", 1},
+                {"bridgeConnections", MAXIMUM_BRIDGE_CONNECTIONS},
                 {"globalQueue", 64},
                 {"mutationTombstones", 4096},
                 {"mutationResponseCache", 256},
