@@ -152,6 +152,68 @@ public static partial class RequestValidator
                 ValidateLocator(setName.Locator);
                 ValidateOptionalObjectName(setName.Name, nameof(setName.Name), isRequired: true);
                 break;
+            case SetEffectItemInput setItem:
+                ValidateLocator(setItem.Locator);
+                ArgumentNullException.ThrowIfNull(setItem.Effect);
+                ValidateString(setItem.Effect.Name, nameof(setItem.Effect.Name), 4096);
+                ArgumentOutOfRangeException.ThrowIfNegative(setItem.Effect.Occurrence);
+                ValidateString(setItem.ItemName, nameof(setItem.ItemName), 4096);
+                ValidateEffectItemValue(setItem.Value);
+                break;
+            case SetEffectStateInput setState:
+                ValidateLocator(setState.Locator);
+                ArgumentNullException.ThrowIfNull(setState.Effect);
+                ValidateString(setState.Effect.Name, nameof(setState.Effect.Name), 4096);
+                ArgumentOutOfRangeException.ThrowIfNegative(setState.Effect.Occurrence);
+                if (!setState.IsEnabled.HasValue && !setState.IsLocked.HasValue)
+                {
+                    throw new ArgumentException("At least one effect state property is required.", nameof(input));
+                }
+                break;
+            case SetLayerInput setLayer:
+                if (setLayer.SceneId.HasValue)
+                {
+                    ArgumentOutOfRangeException.ThrowIfNegative(setLayer.SceneId.Value);
+                }
+                ArgumentOutOfRangeException.ThrowIfLessThan(setLayer.Layer, 1);
+                ValidateOptionalObjectName(setLayer.Name, nameof(setLayer.Name));
+                if (setLayer.Name is null && !setLayer.IsVisible.HasValue && !setLayer.IsLocked.HasValue)
+                {
+                    throw new ArgumentException("At least one layer property is required.", nameof(input));
+                }
+                break;
+        }
+    }
+
+    public static void ValidateCursorInput(SetCursorInput input)
+    {
+        ValidateCommonInput(input);
+        if (input.SceneId.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(input.SceneId.Value);
+        }
+        if (input.Frame.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(input.Frame.Value, 1);
+        }
+        if (input.DisplayFrame.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(input.DisplayFrame.Value, 1);
+        }
+        if (input.Selection is not null)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(input.Selection.StartFrame, 1);
+            ArgumentOutOfRangeException.ThrowIfLessThan(
+                input.Selection.EndFrame,
+                input.Selection.StartFrame);
+        }
+        if (!input.Frame.HasValue && !input.DisplayFrame.HasValue && input.Selection is null)
+        {
+            throw new ArgumentException("At least one cursor property is required.", nameof(input));
+        }
+        if (input.ExpectedViewRevision is not null)
+        {
+            _ = new Revision(input.ExpectedViewRevision.Value.Value);
         }
     }
 

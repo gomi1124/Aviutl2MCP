@@ -242,6 +242,69 @@ struct sdk_object_edit_result final {
     std::string error_message;
 };
 
+enum class sdk_effect_edit_kind {
+    set_item,
+    set_state,
+};
+
+struct sdk_effect_edit_request final {
+    sdk_effect_edit_kind kind;
+    object_locator locator;
+    std::string effect_name;
+    int effect_occurrence;
+    std::optional<std::string> item_name;
+    std::optional<sdk_effect_item_value> item_value;
+    std::optional<bool> is_enabled;
+    std::optional<bool> is_locked;
+};
+
+struct sdk_effect_edit_result final {
+    bool ok = false;
+    bool has_changed = false;
+    std::optional<sdk_effect_summary> effect;
+    std::optional<sdk_effect_item_snapshot> item;
+    std::string error_code;
+    std::string error_message;
+};
+
+struct sdk_layer_edit_request final {
+    std::optional<int> scene_id;
+    int layer;
+    std::optional<std::string> name;
+    std::optional<bool> is_visible;
+    std::optional<bool> is_locked;
+};
+
+struct sdk_layer_edit_result final {
+    bool ok = false;
+    bool has_changed = false;
+    std::optional<sdk_layer_snapshot> layer;
+    std::string error_code;
+    std::string error_message;
+};
+
+struct sdk_view_edit_request final {
+    std::optional<int> scene_id;
+    std::optional<int> frame;
+    std::optional<int> display_frame;
+    std::optional<sdk_selection> selection;
+};
+
+struct sdk_view_snapshot final {
+    int scene_id;
+    int frame;
+    int display_frame;
+    std::optional<sdk_selection> selection;
+};
+
+struct sdk_view_edit_result final {
+    bool ok = false;
+    bool has_changed = false;
+    std::optional<sdk_view_snapshot> view;
+    std::string error_code;
+    std::string error_message;
+};
+
 class sdk_read_facade final {
 public:
     sdk_read_facade() = default;
@@ -274,6 +337,17 @@ public:
         const sdk_object_edit_request& request,
         const std::string& current_instance_id,
         const std::string& current_project_generation,
+        bool dry_run) const noexcept;
+    [[nodiscard]] sdk_effect_edit_result edit_effect(
+        const sdk_effect_edit_request& request,
+        const std::string& current_instance_id,
+        const std::string& current_project_generation,
+        bool dry_run) const noexcept;
+    [[nodiscard]] sdk_layer_edit_result edit_layer(
+        const sdk_layer_edit_request& request,
+        bool dry_run) const noexcept;
+    [[nodiscard]] sdk_view_edit_result edit_view(
+        const sdk_view_edit_request& request,
         bool dry_run) const noexcept;
 
     void capture_project(PROJECT_FILE* project, bool is_load = true) noexcept;

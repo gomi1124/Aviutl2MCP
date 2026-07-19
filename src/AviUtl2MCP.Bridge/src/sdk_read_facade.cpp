@@ -8,6 +8,7 @@
 #include "plugin2.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <cmath>
@@ -320,33 +321,33 @@ struct effect_item_codec final {
 [[nodiscard]] effect_item_codec get_effect_item_codec(const int type) noexcept {
     switch (type) {
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_INTEGER:
-            return {"integer", "integer", false};
+            return {"integer", "integer", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER:
-            return {"number", "number", false};
+            return {"number", "number", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_CHECK:
-            return {"check", "check01", false};
+            return {"check", "check01", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_TEXT:
-            return {"text", "aliasString", false};
+            return {"text", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_STRING:
-            return {"string", "aliasString", false};
+            return {"string", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE:
-            return {"file", "aliasString", false};
+            return {"file", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_COLOR:
-            return {"color", "aliasString", false};
+            return {"color", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_SELECT:
-            return {"select", "aliasString", false};
+            return {"select", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_SCENE:
-            return {"scene", "aliasString", false};
+            return {"scene", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_RANGE:
-            return {"range", "aliasString", false};
+            return {"range", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_COMBO:
-            return {"combo", "aliasString", false};
+            return {"combo", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_MASK:
-            return {"mask", "aliasString", false};
+            return {"mask", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_FONT:
-            return {"font", "aliasString", false};
+            return {"font", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_FIGURE:
-            return {"figure", "aliasString", false};
+            return {"figure", "aliasString", true};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_DATA:
             return {"data", "unsupported", false};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_FOLDER:
@@ -1303,6 +1304,432 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
     } catch (...) {
         context->result->error_code = "sdk_query_failed";
         context->result->error_message = "SDK object edit failed with an unknown exception";
+    }
+}
+
+[[nodiscard]] std::string encode_effect_item_value(
+    const sdk_effect_item_snapshot& item,
+    const sdk_effect_item_value& value) {
+    if (!item.is_writable || item.codec == "unsupported") {
+        throw std::invalid_argument("The selected effect item codec is read-only");
+    }
+    if (item.codec == "integer") {
+        const auto* integer = std::get_if<std::int64_t>(&value);
+        if (integer == nullptr) {
+            throw std::invalid_argument("The effect item requires an integer value");
+        }
+        return std::to_string(*integer);
+    }
+    if (item.codec == "number") {
+        const auto* number = std::get_if<double>(&value);
+        if (number == nullptr || !std::isfinite(*number)) {
+            throw std::invalid_argument("The effect item requires a finite number value");
+        }
+        std::array<char, 64> buffer{};
+        const auto [end, error] = std::to_chars(
+            buffer.data(), buffer.data() + buffer.size(), *number, std::chars_format::general);
+        if (error != std::errc{}) {
+            throw std::invalid_argument("The effect item number could not be encoded");
+        }
+        return {buffer.data(), end};
+    }
+    if (item.codec == "check01") {
+        const auto* checked = std::get_if<bool>(&value);
+        if (checked == nullptr) {
+            throw std::invalid_argument("The effect item requires a boolean value");
+        }
+        return *checked ? "1" : "0";
+    }
+    if (item.codec == "aliasString") {
+        const auto* text = std::get_if<std::string>(&value);
+        if (text == nullptr || text->find('\0') != std::string::npos
+            || text->size() > MAXIMUM_EFFECT_ITEM_VALUE_BYTES) {
+            throw std::invalid_argument("The effect item requires a bounded string value");
+        }
+        return *text;
+    }
+    throw std::invalid_argument("The selected effect item codec is unsupported");
+}
+
+[[nodiscard]] std::optional<sdk_effect_item_snapshot> find_effect_item_snapshot(
+    EDIT_HANDLE& edit_handle,
+    EDIT_SECTION& edit,
+    const EFFECT_HANDLE effect,
+    const sdk_effect_summary& summary,
+    const std::string& item_name) {
+    const std::vector<EFFECT_HANDLE> handles{effect};
+    const std::vector<sdk_effect_summary> summaries{summary};
+    std::vector<sdk_effect_items_group> groups = copy_object_effect_items(
+        edit_handle, edit, handles, summaries);
+    if (groups.size() != 1U) {
+        throw std::runtime_error("SDK effect item copy returned an invalid group count");
+    }
+    const auto match = std::ranges::find_if(groups.front().items, [&item_name](const auto& item) {
+        return item.name == item_name;
+    });
+    if (match == groups.front().items.end()) {
+        return std::nullopt;
+    }
+    if (std::ranges::count_if(groups.front().items, [&item_name](const auto& item) {
+            return item.name == item_name;
+        }) != 1) {
+        throw std::invalid_argument("The effect item name is ambiguous");
+    }
+    return *match;
+}
+
+struct effect_edit_callback_context final {
+    EDIT_HANDLE* edit_handle;
+    const sdk_effect_edit_request* request;
+    const std::string* current_instance_id;
+    const std::string* current_project_generation;
+    sdk_effect_edit_result* result;
+    bool dry_run;
+    bool was_called = false;
+};
+
+void edit_sdk_effect(void* raw_context, EDIT_SECTION* edit) noexcept {
+    auto* context = static_cast<effect_edit_callback_context*>(raw_context);
+    context->was_called = true;
+    try {
+        if (edit == nullptr || edit->info == nullptr || edit->find_object == nullptr
+            || edit->get_object_layer_frame == nullptr || edit->get_object_alias == nullptr) {
+            throw std::runtime_error("SDK effect edit callback functions are unavailable");
+        }
+        const sdk_effect_edit_request& request = *context->request;
+        const object_locator& locator = request.locator;
+        const EDIT_INFO& info = *edit->info;
+        if (locator.scene_id != info.scene_id) {
+            context->result->error_code = "object_not_found";
+            context->result->error_message = "The effect object is not in the active scene";
+            return;
+        }
+        const int sdk_layer = locator.layer - 1;
+        const int sdk_frame = locator.start_frame - 1;
+        OBJECT_HANDLE object = edit->find_object(sdk_layer, sdk_frame);
+        if (object == nullptr) {
+            context->result->error_code = "object_not_found";
+            context->result->error_message = "The effect object locator could not be resolved";
+            return;
+        }
+        const OBJECT_LAYER_FRAME position = edit->get_object_layer_frame(object);
+        if (position.layer != sdk_layer || position.start != sdk_frame) {
+            context->result->error_code = "object_not_found";
+            context->result->error_message = "The effect object locator position is stale";
+            return;
+        }
+        const std::vector<OBJECT_HANDLE> selected_objects = copy_selected_objects(*edit);
+        std::vector<EFFECT_HANDLE> effect_handles;
+        const sdk_object_snapshot before = copy_object_snapshot(
+            *context->edit_handle,
+            *edit,
+            info,
+            object,
+            position,
+            selected_objects,
+            true,
+            &effect_handles);
+        const locator_resolution resolution = resolve_object_locator(
+            locator,
+            *context->current_instance_id,
+            *context->current_project_generation,
+            std::span<const object_candidate>(&before.candidate, 1U));
+        if (resolution.status != locator_resolution_status::resolved) {
+            context->result->error_code = resolution.status == locator_resolution_status::ambiguous
+                ? "object_ambiguous"
+                : "object_not_found";
+            context->result->error_message = "The effect object locator fingerprint is stale";
+            return;
+        }
+        if (edit->get_layer_lock != nullptr && edit->get_layer_lock(position.layer)) {
+            context->result->error_code = "edit_not_available";
+            context->result->error_message = "The effect object layer is locked";
+            return;
+        }
+        if (effect_handles.size() != before.effects.size()) {
+            throw std::runtime_error("SDK effect handles and summaries differed");
+        }
+        std::optional<std::size_t> selected_index;
+        for (std::size_t index = 0U; index < before.effects.size(); ++index) {
+            const sdk_effect_summary& candidate = before.effects[index];
+            if (candidate.name == request.effect_name
+                && candidate.occurrence == request.effect_occurrence) {
+                selected_index = index;
+                break;
+            }
+        }
+        if (!selected_index.has_value()) {
+            context->result->error_code = "invalid_effect_item";
+            context->result->error_message = "The selected effect occurrence was not found";
+            return;
+        }
+        const EFFECT_HANDLE effect_handle = effect_handles[*selected_index];
+        const sdk_effect_summary effect_before = before.effects[*selected_index];
+
+        if (request.kind == sdk_effect_edit_kind::set_item) {
+            if (!request.item_name.has_value() || !request.item_value.has_value()) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message = "Effect item name and value are required";
+                return;
+            }
+            std::optional<sdk_effect_item_snapshot> item_before = find_effect_item_snapshot(
+                *context->edit_handle, *edit, effect_handle, effect_before, *request.item_name);
+            if (!item_before.has_value() || !item_before->is_writable) {
+                context->result->error_code = "invalid_effect_item";
+                context->result->error_message = "The selected effect item is missing or read-only";
+                return;
+            }
+            const std::string encoded = encode_effect_item_value(*item_before, *request.item_value);
+            const bool is_noop = item_before->value == request.item_value;
+            if (context->dry_run || is_noop) {
+                context->result->ok = true;
+                context->result->item = std::move(item_before);
+                return;
+            }
+            if (edit->set_effect_item_value == nullptr) {
+                throw std::runtime_error("SDK effect item editing is unavailable");
+            }
+            const std::wstring wide_item_name = to_wide(*request.item_name);
+            if (!edit->set_effect_item_value(
+                    effect_handle, wide_item_name.c_str(), encoded.c_str())) {
+                context->result->error_code = "invalid_effect_item";
+                context->result->error_message = "AviUtl2 rejected the effect item value";
+                return;
+            }
+            context->result->has_changed = true;
+            context->result->item = find_effect_item_snapshot(
+                *context->edit_handle, *edit, effect_handle, effect_before, *request.item_name);
+            if (!context->result->item.has_value()) {
+                throw std::runtime_error("SDK effect item postcondition was unavailable");
+            }
+        } else {
+            if (!request.is_enabled.has_value() && !request.is_locked.has_value()) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message = "At least one effect state property is required";
+                return;
+            }
+            const bool is_noop = (!request.is_enabled.has_value()
+                    || *request.is_enabled == effect_before.is_enabled)
+                && (!request.is_locked.has_value()
+                    || *request.is_locked == effect_before.is_locked);
+            if (context->dry_run || is_noop) {
+                context->result->ok = true;
+                context->result->effect = effect_before;
+                return;
+            }
+            if (request.is_enabled.has_value()) {
+                if (edit->set_effect_enable == nullptr) {
+                    throw std::runtime_error("SDK effect enable editing is unavailable");
+                }
+                edit->set_effect_enable(effect_handle, *request.is_enabled);
+                context->result->has_changed = true;
+            }
+            if (request.is_locked.has_value()) {
+                if (edit->set_effect_lock == nullptr) {
+                    throw std::runtime_error("SDK effect lock editing is unavailable");
+                }
+                edit->set_effect_lock(effect_handle, *request.is_locked);
+                context->result->has_changed = true;
+            }
+            context->result->effect = sdk_effect_summary{
+                .name = effect_before.name,
+                .occurrence = effect_before.occurrence,
+                .is_enabled = edit->get_effect_enable == nullptr
+                    ? request.is_enabled.value_or(effect_before.is_enabled)
+                    : edit->get_effect_enable(effect_handle),
+                .is_locked = edit->get_effect_lock == nullptr
+                    ? request.is_locked.value_or(effect_before.is_locked)
+                    : edit->get_effect_lock(effect_handle),
+            };
+            if ((request.is_enabled.has_value()
+                    && context->result->effect->is_enabled != *request.is_enabled)
+                || (request.is_locked.has_value()
+                    && context->result->effect->is_locked != *request.is_locked)) {
+                throw std::runtime_error("SDK effect state did not match the requested postcondition");
+            }
+        }
+        context->result->ok = true;
+    } catch (const std::invalid_argument& exception) {
+        context->result->error_code = "invalid_effect_item";
+        context->result->error_message = exception.what();
+    } catch (const std::exception& exception) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = exception.what();
+    } catch (...) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = "SDK effect edit failed with an unknown exception";
+    }
+}
+
+[[nodiscard]] sdk_layer_snapshot copy_layer_snapshot(
+    EDIT_SECTION& edit,
+    const int scene_id,
+    const int sdk_layer) {
+    return sdk_layer_snapshot{
+        .scene_id = scene_id,
+        .layer = sdk_layer + 1,
+        .name = edit.get_layer_name == nullptr ? std::string{} : to_utf8(edit.get_layer_name(sdk_layer)),
+        .is_visible = edit.get_layer_enable == nullptr || edit.get_layer_enable(sdk_layer),
+        .is_locked = edit.get_layer_lock != nullptr && edit.get_layer_lock(sdk_layer),
+    };
+}
+
+struct layer_edit_callback_context final {
+    const sdk_layer_edit_request* request;
+    sdk_layer_edit_result* result;
+    bool dry_run;
+    bool was_called = false;
+};
+
+void edit_sdk_layer(void* raw_context, EDIT_SECTION* edit) noexcept {
+    auto* context = static_cast<layer_edit_callback_context*>(raw_context);
+    context->was_called = true;
+    try {
+        if (edit == nullptr || edit->info == nullptr) {
+            throw std::runtime_error("SDK layer edit callback omitted edit information");
+        }
+        const sdk_layer_edit_request& request = *context->request;
+        const EDIT_INFO& info = *edit->info;
+        if ((request.scene_id.has_value() && *request.scene_id != info.scene_id)
+            || request.layer < 1 || request.layer - 1 > info.layer_max) {
+            context->result->error_code = "invalid_argument";
+            context->result->error_message = "The layer is not in the active SDK scene";
+            return;
+        }
+        const int sdk_layer = request.layer - 1;
+        const sdk_layer_snapshot before = copy_layer_snapshot(*edit, info.scene_id, sdk_layer);
+        const bool is_noop = (!request.name.has_value() || *request.name == before.name)
+            && (!request.is_visible.has_value() || *request.is_visible == before.is_visible)
+            && (!request.is_locked.has_value() || *request.is_locked == before.is_locked);
+        if (context->dry_run || is_noop) {
+            context->result->ok = true;
+            context->result->layer = before;
+            return;
+        }
+        if (request.name.has_value()) {
+            if (edit->set_layer_name == nullptr) {
+                throw std::runtime_error("SDK layer naming is unavailable");
+            }
+            const std::wstring wide_name = to_wide(*request.name);
+            edit->set_layer_name(sdk_layer, wide_name.c_str());
+            context->result->has_changed = true;
+        }
+        if (request.is_visible.has_value()) {
+            if (edit->set_layer_enable == nullptr) {
+                throw std::runtime_error("SDK layer visibility editing is unavailable");
+            }
+            edit->set_layer_enable(sdk_layer, *request.is_visible);
+            context->result->has_changed = true;
+        }
+        if (request.is_locked.has_value()) {
+            if (edit->set_layer_lock == nullptr) {
+                throw std::runtime_error("SDK layer lock editing is unavailable");
+            }
+            edit->set_layer_lock(sdk_layer, *request.is_locked);
+            context->result->has_changed = true;
+        }
+        context->result->layer = copy_layer_snapshot(*edit, info.scene_id, sdk_layer);
+        if ((request.name.has_value() && context->result->layer->name != *request.name)
+            || (request.is_visible.has_value()
+                && context->result->layer->is_visible != *request.is_visible)
+            || (request.is_locked.has_value()
+                && context->result->layer->is_locked != *request.is_locked)) {
+            throw std::runtime_error("SDK layer state did not match the requested postcondition");
+        }
+        context->result->ok = true;
+    } catch (const std::invalid_argument& exception) {
+        context->result->error_code = "invalid_argument";
+        context->result->error_message = exception.what();
+    } catch (const std::exception& exception) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = exception.what();
+    } catch (...) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = "SDK layer edit failed with an unknown exception";
+    }
+}
+
+[[nodiscard]] sdk_view_snapshot copy_view_snapshot(const EDIT_INFO& info) {
+    std::optional<sdk_selection> selection;
+    if (info.select_range_start >= 0 && info.select_range_end >= info.select_range_start) {
+        selection = sdk_selection{
+            .start_frame = info.select_range_start + 1,
+            .end_frame = info.select_range_end + 1,
+        };
+    }
+    return sdk_view_snapshot{
+        .scene_id = info.scene_id,
+        .frame = info.frame + 1,
+        .display_frame = info.display_frame_start + 1,
+        .selection = selection,
+    };
+}
+
+struct view_edit_callback_context final {
+    const sdk_view_edit_request* request;
+    sdk_view_edit_result* result;
+    bool dry_run;
+    bool was_called = false;
+};
+
+void edit_sdk_view(void* raw_context, EDIT_SECTION* edit) noexcept {
+    auto* context = static_cast<view_edit_callback_context*>(raw_context);
+    context->was_called = true;
+    try {
+        if (edit == nullptr || edit->info == nullptr) {
+            throw std::runtime_error("SDK view edit callback omitted edit information");
+        }
+        const sdk_view_edit_request& request = *context->request;
+        EDIT_INFO& info = *edit->info;
+        if (request.scene_id.has_value() && *request.scene_id != info.scene_id) {
+            context->result->error_code = "invalid_argument";
+            context->result->error_message = "The requested view scene is not active";
+            return;
+        }
+        const sdk_view_snapshot before = copy_view_snapshot(info);
+        const bool selection_matches = !request.selection.has_value()
+            || (before.selection.has_value()
+                && request.selection->start_frame == before.selection->start_frame
+                && request.selection->end_frame == before.selection->end_frame);
+        const bool is_noop = (!request.frame.has_value() || *request.frame == before.frame)
+            && (!request.display_frame.has_value() || *request.display_frame == before.display_frame)
+            && selection_matches;
+        if (context->dry_run || is_noop) {
+            context->result->ok = true;
+            context->result->view = before;
+            return;
+        }
+        if (request.frame.has_value()) {
+            if (edit->set_cursor_layer_frame == nullptr) {
+                throw std::runtime_error("SDK cursor editing is unavailable");
+            }
+            edit->set_cursor_layer_frame(info.layer, *request.frame - 1);
+            context->result->has_changed = true;
+        }
+        if (request.display_frame.has_value()) {
+            if (edit->set_display_layer_frame == nullptr) {
+                throw std::runtime_error("SDK display frame editing is unavailable");
+            }
+            edit->set_display_layer_frame(info.display_layer_start, *request.display_frame - 1);
+            context->result->has_changed = true;
+        }
+        if (request.selection.has_value()) {
+            if (edit->set_select_range == nullptr) {
+                throw std::runtime_error("SDK selection editing is unavailable");
+            }
+            edit->set_select_range(
+                request.selection->start_frame - 1,
+                request.selection->end_frame - 1);
+            context->result->has_changed = true;
+        }
+        context->result->view = copy_view_snapshot(info);
+        context->result->ok = true;
+    } catch (const std::exception& exception) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = exception.what();
+    } catch (...) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = "SDK view edit failed with an unknown exception";
     }
 }
 
@@ -2310,6 +2737,231 @@ sdk_object_edit_result sdk_read_facade::edit_object(
             .error_code = "sdk_query_failed",
             .error_message = "SDK object edit failed with an unknown exception",
         };
+    }
+}
+
+sdk_effect_edit_result sdk_read_facade::edit_effect(
+    const sdk_effect_edit_request& request,
+    const std::string& current_instance_id,
+    const std::string& current_project_generation,
+    const bool dry_run) const noexcept {
+    if (!uuid_equals(request.locator.instance_id, current_instance_id)
+        || !uuid_equals(request.locator.project_generation, current_project_generation)
+        || request.locator.scene_id < 0 || request.locator.layer < 1
+        || request.locator.start_frame < 1
+        || request.locator.end_frame < request.locator.start_frame
+        || request.effect_name.empty() || request.effect_occurrence < 0
+        || (request.kind == sdk_effect_edit_kind::set_item
+            && (!request.item_name.has_value() || request.item_name->empty()
+                || !request.item_value.has_value()))
+        || (request.kind == sdk_effect_edit_kind::set_state
+            && !request.is_enabled.has_value() && !request.is_locked.has_value())) {
+        return {
+            .ok = false,
+            .error_code = "invalid_argument",
+            .error_message = "Effect edit parameters are outside the supported range",
+        };
+    }
+    const sdk_status_snapshot status = query_status();
+    if (!status.is_sdk_ready) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available"};
+    }
+    if (status.has_query_error) {
+        return {.ok = false, .error_code = "sdk_query_failed", .error_message = status.query_error};
+    }
+    if (status.project_state != sdk_project_state::saved
+        && status.project_state != sdk_project_state::unsaved) {
+        return {.ok = false, .error_code = "project_not_open",
+            .error_message = "No AviUtl2 project is open"};
+    }
+    if (status.edit_state != sdk_edit_state::edit) {
+        return {.ok = false, .error_code = "edit_not_available",
+            .error_message = "AviUtl2 is not currently editable"};
+    }
+
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr || edit_handle->call_read_section_param == nullptr
+        || (!dry_run && edit_handle->call_edit_section_param == nullptr)) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK effect edit section is not available"};
+    }
+    sdk_effect_edit_result result;
+    effect_edit_callback_context callback_context{
+        .edit_handle = edit_handle,
+        .request = &request,
+        .current_instance_id = &current_instance_id,
+        .current_project_generation = &current_project_generation,
+        .result = &result,
+        .dry_run = dry_run,
+    };
+    try {
+        const bool was_scheduled = dry_run
+            ? edit_handle->call_read_section_param(&callback_context, &edit_sdk_effect)
+            : edit_handle->call_edit_section_param(&callback_context, &edit_sdk_effect);
+        if (!was_scheduled) {
+            return {.ok = false, .error_code = dry_run ? "read_not_available" : "edit_not_available",
+                .error_message = "AviUtl2 rejected the effect edit section"};
+        }
+        if (!callback_context.was_called) {
+            return {.ok = false, .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 did not invoke the effect edit callback"};
+        }
+        if (!result.ok && result.error_code.empty()) {
+            result.error_code = "sdk_query_failed";
+            result.error_message = "Effect edit failed without an SDK error classification";
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        return {.ok = false, .error_code = "sdk_query_failed", .error_message = exception.what()};
+    } catch (...) {
+        return {.ok = false, .error_code = "sdk_query_failed",
+            .error_message = "SDK effect edit failed with an unknown exception"};
+    }
+}
+
+sdk_layer_edit_result sdk_read_facade::edit_layer(
+    const sdk_layer_edit_request& request,
+    const bool dry_run) const noexcept {
+    if (request.layer < 1
+        || (request.scene_id.has_value() && *request.scene_id < 0)
+        || (!request.name.has_value() && !request.is_visible.has_value()
+            && !request.is_locked.has_value())
+        || (request.name.has_value() && request.name->find('\0') != std::string::npos)) {
+        return {.ok = false, .error_code = "invalid_argument",
+            .error_message = "Layer edit parameters are outside the supported range"};
+    }
+    const sdk_status_snapshot status = query_status();
+    if (!status.is_sdk_ready) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available"};
+    }
+    if (status.has_query_error) {
+        return {.ok = false, .error_code = "sdk_query_failed", .error_message = status.query_error};
+    }
+    if (status.project_state != sdk_project_state::saved
+        && status.project_state != sdk_project_state::unsaved) {
+        return {.ok = false, .error_code = "project_not_open",
+            .error_message = "No AviUtl2 project is open"};
+    }
+    if (status.edit_state != sdk_edit_state::edit) {
+        return {.ok = false, .error_code = "edit_not_available",
+            .error_message = "AviUtl2 is not currently editable"};
+    }
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr || edit_handle->call_read_section_param == nullptr
+        || (!dry_run && edit_handle->call_edit_section_param == nullptr)) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK layer edit section is not available"};
+    }
+    sdk_layer_edit_result result;
+    layer_edit_callback_context callback_context{
+        .request = &request,
+        .result = &result,
+        .dry_run = dry_run,
+    };
+    try {
+        const bool was_scheduled = dry_run
+            ? edit_handle->call_read_section_param(&callback_context, &edit_sdk_layer)
+            : edit_handle->call_edit_section_param(&callback_context, &edit_sdk_layer);
+        if (!was_scheduled) {
+            return {.ok = false, .error_code = dry_run ? "read_not_available" : "edit_not_available",
+                .error_message = "AviUtl2 rejected the layer edit section"};
+        }
+        if (!callback_context.was_called) {
+            return {.ok = false, .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 did not invoke the layer edit callback"};
+        }
+        if (!result.ok && result.error_code.empty()) {
+            result.error_code = "sdk_query_failed";
+            result.error_message = "Layer edit failed without an SDK error classification";
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        return {.ok = false, .error_code = "sdk_query_failed", .error_message = exception.what()};
+    } catch (...) {
+        return {.ok = false, .error_code = "sdk_query_failed",
+            .error_message = "SDK layer edit failed with an unknown exception"};
+    }
+}
+
+sdk_view_edit_result sdk_read_facade::edit_view(
+    const sdk_view_edit_request& request,
+    const bool dry_run) const noexcept {
+    if ((request.scene_id.has_value() && *request.scene_id < 0)
+        || (request.frame.has_value() && *request.frame < 1)
+        || (request.display_frame.has_value() && *request.display_frame < 1)
+        || (request.selection.has_value()
+            && (request.selection->start_frame < 1
+                || request.selection->end_frame < request.selection->start_frame))
+        || (!request.frame.has_value() && !request.display_frame.has_value()
+            && !request.selection.has_value())) {
+        return {.ok = false, .error_code = "invalid_argument",
+            .error_message = "View edit parameters are outside the supported range"};
+    }
+    const sdk_status_snapshot status = query_status();
+    if (!status.is_sdk_ready) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available"};
+    }
+    if (status.has_query_error) {
+        return {.ok = false, .error_code = "sdk_query_failed", .error_message = status.query_error};
+    }
+    if (status.project_state != sdk_project_state::saved
+        && status.project_state != sdk_project_state::unsaved) {
+        return {.ok = false, .error_code = "project_not_open",
+            .error_message = "No AviUtl2 project is open"};
+    }
+    if (status.edit_state != sdk_edit_state::edit) {
+        return {.ok = false, .error_code = "edit_not_available",
+            .error_message = "AviUtl2 is not currently editable"};
+    }
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr || edit_handle->call_read_section_param == nullptr
+        || (!dry_run && edit_handle->call_edit_section_param == nullptr)) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK view edit section is not available"};
+    }
+    sdk_view_edit_result result;
+    view_edit_callback_context callback_context{
+        .request = &request,
+        .result = &result,
+        .dry_run = dry_run,
+    };
+    try {
+        const bool was_scheduled = dry_run
+            ? edit_handle->call_read_section_param(&callback_context, &edit_sdk_view)
+            : edit_handle->call_edit_section_param(&callback_context, &edit_sdk_view);
+        if (!was_scheduled) {
+            return {.ok = false, .error_code = dry_run ? "read_not_available" : "edit_not_available",
+                .error_message = "AviUtl2 rejected the view edit section"};
+        }
+        if (!callback_context.was_called) {
+            return {.ok = false, .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 did not invoke the view edit callback"};
+        }
+        if (!result.ok && result.error_code.empty()) {
+            result.error_code = "sdk_query_failed";
+            result.error_message = "View edit failed without an SDK error classification";
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        return {.ok = false, .error_code = "sdk_query_failed", .error_message = exception.what()};
+    } catch (...) {
+        return {.ok = false, .error_code = "sdk_query_failed",
+            .error_message = "SDK view edit failed with an unknown exception"};
     }
 }
 

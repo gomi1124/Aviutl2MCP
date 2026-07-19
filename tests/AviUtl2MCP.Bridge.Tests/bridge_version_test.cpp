@@ -11,8 +11,10 @@
 #include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_capabilities_request_handler.h"
 #include "aviutl2_mcp/native_create_request_handler.h"
+#include "aviutl2_mcp/native_effect_edit_request_handler.h"
 #include "aviutl2_mcp/native_effect_request_handlers.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
+#include "aviutl2_mcp/native_layer_view_request_handlers.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
 #include "aviutl2_mcp/native_object_request_handler.h"
 #include "aviutl2_mcp/native_object_edit_request_handler.h"
@@ -297,6 +299,21 @@ struct fake_sdk_state final {
     int first_effect = 3;
     int second_effect = 4;
     int third_effect = 5;
+    bool is_first_effect_enabled = true;
+    bool is_second_effect_enabled = false;
+    bool is_third_effect_enabled = true;
+    bool is_first_effect_locked = false;
+    bool is_second_effect_locked = true;
+    bool is_third_effect_locked = false;
+    std::string first_effect_file = "C:\\Media\\Voice.wav";
+    std::string first_effect_volume = "42";
+    std::string first_effect_gain = "1.5";
+    std::string first_effect_checked = "1";
+    std::string third_effect_text = "hello";
+    std::string third_effect_font = "Yu Gothic UI";
+    std::array<std::wstring, 10> layer_names{};
+    std::array<bool, 10> layer_enabled{};
+    std::array<bool, 10> layer_locked{};
     std::string first_alias = "[Object]\r\nfile=C:\\Media\\Voice.wav\r\n";
     std::string second_alias = "[Object]\r\ntext=hello\r\n";
     std::wstring first_name = L"Voice";
@@ -476,12 +493,38 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
 
 [[nodiscard]] bool get_fake_effect_enable(const EFFECT_HANDLE effect) {
     require(ACTIVE_FAKE_SDK->is_read_active, "fake effect state was read outside a read callback");
-    return effect != &ACTIVE_FAKE_SDK->second_effect;
+    return effect == &ACTIVE_FAKE_SDK->first_effect ? ACTIVE_FAKE_SDK->is_first_effect_enabled
+        : effect == &ACTIVE_FAKE_SDK->second_effect ? ACTIVE_FAKE_SDK->is_second_effect_enabled
+        : effect == &ACTIVE_FAKE_SDK->third_effect ? ACTIVE_FAKE_SDK->is_third_effect_enabled
+        : false;
 }
 
 [[nodiscard]] bool get_fake_effect_lock(const EFFECT_HANDLE effect) {
     require(ACTIVE_FAKE_SDK->is_read_active, "fake effect lock was read outside a read callback");
-    return effect == &ACTIVE_FAKE_SDK->second_effect;
+    return effect == &ACTIVE_FAKE_SDK->first_effect ? ACTIVE_FAKE_SDK->is_first_effect_locked
+        : effect == &ACTIVE_FAKE_SDK->second_effect ? ACTIVE_FAKE_SDK->is_second_effect_locked
+        : effect == &ACTIVE_FAKE_SDK->third_effect ? ACTIVE_FAKE_SDK->is_third_effect_locked
+        : false;
+}
+
+void set_fake_effect_enable(const EFFECT_HANDLE effect, const bool enabled) {
+    if (effect == &ACTIVE_FAKE_SDK->first_effect) {
+        ACTIVE_FAKE_SDK->is_first_effect_enabled = enabled;
+    } else if (effect == &ACTIVE_FAKE_SDK->second_effect) {
+        ACTIVE_FAKE_SDK->is_second_effect_enabled = enabled;
+    } else if (effect == &ACTIVE_FAKE_SDK->third_effect) {
+        ACTIVE_FAKE_SDK->is_third_effect_enabled = enabled;
+    }
+}
+
+void set_fake_effect_lock(const EFFECT_HANDLE effect, const bool locked) {
+    if (effect == &ACTIVE_FAKE_SDK->first_effect) {
+        ACTIVE_FAKE_SDK->is_first_effect_locked = locked;
+    } else if (effect == &ACTIVE_FAKE_SDK->second_effect) {
+        ACTIVE_FAKE_SDK->is_second_effect_locked = locked;
+    } else if (effect == &ACTIVE_FAKE_SDK->third_effect) {
+        ACTIVE_FAKE_SDK->is_third_effect_locked = locked;
+    }
 }
 
 [[nodiscard]] bool enumerate_fake_effect_items(
@@ -573,43 +616,102 @@ void enumerate_fake_palettes(void* parameter, void (*callback)(void*, LPCWSTR)) 
     const std::wstring_view name(item);
     if (effect == &ACTIVE_FAKE_SDK->first_effect) {
         if (name == L"File") {
-            return "C:\\Media\\Voice.wav";
+            return ACTIVE_FAKE_SDK->first_effect_file.c_str();
         }
         if (name == L"Volume") {
-            return "42";
+            return ACTIVE_FAKE_SDK->first_effect_volume.c_str();
         }
         if (name == L"Gain") {
-            return "1.5";
+            return ACTIVE_FAKE_SDK->first_effect_gain.c_str();
         }
         if (name == L"Enabled") {
-            return "1";
+            return ACTIVE_FAKE_SDK->first_effect_checked.c_str();
         }
         if (name == L"Blob") {
             return "opaque";
         }
     }
     if (effect == &ACTIVE_FAKE_SDK->third_effect && name == L"Text") {
-        return "hello";
+        return ACTIVE_FAKE_SDK->third_effect_text.c_str();
     }
     if (effect == &ACTIVE_FAKE_SDK->third_effect && name == L"Font") {
-        return "Yu Gothic UI";
+        return ACTIVE_FAKE_SDK->third_effect_font.c_str();
     }
     return nullptr;
 }
 
+[[nodiscard]] bool set_fake_effect_item_value(
+    const EFFECT_HANDLE effect,
+    const LPCWSTR item,
+    const LPCSTR value) {
+    if (item == nullptr || value == nullptr) {
+        return false;
+    }
+    const std::wstring_view name(item);
+    std::string* destination = nullptr;
+    if (effect == &ACTIVE_FAKE_SDK->first_effect) {
+        destination = name == L"File" ? &ACTIVE_FAKE_SDK->first_effect_file
+            : name == L"Volume" ? &ACTIVE_FAKE_SDK->first_effect_volume
+            : name == L"Gain" ? &ACTIVE_FAKE_SDK->first_effect_gain
+            : name == L"Enabled" ? &ACTIVE_FAKE_SDK->first_effect_checked
+            : nullptr;
+    } else if (effect == &ACTIVE_FAKE_SDK->third_effect) {
+        destination = name == L"Text" ? &ACTIVE_FAKE_SDK->third_effect_text
+            : name == L"Font" ? &ACTIVE_FAKE_SDK->third_effect_font
+            : nullptr;
+    }
+    if (destination == nullptr) {
+        return false;
+    }
+    *destination = value;
+    return true;
+}
+
 [[nodiscard]] LPCWSTR get_fake_layer_name(const int layer) {
     require(ACTIVE_FAKE_SDK->is_read_active, "fake layer name was read outside a read callback");
-    return layer == 1 ? L"Voice Layer" : nullptr;
+    return layer >= 0 && layer < static_cast<int>(ACTIVE_FAKE_SDK->layer_names.size())
+            && !ACTIVE_FAKE_SDK->layer_names[static_cast<std::size_t>(layer)].empty()
+        ? ACTIVE_FAKE_SDK->layer_names[static_cast<std::size_t>(layer)].c_str()
+        : nullptr;
 }
 
 [[nodiscard]] bool get_fake_layer_enable(const int layer) {
     require(ACTIVE_FAKE_SDK->is_read_active, "fake layer visibility was read outside a read callback");
-    return layer != 3;
+    return layer >= 0 && layer < static_cast<int>(ACTIVE_FAKE_SDK->layer_enabled.size())
+        && ACTIVE_FAKE_SDK->layer_enabled[static_cast<std::size_t>(layer)];
 }
 
 [[nodiscard]] bool get_fake_layer_lock(const int layer) {
     require(ACTIVE_FAKE_SDK->is_read_active, "fake layer lock was read outside a read callback");
-    return layer == 3;
+    return layer >= 0 && layer < static_cast<int>(ACTIVE_FAKE_SDK->layer_locked.size())
+        && ACTIVE_FAKE_SDK->layer_locked[static_cast<std::size_t>(layer)];
+}
+
+void set_fake_layer_name(const int layer, const LPCWSTR name) {
+    ACTIVE_FAKE_SDK->layer_names[static_cast<std::size_t>(layer)] = name == nullptr ? L"" : name;
+}
+
+void set_fake_layer_enable(const int layer, const bool enabled) {
+    ACTIVE_FAKE_SDK->layer_enabled[static_cast<std::size_t>(layer)] = enabled;
+}
+
+void set_fake_layer_lock(const int layer, const bool locked) {
+    ACTIVE_FAKE_SDK->layer_locked[static_cast<std::size_t>(layer)] = locked;
+}
+
+void set_fake_cursor_layer_frame(const int layer, const int frame) {
+    ACTIVE_FAKE_SDK->edit_info.layer = layer;
+    ACTIVE_FAKE_SDK->edit_info.frame = frame;
+}
+
+void set_fake_display_layer_frame(const int layer, const int frame) {
+    ACTIVE_FAKE_SDK->edit_info.display_layer_start = layer;
+    ACTIVE_FAKE_SDK->edit_info.display_frame_start = frame;
+}
+
+void set_fake_select_range(const int start, const int end) {
+    ACTIVE_FAKE_SDK->edit_info.select_range_start = start;
+    ACTIVE_FAKE_SDK->edit_info.select_range_end = end;
 }
 
 [[nodiscard]] fake_sdk_state::created_object* add_created_object(
@@ -729,6 +831,11 @@ void delete_fake_object(const OBJECT_HANDLE object) {
 
 void configure_fake_sdk(fake_sdk_state& state) {
     ACTIVE_FAKE_SDK = &state;
+    state.layer_enabled.fill(true);
+    state.layer_locked.fill(false);
+    state.layer_names[1] = L"Voice Layer";
+    state.layer_enabled[3] = false;
+    state.layer_locked[3] = true;
     state.edit_info = {
         .width = 1920,
         .height = 1080,
@@ -775,11 +882,20 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_section.get_effect_enable = &get_fake_effect_enable;
     state.edit_section.get_effect_lock = &get_fake_effect_lock;
     state.edit_section.get_effect_item_value = &get_fake_effect_item_value;
+    state.edit_section.set_effect_enable = &set_fake_effect_enable;
+    state.edit_section.set_effect_lock = &set_fake_effect_lock;
+    state.edit_section.set_effect_item_value = &set_fake_effect_item_value;
     state.edit_section.create_object = &create_fake_effect_object;
     state.edit_section.is_support_media_file = &is_fake_supported_media;
     state.edit_section.create_object_from_media_file = &create_fake_media_object;
     state.edit_section.create_object_from_alias = &create_fake_alias_object;
     state.edit_section.set_object_name = &set_fake_object_name;
+    state.edit_section.set_layer_name = &set_fake_layer_name;
+    state.edit_section.set_layer_enable = &set_fake_layer_enable;
+    state.edit_section.set_layer_lock = &set_fake_layer_lock;
+    state.edit_section.set_cursor_layer_frame = &set_fake_cursor_layer_frame;
+    state.edit_section.set_display_layer_frame = &set_fake_display_layer_frame;
+    state.edit_section.set_select_range = &set_fake_select_range;
     state.edit_section.move_object = &move_fake_object;
     state.edit_section.delete_object = &delete_fake_object;
     state.project_file.get_project_file_path = &get_fake_project_path;
@@ -1700,14 +1816,14 @@ void test_sdk_read_facade() {
     const auto& audio_items = object_detail.detail.effect_items[0].items;
     require(audio_items[0].type == "file" && audio_items[0].codec == "aliasString"
             && std::get<std::string>(*audio_items[0].value) == "C:\\Media\\Voice.wav"
-            && !audio_items[0].is_writable,
+            && audio_items[0].is_writable,
         "SDK facade did not decode an alias string effect item");
     require(std::get<std::int64_t>(*audio_items[1].value) == 42
             && std::get<double>(*audio_items[2].value) == 1.5
             && std::get<bool>(*audio_items[3].value)
-            && !audio_items[1].is_writable
-            && !audio_items[2].is_writable
-            && !audio_items[3].is_writable,
+            && audio_items[1].is_writable
+            && audio_items[2].is_writable
+            && audio_items[3].is_writable,
         "SDK facade did not decode integer, number, and check codecs");
     require(audio_items[4].type == "data" && audio_items[4].codec == "unsupported"
             && !audio_items[4].is_writable && !audio_items[4].value.has_value(),
@@ -1780,7 +1896,7 @@ void test_sdk_read_facade() {
     require(text_items.ok && text_items.items.size() == 2U
             && text_items.items[0].name == "Text"
             && text_items.items[0].codec == "aliasString"
-            && !text_items.items[0].is_writable
+            && text_items.items[0].is_writable
             && text_items.items[1].type == "font"
             && text_items.items[1].choices
                 == std::vector<std::string>({"Yu Gothic UI", "Noto Sans JP"}),
@@ -1948,7 +2064,7 @@ void test_native_query_request_handlers() {
             && effect_items.at("result").at("items").size() == 2U
             && effect_items.at("result").at("items")[1].at("type") == "font"
             && effect_items.at("result").at("items")[1].at("choices").size() == 2U
-            && !effect_items.at("result").at("items")[1].at("isWritable").get<bool>(),
+            && effect_items.at("result").at("items")[1].at("isWritable").get<bool>(),
         "native effect item handler omitted codec or font choices");
 
     const nlohmann::json missing_effect_items = nlohmann::json::parse(get_json(dispatcher.dispatch(
@@ -2452,6 +2568,216 @@ void test_native_object_edit_request_handlers() {
     ACTIVE_FAKE_SDK = nullptr;
 }
 
+void test_native_effect_layer_view_request_handlers() {
+    fake_sdk_state fake;
+    configure_fake_sdk(fake);
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "effect/layer/view fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_effect_edit_request_handler>(
+        identity, facade, "effect.setItem", aviutl2_mcp::sdk_effect_edit_kind::set_item));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_effect_edit_request_handler>(
+        identity, facade, "effect.setState", aviutl2_mcp::sdk_effect_edit_kind::set_state));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_layer_request_handler>(facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_view_request_handler>(facade));
+
+    const aviutl2_mcp::sdk_timeline_query_result timeline = facade.query_timeline(
+        aviutl2_mcp::sdk_timeline_query{
+            .limit = 100U,
+            .include_effects = true,
+            .use_display_defaults = false,
+        });
+    require(timeline.ok && timeline.timeline.objects.size() == 2U,
+        "effect/layer/view fixture timeline was unavailable");
+    const aviutl2_mcp::object_locator locator = aviutl2_mcp::create_object_locator(
+        identity.instance_id,
+        dispatcher.revisions().project_generation(),
+        timeline.timeline.objects[0].candidate);
+    const nlohmann::json locator_json{
+        {"instanceId", locator.instance_id},
+        {"projectGeneration", locator.project_generation},
+        {"sceneId", locator.scene_id},
+        {"layer", locator.layer},
+        {"startFrame", locator.start_frame},
+        {"endFrame", locator.end_frame},
+        {"name", locator.name},
+        {"aliasSha256", locator.alias_sha256},
+        {"effectSignatureSha256", locator.effect_signature_sha256},
+    };
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string initial_revision = dispatcher.revisions().content_revision();
+    const std::string initial_view_revision = dispatcher.revisions().view_revision();
+    const std::string item_params = nlohmann::json{
+        {"locator", locator_json},
+        {"effect", {{"name", "Audio File"}, {"occurrence", 0}}},
+        {"itemName", "Volume"},
+        {"value", 77},
+    }.dump();
+
+    const nlohmann::json dry_item = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 91U),
+            "effect.setItem",
+            correlation_id,
+            item_params,
+            initial_revision,
+            true),
+        identity.instance_id).get()));
+    require(dry_item.at("ok").get<bool>()
+            && dry_item.at("result").contains("plannedChanges")
+            && fake.first_effect_volume == "42"
+            && dispatcher.revisions().content_revision() == initial_revision,
+        "native effect item dry-run changed SDK or revision state");
+
+    const nlohmann::json changed_item = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 92U),
+            "effect.setItem",
+            correlation_id,
+            item_params,
+            initial_revision),
+        identity.instance_id).get()));
+    require(changed_item.at("ok").get<bool>()
+            && changed_item.at("result").at("item").at("value") == 77
+            && changed_item.at("result").at("item").at("codec") == "integer"
+            && fake.first_effect_volume == "77"
+            && changed_item.at("revision") != initial_revision,
+        "native effect item edit did not encode and round-trip the value");
+
+    const std::string item_revision = changed_item.at("revision").get<std::string>();
+    const std::string state_params = nlohmann::json{
+        {"locator", locator_json},
+        {"effect", {{"name", "Audio File"}, {"occurrence", 0}}},
+        {"isEnabled", false},
+        {"isLocked", true},
+    }.dump();
+    const nlohmann::json stale_state = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 93U),
+            "effect.setState",
+            correlation_id,
+            state_params,
+            initial_revision),
+        identity.instance_id).get()));
+    require(!stale_state.at("ok").get<bool>()
+            && stale_state.at("error").at("code") == "revision_conflict"
+            && fake.is_first_effect_enabled
+            && !fake.is_first_effect_locked,
+        "native effect state edit accepted a stale revision");
+
+    const nlohmann::json changed_state = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 94U),
+            "effect.setState",
+            correlation_id,
+            state_params,
+            item_revision),
+        identity.instance_id).get()));
+    require(changed_state.at("ok").get<bool>()
+            && !changed_state.at("result").at("effect").at("isEnabled").get<bool>()
+            && changed_state.at("result").at("effect").at("isLocked").get<bool>()
+            && !fake.is_first_effect_enabled
+            && fake.is_first_effect_locked,
+        "native effect state edit did not return the normalized state");
+
+    const std::string state_revision = changed_state.at("revision").get<std::string>();
+    const std::string unsupported_params = nlohmann::json{
+        {"locator", locator_json},
+        {"effect", {{"name", "Audio File"}}},
+        {"itemName", "Blob"},
+        {"value", "opaque2"},
+    }.dump();
+    const nlohmann::json unsupported = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 95U),
+            "effect.setItem",
+            correlation_id,
+            unsupported_params,
+            state_revision,
+            true),
+        identity.instance_id).get()));
+    require(!unsupported.at("ok").get<bool>()
+            && unsupported.at("error").at("code") == "invalid_effect_item",
+        "native effect item edit exposed an unsupported codec as writable");
+
+    const std::string layer_params = nlohmann::json{
+        {"sceneId", 7},
+        {"layer", 2},
+        {"name", "Dialogue"},
+        {"isVisible", false},
+    }.dump();
+    const nlohmann::json dry_layer = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 96U),
+            "layer.set",
+            correlation_id,
+            layer_params,
+            state_revision,
+            true),
+        identity.instance_id).get()));
+    require(dry_layer.at("ok").get<bool>()
+            && fake.layer_names[1] == L"Voice Layer"
+            && fake.layer_enabled[1],
+        "native layer dry-run changed SDK state");
+
+    const nlohmann::json changed_layer = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 97U),
+            "layer.set",
+            correlation_id,
+            layer_params,
+            state_revision),
+        identity.instance_id).get()));
+    require(changed_layer.at("ok").get<bool>()
+            && changed_layer.at("result").at("layer").at("name") == "Dialogue"
+            && !changed_layer.at("result").at("layer").at("isVisible").get<bool>()
+            && fake.layer_names[1] == L"Dialogue"
+            && !fake.layer_enabled[1],
+        "native layer edit did not return the SDK-corrected state");
+
+    const std::string content_after_layer = changed_layer.at("revision").get<std::string>();
+    const std::string view_params = nlohmann::json{
+        {"sceneId", 7},
+        {"frame", 25},
+        {"displayFrame", 5},
+        {"selection", {{"startFrame", 30}, {"endFrame", 35}}},
+        {"expectedViewRevision", initial_view_revision},
+    }.dump();
+    const nlohmann::json changed_view = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 98U),
+            "view.setCursor",
+            correlation_id,
+            view_params),
+        identity.instance_id).get()));
+    require(changed_view.at("ok").get<bool>()
+            && changed_view.at("result").at("frame") == 25
+            && changed_view.at("result").at("displayFrame") == 5
+            && changed_view.at("result").at("selection").at("startFrame") == 30
+            && changed_view.at("revision") == content_after_layer
+            && changed_view.at("viewRevision") != initial_view_revision,
+        "native view edit did not isolate and advance the view revision");
+
+    const nlohmann::json stale_view = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 99U),
+            "view.setCursor",
+            correlation_id,
+            view_params),
+        identity.instance_id).get()));
+    require(!stale_view.at("ok").get<bool>()
+            && stale_view.at("error").at("code") == "revision_conflict"
+            && fake.edit_info.frame == 24,
+        "native view edit accepted a stale view revision");
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -2479,6 +2805,7 @@ int main() {
         std::pair{"native query request handlers", &test_native_query_request_handlers},
         std::pair{"native create request handlers", &test_native_create_request_handlers},
         std::pair{"native object edit request handlers", &test_native_object_edit_request_handlers},
+        std::pair{"native effect/layer/view request handlers", &test_native_effect_layer_view_request_handlers},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AviUtl2MCP.Application.Contracts;
 using AviUtl2MCP.Application.Validation;
 
@@ -164,6 +165,58 @@ public sealed class RequestValidatorTests
             ExpectedRevision = new Revision("r1"),
             Locator = CreateValidLocator(),
             Name = string.Empty,
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidateEditInput(input);
+
+        // Assert
+        action();
+    }
+
+    [TestMethod]
+    public void ValidateEditInputRejectsEffectStateWithoutProperties()
+    {
+        // Arrange
+        SetEffectStateInput input = new()
+        {
+            ExpectedRevision = new Revision("r1"),
+            Locator = CreateValidLocator(),
+            Effect = new EffectInstanceSelector("Text"),
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidateEditInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(action);
+    }
+
+    [TestMethod]
+    public void ValidateCursorInputRejectsInvertedSelection()
+    {
+        // Arrange
+        SetCursorInput input = new() { Selection = new Selection(10, 9) };
+
+        // Act
+        Action action = () => RequestValidator.ValidateCursorInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(action);
+    }
+
+    [TestMethod]
+    public void ValidateEditInputAcceptsSupportedEffectItemValue()
+    {
+        // Arrange
+        using JsonDocument document = JsonDocument.Parse("42");
+        SetEffectItemInput input = new()
+        {
+            ExpectedRevision = new Revision("r1"),
+            Locator = CreateValidLocator(),
+            Effect = new EffectInstanceSelector("Audio File"),
+            ItemName = "Volume",
+            Value = document.RootElement.Clone(),
         };
 
         // Act

@@ -206,6 +206,141 @@ public sealed class EditToolSet(
             _editService.SetObjectNameAsync,
             cancellationToken);
 
+    [McpServerTool(
+        Name = "aviutl_set_effect_item",
+        Title = "AviUtl2 effect item変更",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<EffectItemUpdateData>))]
+    [Description("effect occurrenceとitem codecを検証して設定値を変更します。")]
+    public ValueTask<CallToolResult> SetEffectItemAsync(
+        Revision expectedRevision,
+        ObjectLocator locator,
+        EffectInstanceSelector effect,
+        string itemName,
+        System.Text.Json.JsonElement value,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new SetEffectItemInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Locator = locator,
+                Effect = effect,
+                ItemName = itemName,
+                Value = value,
+            },
+            _editService.SetEffectItemAsync,
+            cancellationToken);
+
+    [McpServerTool(
+        Name = "aviutl_set_effect_state",
+        Title = "AviUtl2 effect状態変更",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<EffectStateUpdateData>))]
+    [Description("effect occurrenceを再解決し、有効・lock状態を変更します。")]
+    public ValueTask<CallToolResult> SetEffectStateAsync(
+        Revision expectedRevision,
+        ObjectLocator locator,
+        EffectInstanceSelector effect,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        bool? isEnabled = null,
+        bool? isLocked = null,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new SetEffectStateInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Locator = locator,
+                Effect = effect,
+                IsEnabled = isEnabled,
+                IsLocked = isLocked,
+            },
+            _editService.SetEffectStateAsync,
+            cancellationToken);
+
+    [McpServerTool(
+        Name = "aviutl_set_layer",
+        Title = "AviUtl2 layer変更",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<LayerUpdateData>))]
+    [Description("layerの名称、表示、lock状態を変更し、SDK補正後の値を返します。")]
+    public ValueTask<CallToolResult> SetLayerAsync(
+        Revision expectedRevision,
+        int layer,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        int? sceneId = null,
+        string? name = null,
+        bool? isVisible = null,
+        bool? isLocked = null,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new SetLayerInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                SceneId = sceneId,
+                Layer = layer,
+                Name = name,
+                IsVisible = isVisible,
+                IsLocked = isLocked,
+            },
+            _editService.SetLayerAsync,
+            cancellationToken);
+
+    [McpServerTool(
+        Name = "aviutl_set_cursor",
+        Title = "AviUtl2 cursor変更",
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<CursorData>))]
+    [Description("cursor、表示frame、選択範囲を変更し、view revisionだけを更新します。")]
+    public ValueTask<CallToolResult> SetCursorAsync(
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        int? sceneId = null,
+        int? frame = null,
+        int? displayFrame = null,
+        Selection? selection = null,
+        Revision? expectedViewRevision = null,
+        CancellationToken cancellationToken = default) => ExecuteCursorAsync(
+            new SetCursorInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                SceneId = sceneId,
+                Frame = frame,
+                DisplayFrame = displayFrame,
+                Selection = selection,
+                ExpectedViewRevision = expectedViewRevision,
+            },
+            cancellationToken);
+
     private async ValueTask<CallToolResult> ExecuteAsync<TInput, TData>(
         TInput input,
         Func<TInput, RequestContext, ValueTask<QueryExecutionResult<TData>>> execute,
@@ -241,6 +376,47 @@ public sealed class EditToolSet(
             }
             QueryExecutionResult<TData> execution = await execute(input, context).ConfigureAwait(false);
             ToolEnvelope<TData> envelope = ToolResultFactory.CreateEnvelope(
+                execution.Result,
+                context,
+                execution.InstanceId,
+                execution.Revision,
+                execution.ViewRevision);
+            return McpToolResultFactory.Create(envelope);
+        }
+    }
+
+    private async ValueTask<CallToolResult> ExecuteCursorAsync(
+        SetCursorInput input,
+        CancellationToken cancellationToken)
+    {
+        RequestContext context;
+        try
+        {
+            context = _requestContextFactory.CreateContext(
+                input.InstanceId,
+                input.TimeoutMs,
+                EDIT_DEFAULT_TIMEOUT_MS,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is ArgumentException or OverflowException)
+        {
+            return CreateInvalidArgument<CursorData>(exception.Message, cancellationToken);
+        }
+        using (context)
+        {
+            input = input with { TimeoutMs = context.TimeoutMs };
+            try
+            {
+                RequestValidator.ValidateCursorInput(input);
+            }
+            catch (Exception exception) when (exception is ArgumentException or OverflowException)
+            {
+                return CreateInvalidArgument<CursorData>(context, exception.Message);
+            }
+            QueryExecutionResult<CursorData> execution = await _editService.SetCursorAsync(
+                input,
+                context).ConfigureAwait(false);
+            ToolEnvelope<CursorData> envelope = ToolResultFactory.CreateEnvelope(
                 execution.Result,
                 context,
                 execution.InstanceId,

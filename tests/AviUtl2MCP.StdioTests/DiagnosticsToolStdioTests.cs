@@ -27,6 +27,9 @@ public sealed class DiagnosticsToolStdioTests
         "aviutl_move_object",
         "aviutl_delete_object",
         "aviutl_set_object_name",
+        "aviutl_set_effect_item",
+        "aviutl_set_effect_state",
+        "aviutl_set_layer",
     ];
     private static readonly string[] RESOURCE_URIS =
     [
@@ -132,7 +135,7 @@ public sealed class DiagnosticsToolStdioTests
                 cancellationToken: timeout.Token);
 
             // Assert
-            Assert.AreEqual(16, tools.Count);
+            Assert.AreEqual(20, tools.Count);
             CollectionAssert.IsSubsetOf(
                 READ_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());
@@ -147,6 +150,7 @@ public sealed class DiagnosticsToolStdioTests
             {
                 AssertEditToolMetadata(tools.Single(tool => tool.Name == editToolName));
             }
+            AssertCursorToolMetadata(tools.Single(tool => tool.Name == "aviutl_set_cursor"));
             AssertToolMetadata(logsTool, "sources", "limit");
             AssertToolMetadata(diagnoseTool, "includeReadSmoke", "includePreviewSmoke", "maxLogLines");
 
@@ -259,6 +263,19 @@ public sealed class DiagnosticsToolStdioTests
         JsonElement properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
         Assert.IsTrue(properties.TryGetProperty("expectedRevision", out _));
         Assert.IsTrue(properties.TryGetProperty("dryRun", out _));
+        Assert.IsFalse(properties.TryGetProperty("input", out _));
+    }
+
+    private static void AssertCursorToolMetadata(McpClientTool tool)
+    {
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations!.ReadOnlyHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.DestructiveHint);
+        Assert.AreEqual(true, tool.ProtocolTool.Annotations.IdempotentHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.OpenWorldHint);
+        Assert.IsTrue(tool.ProtocolTool.OutputSchema.HasValue);
+        JsonElement properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        Assert.IsTrue(properties.TryGetProperty("expectedViewRevision", out _));
+        Assert.IsFalse(properties.TryGetProperty("dryRun", out _));
         Assert.IsFalse(properties.TryGetProperty("input", out _));
     }
 

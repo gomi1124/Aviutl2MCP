@@ -79,15 +79,91 @@ public sealed class AviUtlEditService(
             new SetObjectNameArgs(input.Locator, input.Name),
             context);
 
-    private async ValueTask<QueryExecutionResult<TData>> ExecuteAsync<TArgs, TData>(
+    public ValueTask<QueryExecutionResult<EffectItemUpdateData>> SetEffectItemAsync(
+        SetEffectItemInput input,
+        RequestContext context) => ExecuteAsync<SetEffectItemArgs, EffectItemUpdateData>(
+            "effect.setItem",
+            input,
+            [input.Locator],
+            new SetEffectItemArgs(input.Locator, input.Effect, input.ItemName, input.Value),
+            context);
+
+    public ValueTask<QueryExecutionResult<EffectStateUpdateData>> SetEffectStateAsync(
+        SetEffectStateInput input,
+        RequestContext context) => ExecuteAsync<SetEffectStateArgs, EffectStateUpdateData>(
+            "effect.setState",
+            input,
+            [input.Locator],
+            new SetEffectStateArgs(input.Locator, input.Effect)
+            {
+                IsEnabled = input.IsEnabled,
+                IsLocked = input.IsLocked,
+            },
+            context);
+
+    public ValueTask<QueryExecutionResult<LayerUpdateData>> SetLayerAsync(
+        SetLayerInput input,
+        RequestContext context) => ExecuteAsync<SetLayerArgs, LayerUpdateData>(
+            "layer.set",
+            input,
+            [],
+            new SetLayerArgs(input.Layer)
+            {
+                SceneId = input.SceneId,
+                Name = input.Name,
+                IsVisible = input.IsVisible,
+                IsLocked = input.IsLocked,
+            },
+            context);
+
+    public ValueTask<QueryExecutionResult<CursorData>> SetCursorAsync(
+        SetCursorInput input,
+        RequestContext context) => ExecuteCoreAsync(
+            input,
+            [],
+            context,
+            (instance, cancellationToken) => _editGateway.SetCursorAsync(
+                new GatewayRequest<SetCursorInput>(
+                    instance.InstanceId,
+                    context.CorrelationId,
+                    context.Deadline,
+                    context.TimeoutMs,
+                    null,
+                    false,
+                    input),
+                cancellationToken));
+
+    private ValueTask<QueryExecutionResult<TData>> ExecuteAsync<TArgs, TData>(
         string operation,
         MutationInput input,
         IReadOnlyList<ObjectLocator> locators,
         TArgs args,
-        RequestContext context)
+        RequestContext context) => ExecuteCoreAsync(
+            input,
+            locators,
+            context,
+            (instance, cancellationToken) => _editGateway.ExecuteEditAsync<TArgs, TData>(
+                operation,
+                new GatewayRequest<TArgs>(
+                    instance.InstanceId,
+                    context.CorrelationId,
+                    context.Deadline,
+                    context.TimeoutMs,
+                    input.ExpectedRevision,
+                    input.DryRun,
+                    args),
+                cancellationToken));
+
+    private async ValueTask<QueryExecutionResult<TData>> ExecuteCoreAsync<TInput, TData>(
+        TInput input,
+        IReadOnlyList<ObjectLocator> locators,
+        RequestContext context,
+        Func<InstanceDescriptor, CancellationToken, ValueTask<GatewayResponse<TData>>> execute)
+        where TInput : CommonInput
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(execute);
         try
         {
             ApplicationResult<InstanceDescriptor> selection = await _instanceResolver.ResolveAsync(
@@ -103,16 +179,8 @@ public sealed class AviUtlEditService(
                     null);
             }
             InstanceDescriptor instance = selection.Value!;
-            GatewayResponse<TData> response = await _editGateway.ExecuteEditAsync<TArgs, TData>(
-                operation,
-                new GatewayRequest<TArgs>(
-                    instance.InstanceId,
-                    context.CorrelationId,
-                    context.Deadline,
-                    context.TimeoutMs,
-                    input.ExpectedRevision,
-                    input.DryRun,
-                    args),
+            GatewayResponse<TData> response = await execute(
+                instance,
                 context.CancellationToken).ConfigureAwait(false);
             if (!response.Ok)
             {

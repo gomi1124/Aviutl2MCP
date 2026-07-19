@@ -12,9 +12,11 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/named_pipe_server.cpp
   src/native_capabilities_request_handler.cpp
   src/native_create_request_handler.cpp
+  src/native_effect_edit_request_handler.cpp
   src/native_effect_request_handlers.cpp
   src/native_ipc_frame_codec.cpp
   src/native_log_request_handler.cpp
+  src/native_layer_view_request_handlers.cpp
   src/native_operation_result.cpp
   src/native_object_request_handler.cpp
   src/native_object_edit_request_handler.cpp

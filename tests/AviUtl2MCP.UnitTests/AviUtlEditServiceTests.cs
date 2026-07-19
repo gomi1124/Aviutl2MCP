@@ -144,6 +144,37 @@ public sealed class AviUtlEditServiceTests
         Assert.IsNull(gateway.Operation);
     }
 
+    [TestMethod]
+    public async Task SetCursorUsesViewRevisionWithoutContentRevision()
+    {
+        // Arrange
+        Revision expectedViewRevision = new("epoch:generation:2");
+        CapturingEditGateway gateway = new(CreateSuccess(new CursorData(
+            0,
+            25,
+            5,
+            new Selection(30, 35),
+            new CoordinateSystem(1, 1, true))));
+        AviUtlEditService service = new(new StubResolver(CreateInstance()), gateway);
+        SetCursorInput input = new()
+        {
+            Frame = 25,
+            DisplayFrame = 5,
+            ExpectedViewRevision = expectedViewRevision,
+        };
+        using RequestContext context = CreateContext();
+
+        // Act
+        QueryExecutionResult<CursorData> result = await service.SetCursorAsync(input, context);
+
+        // Assert
+        Assert.IsTrue(result.Result.IsSuccess);
+        Assert.AreEqual("view.setCursor", gateway.Operation);
+        Assert.IsNull(gateway.ExpectedRevision);
+        SetCursorInput parameters = Assert.IsInstanceOfType<SetCursorInput>(gateway.Parameters);
+        Assert.AreEqual(expectedViewRevision, parameters.ExpectedViewRevision);
+    }
+
     private static GatewayResponse<TData> CreateSuccess<TData>(TData data) => new(
         true,
         Guid.CreateVersion7(),
@@ -220,6 +251,13 @@ public sealed class AviUtlEditServiceTests
 
         public ValueTask<GatewayResponse<CursorData>> SetCursorAsync(
             GatewayRequest<SetCursorInput> request,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
+            CancellationToken cancellationToken)
+        {
+            Operation = "view.setCursor";
+            ExpectedRevision = request.ExpectedRevision;
+            DryRun = request.DryRun;
+            Parameters = request.Parameters;
+            return ValueTask.FromResult((GatewayResponse<CursorData>)response!);
+        }
     }
 }
