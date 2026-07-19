@@ -4,6 +4,10 @@ using System.Text;
 using System.Text.Json;
 using AviUtl2MCP.Application.Contracts;
 using AviUtl2MCP.Application.Diagnostics;
+using AviUtl2MCP.Application.Gateways;
+using AviUtl2MCP.BridgeClient.Connections;
+using AviUtl2MCP.BridgeClient.Discovery;
+using AviUtl2MCP.BridgeClient.Gateways;
 using AviUtl2MCP.Server;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -151,6 +155,104 @@ public sealed class RealReadPreviewDiagnosticTests
             throw;
         }
     }
+
+    [TestMethod]
+    [TestCategory("RealAviUtl2")]
+    [Timeout(180_000)]
+    public async Task RealAviUtlCreatesPsdSetupInIsolatedFixture()
+    {
+        if (!RealAviUtlHarness.IsEnabled)
+        {
+            Assert.Inconclusive("Set AVIUTL2_MCP_REAL_TEST=1 to run the isolated real AviUtl2 test.");
+        }
+
+        using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
+        await using RealAviUtlHarness harness = await RealAviUtlHarness.StartAsync(timeout.Token);
+        try
+        {
+            InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
+            BridgeConnectionFactory connectionFactory = new(Guid.NewGuid(), "0.1.0-real-test");
+            await using BridgeConnectionRegistry registry = new(watcher, connectionFactory);
+            BridgeQueryGateway query = new(registry);
+            BridgePsdGateway psd = new(registry);
+
+            GatewayResponse<ProjectData> project = await query.GetProjectAsync(
+                CreateGatewayRequest(harness.InstanceId, new GetProjectInput()),
+                timeout.Token);
+            Assert.IsTrue(project.Ok, project.Error?.Message);
+            Assert.IsNotNull(project.Revision);
+            Revision beforeRevision = project.Revision.Value;
+
+            PsdSetupInput parameters = new()
+            {
+                ExpectedRevision = beforeRevision,
+                CreateIfMissing = true,
+                DryRun = true,
+            };
+            GatewayResponse<PsdSetupData> dryRun = await psd.ExecutePsdAsync<PsdSetupInput, PsdSetupData>(
+                "psd.setup",
+                CreateGatewayRequest(
+                    harness.InstanceId,
+                    parameters,
+                    beforeRevision,
+                    dryRun: true),
+                timeout.Token);
+            Assert.IsTrue(dryRun.Ok, dryRun.Error?.Message);
+            Assert.IsFalse(dryRun.Data!.Created);
+            Assert.AreEqual(PsdPlacementStatus.Missing, dryRun.Data.PlacementStatus);
+            Assert.HasCount(1, dryRun.Data.PlannedChanges!);
+            Assert.AreEqual(beforeRevision, dryRun.Revision);
+
+            parameters = parameters with { DryRun = false };
+            GatewayResponse<PsdSetupData> created = await psd.ExecutePsdAsync<PsdSetupInput, PsdSetupData>(
+                "psd.setup",
+                CreateGatewayRequest(
+                    harness.InstanceId,
+                    parameters,
+                    beforeRevision,
+                    dryRun: false),
+                timeout.Token);
+            Assert.IsTrue(created.Ok, created.Error?.Message);
+            Assert.IsTrue(created.Data!.Created);
+            Assert.AreEqual(PsdPlacementStatus.Valid, created.Data.PlacementStatus);
+            Assert.HasCount(1, created.Data.Objects);
+            Assert.IsTrue(created.Data.Objects[0].Effects.Any(effect =>
+                effect.Name == "最初に置くやつ@PSDToolKit"));
+            Assert.AreNotEqual(beforeRevision, created.Revision);
+
+            GatewayResponse<ObjectsPageData> found = await query.FindObjectsAsync(
+                CreateGatewayRequest(
+                    harness.InstanceId,
+                    new FindObjectsInput
+                    {
+                        SceneId = created.Data.Objects[0].SceneId,
+                        EffectName = "最初に置くやつ@PSDToolKit",
+                        Limit = 100,
+                    }),
+                timeout.Token);
+            Assert.IsTrue(found.Ok, found.Error?.Message);
+            Assert.HasCount(1, found.Data!.Objects);
+        }
+        catch (Exception exception)
+        {
+            harness.RecordFailure(exception);
+            throw;
+        }
+    }
+
+    private static GatewayRequest<T> CreateGatewayRequest<T>(
+        Guid instanceId,
+        T parameters,
+        Revision? expectedRevision = null,
+        bool dryRun = false) =>
+        new(
+            instanceId,
+            Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow.AddSeconds(60),
+            60_000,
+            expectedRevision,
+            dryRun,
+            parameters);
 
     private static async Task<(JsonElement Envelope, byte[] Png)> RenderPreviewAsync(
         McpClient client,

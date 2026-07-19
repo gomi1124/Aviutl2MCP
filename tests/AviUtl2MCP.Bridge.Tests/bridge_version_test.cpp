@@ -22,6 +22,7 @@
 #include "aviutl2_mcp/native_object_edit_request_handler.h"
 #include "aviutl2_mcp/native_project_request_handler.h"
 #include "aviutl2_mcp/native_preview_request_handler.h"
+#include "aviutl2_mcp/native_psd_request_handlers.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/native_status_request_handler.h"
 #include "aviutl2_mcp/native_timeline_request_handlers.h"
@@ -284,9 +285,11 @@ private:
 struct fake_sdk_state final {
     struct created_object final {
         int handle = 0;
+        int effect_handle = 0;
         OBJECT_LAYER_FRAME position{};
         std::string alias;
         std::wstring name;
+        std::wstring effect_name;
     };
 
     HOST_APP_TABLE host{};
@@ -329,6 +332,7 @@ struct fake_sdk_state final {
     void (*project_save_handler)(PROJECT_FILE*) = nullptr;
     bool should_throw_edit_state = false;
     bool has_duplicate_effect_name = false;
+    bool has_psd_effects = false;
     bool is_read_active = false;
     bool should_reject_move = false;
     int read_section_count = 0;
@@ -537,6 +541,17 @@ void wait_fake_rendering_task() {
         std::ranges::copy_n(source.begin(), copy_count, effects);
         return copy_count;
     };
+    if (fake_sdk_state::created_object* created = find_created_object(object);
+        created != nullptr && !created->effect_name.empty()) {
+        if (effects == nullptr) {
+            return 1;
+        }
+        if (effect_count > 0) {
+            effects[0] = &created->effect_handle;
+            return 1;
+        }
+        return 0;
+    }
     if (find_created_object(object) != nullptr) {
         return copy_effects(first_effects);
     }
@@ -547,6 +562,12 @@ void wait_fake_rendering_task() {
 
 [[nodiscard]] LPCWSTR get_fake_effect_name(const EFFECT_HANDLE effect) {
     require(ACTIVE_FAKE_SDK->is_read_active, "fake effect name was read outside a read callback");
+    for (std::size_t index = 0U; index < ACTIVE_FAKE_SDK->created_object_count; ++index) {
+        fake_sdk_state::created_object& created = ACTIVE_FAKE_SDK->created_objects[index];
+        if (effect == &created.effect_handle && !created.effect_name.empty()) {
+            return created.effect_name.c_str();
+        }
+    }
     return effect == &ACTIVE_FAKE_SDK->first_effect ? L"Audio File"
         : effect == &ACTIVE_FAKE_SDK->second_effect ? L"Standard Playback"
         : effect == &ACTIVE_FAKE_SDK->third_effect ? L"Text"
@@ -632,6 +653,13 @@ void enumerate_fake_effect_names(
         L"Camera Control",
         EDIT_HANDLE::EFFECT_TYPE_CONTROL,
         EDIT_HANDLE::EFFECT_FLAG_CAMERA | 0x20);
+    if (ACTIVE_FAKE_SDK->has_psd_effects) {
+        callback(
+            parameter,
+            L"最初に置くやつ@PSDToolKit",
+            EDIT_HANDLE::EFFECT_TYPE_FILTER,
+            EDIT_HANDLE::EFFECT_FLAG_VIDEO | EDIT_HANDLE::EFFECT_FLAG_FILTER);
+    }
     if (ACTIVE_FAKE_SDK->has_duplicate_effect_name) {
         callback(
             parameter,
@@ -786,9 +814,11 @@ void set_fake_select_range(const int start, const int end) {
     fake_sdk_state::created_object& object =
         ACTIVE_FAKE_SDK->created_objects[ACTIVE_FAKE_SDK->created_object_count++];
     object.handle = 100 + static_cast<int>(ACTIVE_FAKE_SDK->created_object_count);
+    object.effect_handle = 200 + static_cast<int>(ACTIVE_FAKE_SDK->created_object_count);
     object.position = {.layer = layer, .start = frame, .end = frame + length - 1};
     object.alias = std::move(alias);
     object.name.clear();
+    object.effect_name.clear();
     return &object;
 }
 
@@ -797,10 +827,23 @@ void set_fake_select_range(const int start, const int end) {
     const int layer,
     const int frame,
     const int length) {
-    if (effect == nullptr || std::wstring_view(effect) != L"Text") {
+    if (effect == nullptr) {
         return nullptr;
     }
-    return &add_created_object(layer, frame, length, "[Object]\r\neffect.name=Text\r\n")->handle;
+    const std::wstring_view name(effect);
+    if (name == L"Text") {
+        return &add_created_object(layer, frame, length, "[Object]\r\neffect.name=Text\r\n")->handle;
+    }
+    if (ACTIVE_FAKE_SDK->has_psd_effects && name == L"最初に置くやつ@PSDToolKit") {
+        fake_sdk_state::created_object& object = *add_created_object(
+            layer,
+            frame,
+            length,
+            "[Object]\r\neffect.name=最初に置くやつ@PSDToolKit\r\n");
+        object.effect_name = name;
+        return &object.handle;
+    }
+    return nullptr;
 }
 
 [[nodiscard]] bool is_fake_supported_media(const LPCWSTR file, const bool strict) {
@@ -3489,6 +3532,96 @@ void test_psd_value_and_alias_codecs() {
     }, "invalid duplicate subtitle template was accepted");
 }
 
+void test_native_psd_setup_request_handler() {
+    fake_sdk_state fake;
+    configure_fake_sdk(fake);
+    fake.has_psd_effects = true;
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "PSD setup fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_psd_setup_request_handler>(
+        identity,
+        facade));
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string initial_revision = dispatcher.revisions().content_revision();
+    const int edits_before = fake.edit_section_count;
+
+    const nlohmann::json dry_run = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 120U),
+            "psd.setup",
+            correlation_id,
+            R"({"sceneId":7,"createIfMissing":true})",
+            initial_revision,
+            true),
+        identity.instance_id).get()));
+    require(dry_run.at("ok").get<bool>()
+            && !dry_run.at("result").at("created").get<bool>()
+            && dry_run.at("result").at("placementStatus") == "missing"
+            && dry_run.at("result").at("plannedChanges").size() == 1U
+            && dry_run.at("revision") == initial_revision
+            && fake.edit_section_count == edits_before
+            && fake.created_object_count == 0U,
+        "PSD setup dry-run mutated state or omitted its plan");
+
+    const nlohmann::json created = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 121U),
+            "psd.setup",
+            correlation_id,
+            R"({"sceneId":7,"createIfMissing":true})",
+            initial_revision),
+        identity.instance_id).get()));
+    require(created.at("ok").get<bool>()
+            && created.at("result").at("created").get<bool>()
+            && created.at("result").at("placementStatus") == "valid"
+            && created.at("result").at("objects").size() == 1U
+            && created.at("result").at("objects")[0].at("effects")[0].at("name")
+                == "最初に置くやつ@PSDToolKit"
+            && created.at("result").at("appliedChanges").size() == 1U
+            && created.at("revision") != initial_revision
+            && fake.edit_section_count == edits_before + 1
+            && fake.created_object_count == 1U,
+        "PSD setup did not create and verify exactly one setup object");
+
+    const std::string created_revision = created.at("revision").get<std::string>();
+    const nlohmann::json idempotent = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 122U),
+            "psd.setup",
+            correlation_id,
+            R"({"sceneId":7,"createIfMissing":true})",
+            created_revision),
+        identity.instance_id).get()));
+    require(idempotent.at("ok").get<bool>()
+            && !idempotent.at("result").at("created").get<bool>()
+            && idempotent.at("result").at("placementStatus") == "valid"
+            && idempotent.at("revision") == created_revision
+            && fake.edit_section_count == edits_before + 1
+            && fake.created_object_count == 1U,
+        "PSD setup was not idempotent after a verified setup existed");
+
+    const nlohmann::json stale = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 123U),
+            "psd.setup",
+            correlation_id,
+            R"({"sceneId":7})",
+            initial_revision),
+        identity.instance_id).get()));
+    require(!stale.at("ok").get<bool>()
+            && stale.at("error").at("code") == "revision_conflict"
+            && fake.edit_section_count == edits_before + 1,
+        "PSD setup accepted a stale content revision");
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -3523,6 +3656,7 @@ int main() {
         std::pair{"PSDToolKit config reader", &test_psdtoolkit_config_reader},
         std::pair{"GCMZDrops adapter contract", &test_gcmz_adapter_contract},
         std::pair{"PSD value and alias codecs", &test_psd_value_and_alias_codecs},
+        std::pair{"native PSD setup request handler", &test_native_psd_setup_request_handler},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
