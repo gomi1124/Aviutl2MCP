@@ -4,6 +4,7 @@
 #include "aviutl2_mcp/bridge_version.h"
 #include "aviutl2_mcp/cancellation_registry.h"
 #include "aviutl2_mcp/command_gate.h"
+#include "aviutl2_mcp/gcmz_adapter.h"
 #include "aviutl2_mcp/handshake.h"
 #include "aviutl2_mcp/instance_descriptor.h"
 #include "aviutl2_mcp/ipc_header.h"
@@ -3361,6 +3362,75 @@ void test_psdtoolkit_config_reader() {
         "missing PSDToolKit JSON did not fail closed");
 }
 
+void test_gcmz_adapter_contract() {
+    aviutl2_mcp::gcmz_shared_data data{
+        .window = 1234U,
+        .width = 1920,
+        .height = 1080,
+        .video_rate = 30,
+        .video_scale = 1,
+        .audio_rate = 48'000,
+        .audio_channels = 2,
+        .api_version = 3,
+        .project_path = {},
+        .flags = 0U,
+        .aviutl_version = 2003300U,
+        .gcmz_version = 30000U,
+    };
+    const std::wstring project_path = L"C:\\動画\\fixture.aup2";
+    std::ranges::copy(project_path, data.project_path.begin());
+    const aviutl2_mcp::gcmz_probe_result valid = aviutl2_mcp::evaluate_gcmz_shared_data(
+        data,
+        true,
+        42U,
+        42U,
+        std::filesystem::path(L"c:/動画/fixture.aup2"));
+    require(valid.ok
+            && valid.api_version == 3
+            && valid.process_id == 42U
+            && valid.project_path.has_value(),
+        "GCMZDrops API v3 target validation rejected a matching fixture");
+
+    data.api_version = 2;
+    require(aviutl2_mcp::evaluate_gcmz_shared_data(
+                data, true, 42U, 42U, std::nullopt).error_code == "gcmz_api_unsupported",
+        "GCMZDrops API v2 was not rejected");
+    data.api_version = 3;
+    require(aviutl2_mcp::evaluate_gcmz_shared_data(
+                data, false, 42U, 42U, std::nullopt).error_code == "gcmz_window_invalid",
+        "invalid GCMZDrops HWND was not rejected");
+    require(aviutl2_mcp::evaluate_gcmz_shared_data(
+                data, true, 41U, 42U, std::nullopt).error_code == "gcmz_target_mismatch",
+        "GCMZDrops PID mismatch was not rejected");
+    require(aviutl2_mcp::evaluate_gcmz_shared_data(
+                data,
+                true,
+                42U,
+                42U,
+                std::filesystem::path(L"C:\\other.aup2")).error_code == "gcmz_project_mismatch",
+        "GCMZDrops project mismatch was not rejected");
+
+    const std::string payload = aviutl2_mcp::create_gcmz_drop_payload({
+        .layer = 1,
+        .frame_advance = 100,
+        .margin = 10,
+        .files = {std::filesystem::path(L"C:\\素材\\立ち絵.psd")},
+    });
+    const nlohmann::json payload_json = nlohmann::json::parse(payload);
+    require(payload_json == nlohmann::json{
+                {"layer", 1},
+                {"frameAdvance", 100},
+                {"margin", 10},
+                {"files", {"C:\\素材\\立ち絵.psd"}},
+            },
+        "GCMZDrops WM_COPYDATA JSON did not match API v3");
+    require_throws([] {
+        static_cast<void>(aviutl2_mcp::create_gcmz_drop_payload({
+            .files = {std::filesystem::path(L"relative.psd")},
+        }));
+    }, "relative GCMZDrops path was accepted");
+}
+
 }  // namespace
 
 int main() {
@@ -3393,6 +3463,7 @@ int main() {
         std::pair{"native preview request handler", &test_native_preview_request_handler},
         std::pair{"PSD profile detector", &test_psd_profile_detector},
         std::pair{"PSDToolKit config reader", &test_psdtoolkit_config_reader},
+        std::pair{"GCMZDrops adapter contract", &test_gcmz_adapter_contract},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

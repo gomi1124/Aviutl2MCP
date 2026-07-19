@@ -5,6 +5,7 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/bridge_version.cpp
   src/cancellation_registry.cpp
   src/command_gate.cpp
+  src/gcmz_adapter.cpp
   src/handshake.cpp
   src/instance_descriptor.cpp
   src/ipc_header.cpp
