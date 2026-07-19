@@ -240,6 +240,125 @@ public sealed class RealReadPreviewDiagnosticTests
         }
     }
 
+    [TestMethod]
+    [TestCategory("RealAviUtl2")]
+    [Timeout(180_000)]
+    public async Task RealAviUtlRoundTripsPsdCharacterAndLayerInIsolatedFixture()
+    {
+        if (!RealAviUtlHarness.IsEnabled)
+        {
+            Assert.Inconclusive("Set AVIUTL2_MCP_REAL_TEST=1 to run the isolated real AviUtl2 test.");
+        }
+
+        using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
+        await using RealAviUtlHarness harness = await RealAviUtlHarness.StartAsync(timeout.Token);
+        try
+        {
+            InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
+            BridgeConnectionFactory connectionFactory = new(Guid.NewGuid(), "0.1.0-real-test");
+            await using BridgeConnectionRegistry registry = new(watcher, connectionFactory);
+            BridgeQueryGateway query = new(registry);
+            BridgePsdGateway psd = new(registry);
+
+            GatewayResponse<ProjectData> project = await query.GetProjectAsync(
+                CreateGatewayRequest(harness.InstanceId, new GetProjectInput()),
+                timeout.Token);
+            Assert.IsTrue(project.Ok, project.Error?.Message);
+            Assert.IsNotNull(project.Revision);
+            Revision beforeRevision = project.Revision.Value;
+
+            GatewayResponse<ObjectsPageData> found = await query.FindObjectsAsync(
+                CreateGatewayRequest(
+                    harness.InstanceId,
+                    new FindObjectsInput
+                    {
+                        EffectName = "PSDファイル@PSDToolKit",
+                        Limit = 100,
+                    }),
+                timeout.Token);
+            Assert.IsTrue(found.Ok, found.Error?.Message);
+            ObjectSummary target = found.Data!.Objects.Single();
+
+            const string characterId = "aviutl2-mcp-real";
+            PsdSetCharacterInput characterParameters = new()
+            {
+                ExpectedRevision = beforeRevision,
+                Locator = target.Locator,
+                CharacterId = characterId,
+                DryRun = true,
+            };
+            GatewayResponse<PsdCharacterData> characterDryRun =
+                await psd.ExecutePsdAsync<PsdSetCharacterInput, PsdCharacterData>(
+                    "psd.setCharacter",
+                    CreateGatewayRequest(
+                        harness.InstanceId,
+                        characterParameters,
+                        beforeRevision,
+                        dryRun: true),
+                    timeout.Token);
+            Assert.IsTrue(characterDryRun.Ok, characterDryRun.Error?.Message);
+            Assert.AreEqual(characterId, characterDryRun.Data!.CharacterId);
+            Assert.HasCount(1, characterDryRun.Data.PlannedChanges!);
+            Assert.AreEqual(beforeRevision, characterDryRun.Revision);
+
+            characterParameters = characterParameters with { DryRun = false };
+            GatewayResponse<PsdCharacterData> character =
+                await psd.ExecutePsdAsync<PsdSetCharacterInput, PsdCharacterData>(
+                    "psd.setCharacter",
+                    CreateGatewayRequest(
+                        harness.InstanceId,
+                        characterParameters,
+                        beforeRevision),
+                    timeout.Token);
+            Assert.IsTrue(character.Ok, character.Error?.Message);
+            Assert.AreEqual(characterId, character.Data!.CharacterId);
+            Assert.AreEqual(characterId, character.Data.Item!.Value?.GetString());
+            Assert.IsNotNull(character.Data.TimelineObject);
+            Assert.AreNotEqual(beforeRevision, character.Revision);
+
+            Revision characterRevision = character.Revision!.Value;
+            PsdSetLayerStateInput layerParameters = new()
+            {
+                ExpectedRevision = characterRevision,
+                Locator = character.Data.TimelineObject!.Locator,
+                LayerState = "L.0",
+            };
+            GatewayResponse<PsdLayerStateData> layer =
+                await psd.ExecutePsdAsync<PsdSetLayerStateInput, PsdLayerStateData>(
+                    "psd.setLayerState",
+                    CreateGatewayRequest(
+                        harness.InstanceId,
+                        layerParameters,
+                        characterRevision),
+                    timeout.Token);
+            Assert.IsTrue(layer.Ok, layer.Error?.Message);
+            Assert.AreEqual("L.0", layer.Data!.LayerState);
+            Assert.AreEqual(true, layer.Data.RoundTripMatched);
+            Assert.IsNotNull(layer.Data.TimelineObject);
+            Assert.AreNotEqual(characterRevision, layer.Revision);
+
+            GatewayResponse<PsdValidateData> validation = await psd.ValidatePsdAsync(
+                CreateGatewayRequest(
+                    harness.InstanceId,
+                    new PsdValidateInput
+                    {
+                        Locator = layer.Data.TimelineObject!.Locator,
+                        Scope = PsdValidationScope.SingleObject,
+                        Checks = [PsdValidationCheck.Character],
+                    }),
+                timeout.Token);
+            Assert.IsTrue(validation.Ok, validation.Error?.Message);
+            Assert.AreEqual("ptk2-2.0.0alpha10-ja", validation.Data!.Profile);
+            Assert.HasCount(1, validation.Data.Checks);
+            Assert.AreEqual(DiagnosticCheckStatus.Pass, validation.Data.Checks[0].Status);
+        }
+        catch (Exception exception)
+        {
+            harness.RecordFailure(exception);
+            throw;
+        }
+    }
+
     private static GatewayRequest<T> CreateGatewayRequest<T>(
         Guid instanceId,
         T parameters,

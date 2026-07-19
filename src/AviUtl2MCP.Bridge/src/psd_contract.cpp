@@ -28,7 +28,7 @@ constexpr std::array REQUIRED_ITEMS{
     required_item{PSD_FILE_EFFECT, "PSDファイル", "file"},
     required_item{PSD_FILE_EFFECT, "セーフガード", "check"},
     required_item{PSD_FILE_EFFECT, "タグ", "string"},
-    required_item{PSD_FILE_EFFECT, "シーンID", "integer"},
+    required_item{PSD_FILE_EFFECT, "シーンID", "string"},
     required_item{PSD_FILE_EFFECT, "キャラクターID", "string"},
     required_item{PSD_FILE_EFFECT, "レイヤー", "string"},
     required_item{PSD_VOICE_EFFECT, "キャラクターID", "string"},
@@ -98,7 +98,8 @@ psd_profile_detection detect_psd_profile(const psd_profile_observation& observat
         } else if (item->type != required.type) {
             result.failures.emplace_back(
                 "item_type_mismatch:" + std::string(required.effect) + ":"
-                + std::string(required.item));
+                + std::string(required.item) + ":expected=" + std::string(required.type)
+                + ":actual=" + item->type);
         }
     }
     result.is_match = result.failures.empty();

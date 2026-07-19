@@ -250,6 +250,10 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
     dispatcher_.register_handler(std::make_unique<native_capabilities_request_handler>(
         host_version_,
         get_sdk_read_facade()));
+    dispatcher_.register_handler(std::make_unique<native_capabilities_request_handler>(
+        host_version_,
+        get_sdk_read_facade(),
+        "psd.capabilities"));
     dispatcher_.register_handler(std::make_unique<native_project_request_handler>(get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_preview_request_handler>(get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_timeline_request_handler>(
@@ -286,6 +290,12 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
     dispatcher_.register_handler(std::make_unique<native_batch_request_handler>(
         identity_, get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_psd_setup_request_handler>(
+        identity_, get_sdk_read_facade()));
+    dispatcher_.register_handler(std::make_unique<native_psd_item_request_handler>(
+        identity_, get_sdk_read_facade(), native_psd_item_operation::character));
+    dispatcher_.register_handler(std::make_unique<native_psd_item_request_handler>(
+        identity_, get_sdk_read_facade(), native_psd_item_operation::layer_state));
+    dispatcher_.register_handler(std::make_unique<native_psd_validate_request_handler>(
         identity_, get_sdk_read_facade()));
     project_load_callback_state_ = std::make_shared<project_load_callback_state>();
     project_load_callback_state_->revisions = &dispatcher_.revisions();

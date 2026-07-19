@@ -270,12 +270,18 @@ void add_operations(
 
 native_capabilities_request_handler::native_capabilities_request_handler(
     std::string host_version,
-    sdk_read_facade& sdk)
+    sdk_read_facade& sdk,
+    std::string operation)
     : host_version_(std::move(host_version)),
-      sdk_(sdk) {}
+      sdk_(sdk),
+      operation_(std::move(operation)) {
+    if (operation_.empty()) {
+        throw std::invalid_argument("Capabilities operation name must not be empty");
+    }
+}
 
 std::string native_capabilities_request_handler::operation() const {
-    return "capabilities.get";
+    return operation_;
 }
 
 bool native_capabilities_request_handler::is_mutating() const noexcept {

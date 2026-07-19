@@ -16,7 +16,7 @@ V1はPSDToolKit2の非公開IPCを使わず、AviUtl2公開SDK、GCMZDrops外部
 | PSD object | `PSDファイル@PSDToolKit` | `PSDファイル` | `file` |
 | PSD object | 同上 | `セーフガード` | `check` |
 | PSD object | 同上 | `タグ` | `string` |
-| PSD object | 同上 | `シーンID` | `integer` |
+| PSD object | 同上 | `シーンID` | `string` |
 | PSD object | 同上 | `キャラクターID` | `string` |
 | PSD object | 同上 | `レイヤー` | `string` |
 | voice prep | `セリフ準備@PSDToolKit` | `キャラクターID` | `string` |

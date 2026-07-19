@@ -333,6 +333,13 @@ struct fake_sdk_state final {
     bool should_throw_edit_state = false;
     bool has_duplicate_effect_name = false;
     bool has_psd_effects = false;
+    bool has_psd_file_object = false;
+    std::string psd_effect_file = "C:\\Media\\character.psd";
+    std::string psd_effect_safeguard = "1";
+    std::string psd_effect_tag;
+    std::string psd_effect_scene_id = "7";
+    std::string psd_effect_character_id = "alice";
+    std::string psd_effect_layer_state = "L.0";
     bool is_read_active = false;
     bool should_reject_move = false;
     int read_section_count = 0;
@@ -570,7 +577,10 @@ void wait_fake_rendering_task() {
     }
     return effect == &ACTIVE_FAKE_SDK->first_effect ? L"Audio File"
         : effect == &ACTIVE_FAKE_SDK->second_effect ? L"Standard Playback"
-        : effect == &ACTIVE_FAKE_SDK->third_effect ? L"Text"
+        : effect == &ACTIVE_FAKE_SDK->third_effect
+            ? (ACTIVE_FAKE_SDK->has_psd_file_object
+                ? L"PSDファイル@PSDToolKit"
+                : L"Text")
         : nullptr;
 }
 
@@ -626,6 +636,17 @@ void set_fake_effect_lock(const EFFECT_HANDLE effect, const bool locked) {
     } else if (std::wstring_view(effect) == L"Text") {
         callback(parameter, L"Text", EDIT_HANDLE::EFFECT_ITEM_TYPE_TEXT);
         callback(parameter, L"Font", EDIT_HANDLE::EFFECT_ITEM_TYPE_FONT);
+    } else if (std::wstring_view(effect) == L"PSDファイル@PSDToolKit") {
+        callback(parameter, L"PSDファイル", EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE);
+        callback(parameter, L"セーフガード", EDIT_HANDLE::EFFECT_ITEM_TYPE_CHECK);
+        callback(parameter, L"タグ", EDIT_HANDLE::EFFECT_ITEM_TYPE_STRING);
+        callback(parameter, L"シーンID", EDIT_HANDLE::EFFECT_ITEM_TYPE_STRING);
+        callback(parameter, L"キャラクターID", EDIT_HANDLE::EFFECT_ITEM_TYPE_STRING);
+        callback(parameter, L"レイヤー", EDIT_HANDLE::EFFECT_ITEM_TYPE_STRING);
+    } else if (std::wstring_view(effect) == L"セリフ準備@PSDToolKit") {
+        callback(parameter, L"キャラクターID", EDIT_HANDLE::EFFECT_ITEM_TYPE_STRING);
+        callback(parameter, L"テキスト", EDIT_HANDLE::EFFECT_ITEM_TYPE_TEXT);
+        callback(parameter, L"音声ファイル", EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE);
     }
     return true;
 }
@@ -657,6 +678,16 @@ void enumerate_fake_effect_names(
         callback(
             parameter,
             L"最初に置くやつ@PSDToolKit",
+            EDIT_HANDLE::EFFECT_TYPE_FILTER,
+            EDIT_HANDLE::EFFECT_FLAG_VIDEO | EDIT_HANDLE::EFFECT_FLAG_FILTER);
+        callback(
+            parameter,
+            L"PSDファイル@PSDToolKit",
+            EDIT_HANDLE::EFFECT_TYPE_FILTER,
+            EDIT_HANDLE::EFFECT_FLAG_VIDEO | EDIT_HANDLE::EFFECT_FLAG_FILTER);
+        callback(
+            parameter,
+            L"セリフ準備@PSDToolKit",
             EDIT_HANDLE::EFFECT_TYPE_FILTER,
             EDIT_HANDLE::EFFECT_FLAG_VIDEO | EDIT_HANDLE::EFFECT_FLAG_FILTER);
     }
@@ -721,6 +752,26 @@ void enumerate_fake_palettes(void* parameter, void (*callback)(void*, LPCWSTR)) 
             return "opaque";
         }
     }
+    if (effect == &ACTIVE_FAKE_SDK->third_effect && ACTIVE_FAKE_SDK->has_psd_file_object) {
+        if (name == L"PSDファイル") {
+            return ACTIVE_FAKE_SDK->psd_effect_file.c_str();
+        }
+        if (name == L"セーフガード") {
+            return ACTIVE_FAKE_SDK->psd_effect_safeguard.c_str();
+        }
+        if (name == L"タグ") {
+            return ACTIVE_FAKE_SDK->psd_effect_tag.c_str();
+        }
+        if (name == L"シーンID") {
+            return ACTIVE_FAKE_SDK->psd_effect_scene_id.c_str();
+        }
+        if (name == L"キャラクターID") {
+            return ACTIVE_FAKE_SDK->psd_effect_character_id.c_str();
+        }
+        if (name == L"レイヤー") {
+            return ACTIVE_FAKE_SDK->psd_effect_layer_state.c_str();
+        }
+    }
     if (effect == &ACTIVE_FAKE_SDK->third_effect && name == L"Text") {
         return ACTIVE_FAKE_SDK->third_effect_text.c_str();
     }
@@ -746,9 +797,19 @@ void enumerate_fake_palettes(void* parameter, void (*callback)(void*, LPCWSTR)) 
             : name == L"Enabled" ? &ACTIVE_FAKE_SDK->first_effect_checked
             : nullptr;
     } else if (effect == &ACTIVE_FAKE_SDK->third_effect) {
-        destination = name == L"Text" ? &ACTIVE_FAKE_SDK->third_effect_text
-            : name == L"Font" ? &ACTIVE_FAKE_SDK->third_effect_font
-            : nullptr;
+        if (ACTIVE_FAKE_SDK->has_psd_file_object) {
+            destination = name == L"PSDファイル" ? &ACTIVE_FAKE_SDK->psd_effect_file
+                : name == L"セーフガード" ? &ACTIVE_FAKE_SDK->psd_effect_safeguard
+                : name == L"タグ" ? &ACTIVE_FAKE_SDK->psd_effect_tag
+                : name == L"シーンID" ? &ACTIVE_FAKE_SDK->psd_effect_scene_id
+                : name == L"キャラクターID" ? &ACTIVE_FAKE_SDK->psd_effect_character_id
+                : name == L"レイヤー" ? &ACTIVE_FAKE_SDK->psd_effect_layer_state
+                : nullptr;
+        } else {
+            destination = name == L"Text" ? &ACTIVE_FAKE_SDK->third_effect_text
+                : name == L"Font" ? &ACTIVE_FAKE_SDK->third_effect_font
+                : nullptr;
+        }
     }
     if (destination == nullptr) {
         return false;
@@ -2074,6 +2135,10 @@ void test_native_query_request_handlers() {
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_capabilities_request_handler>(
         "2003300",
         facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_capabilities_request_handler>(
+        "2003300",
+        facade,
+        "psd.capabilities"));
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_project_request_handler>(facade));
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_timeline_request_handler>(
         identity,
@@ -2133,6 +2198,18 @@ void test_native_query_request_handlers() {
             && capabilities.at("result").at("versions").at("psdToolKit") == "2.0.0alpha10"
             && capabilities.at("result").at("limits").at("pagingCursorTtlSeconds") == 300,
         "native capabilities returned incorrect versions or limits");
+
+    const nlohmann::json psd_capabilities = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 66U),
+            "psd.capabilities",
+            correlation_id),
+        identity.instance_id).get()));
+    require(psd_capabilities.at("ok").get<bool>()
+            && psd_capabilities.at("result").at("operations") == operations
+            && psd_capabilities.at("result").at("versions")
+                == capabilities.at("result").at("versions"),
+        "PSD capabilities alias diverged from the canonical capability probe");
 
     const nlohmann::json effects = nlohmann::json::parse(get_json(dispatcher.dispatch(
         create_request_frame(
@@ -3320,7 +3397,7 @@ void test_psd_profile_detector() {
                 {.name = "PSDファイル", .type = "file"},
                 {.name = "セーフガード", .type = "check"},
                 {.name = "タグ", .type = "string"},
-                {.name = "シーンID", .type = "integer"},
+                {.name = "シーンID", .type = "string"},
                 {.name = "キャラクターID", .type = "string"},
                 {.name = "レイヤー", .type = "string"},
             }},
@@ -3622,6 +3699,189 @@ void test_native_psd_setup_request_handler() {
     ACTIVE_FAKE_SDK = nullptr;
 }
 
+void test_native_psd_item_request_handlers() {
+    const std::filesystem::path root = create_test_directory(
+        aviutl2_mcp::create_bridge_identity().instance_id);
+    directory_cleanup cleanup(root);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path psd_path = root / L"character.psd";
+    {
+        std::ofstream output(psd_path, std::ios::binary);
+        output << "8BPSfixture";
+    }
+
+    fake_sdk_state fake;
+    fake.has_psd_effects = true;
+    fake.has_psd_file_object = true;
+    fake.psd_effect_file = psd_path.string();
+    fake.second_alias =
+        "[Object]\r\n"
+        "[Object.0]\r\n"
+        "effect.name=PSDファイル@PSDToolKit\r\n"
+        "PSDファイル=" + fake.psd_effect_file + "\r\n"
+        "セーフガード=1\r\n"
+        "キャラクターID=alice\r\n"
+        "レイヤー=L.0\r\n";
+    configure_fake_sdk(fake);
+    fake.layer_enabled[3] = true;
+    fake.layer_locked[3] = false;
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "PSD item fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_psd_item_request_handler>(
+        identity,
+        facade,
+        aviutl2_mcp::native_psd_item_operation::character));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_psd_item_request_handler>(
+        identity,
+        facade,
+        aviutl2_mcp::native_psd_item_operation::layer_state));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_psd_validate_request_handler>(
+        identity,
+        facade));
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string initial_revision = dispatcher.revisions().content_revision();
+
+    const aviutl2_mcp::sdk_timeline_query_result timeline = facade.query_timeline({
+        .scene_id = 7,
+        .offset = 0U,
+        .limit = 100U,
+        .include_effects = true,
+        .use_display_defaults = false,
+    });
+    require(timeline.ok, "PSD item fixture timeline could not be queried");
+    const auto psd_object = std::ranges::find_if(
+        timeline.timeline.objects,
+        [](const aviutl2_mcp::sdk_object_snapshot& object) {
+            return std::ranges::any_of(
+                object.effects,
+                [](const aviutl2_mcp::sdk_effect_summary& effect) {
+                    return effect.name == "PSDファイル@PSDToolKit";
+                });
+        });
+    require(psd_object != timeline.timeline.objects.end(), "PSD item fixture object was missing");
+    const aviutl2_mcp::object_locator initial_locator = aviutl2_mcp::create_object_locator(
+        identity.instance_id,
+        dispatcher.revisions().project_generation(),
+        psd_object->candidate);
+    const auto serialize_locator = [](const aviutl2_mcp::object_locator& locator) {
+        return nlohmann::json{
+            {"instanceId", locator.instance_id},
+            {"projectGeneration", locator.project_generation},
+            {"sceneId", locator.scene_id},
+            {"layer", locator.layer},
+            {"startFrame", locator.start_frame},
+            {"endFrame", locator.end_frame},
+            {"name", locator.name},
+            {"aliasSha256", locator.alias_sha256},
+            {"effectSignatureSha256", locator.effect_signature_sha256},
+        };
+    };
+
+    const nlohmann::json validation = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 128U),
+            "psd.validate",
+            correlation_id,
+            nlohmann::json{
+                {"locator", serialize_locator(initial_locator)},
+                {"scope", "object"},
+                {"checks", nlohmann::json::array({"character"})},
+            }.dump()),
+        identity.instance_id).get()));
+    require(validation.at("ok").get<bool>()
+            && validation.at("result").at("profile") == "ptk2-2.0.0alpha10-ja"
+            && validation.at("result").at("checks").size() == 1U
+            && validation.at("result").at("checks")[0].at("checkId") == "psd.character"
+            && validation.at("result").at("checks")[0].at("status") == "pass"
+            && validation.at("revision") == initial_revision,
+        "PSD object validation did not return a read-only profile check");
+
+    const nlohmann::json character_dry_run = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 124U),
+            "psd.setCharacter",
+            correlation_id,
+            nlohmann::json{
+                {"locator", serialize_locator(initial_locator)},
+                {"characterId", "bob"},
+            }.dump(),
+            initial_revision,
+            true),
+        identity.instance_id).get()));
+    require(character_dry_run.at("ok").get<bool>()
+            && character_dry_run.at("result").at("characterId") == "bob"
+            && character_dry_run.at("result").at("plannedChanges").size() == 1U
+            && fake.psd_effect_character_id == "alice"
+            && character_dry_run.at("revision") == initial_revision,
+        ("PSD character dry-run mutated state or omitted its plan: "
+            + character_dry_run.dump()).c_str());
+
+    const nlohmann::json character = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 125U),
+            "psd.setCharacter",
+            correlation_id,
+            nlohmann::json{
+                {"locator", serialize_locator(initial_locator)},
+                {"characterId", "bob"},
+            }.dump(),
+            initial_revision),
+        identity.instance_id).get()));
+    require(character.at("ok").get<bool>()
+            && character.at("result").at("characterId") == "bob"
+            && character.at("result").at("item").at("value") == "bob"
+            && character.at("result").at("appliedChanges").size() == 1U
+            && character.at("revision") != initial_revision
+            && fake.psd_effect_character_id == "bob",
+        "PSD character ID did not round-trip through the SDK");
+
+    const std::string character_revision = character.at("revision").get<std::string>();
+    const nlohmann::json updated_locator = character.at("result").at("object").at("locator");
+    const nlohmann::json layer = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 126U),
+            "psd.setLayerState",
+            correlation_id,
+            nlohmann::json{
+                {"locator", updated_locator},
+                {"layerState", "L.0 v1.fixture"},
+            }.dump(),
+            character_revision),
+        identity.instance_id).get()));
+    require(layer.at("ok").get<bool>()
+            && layer.at("result").at("layerState") == "L.0 v1.fixture"
+            && layer.at("result").at("roundTripMatched").get<bool>()
+            && fake.psd_effect_layer_state == "L.0 v1.fixture"
+            && fake.psd_effect_safeguard == "1"
+            && fake.psd_effect_file == psd_path.string(),
+        "PSD layer state did not preserve its guard or round-trip exactly");
+
+    fake.psd_effect_safeguard = "0";
+    const nlohmann::json unsafe = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 127U),
+            "psd.setLayerState",
+            correlation_id,
+            nlohmann::json{
+                {"locator", layer.at("result").at("object").at("locator")},
+                {"layerState", "L.0 v1.rejected"},
+            }.dump(),
+            layer.at("revision").get<std::string>()),
+        identity.instance_id).get()));
+    require(!unsafe.at("ok").get<bool>()
+            && unsafe.at("error").at("code") == "invalid_media_file"
+            && fake.psd_effect_layer_state == "L.0 v1.fixture",
+        "PSD layer state accepted a disabled safeguard");
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -3657,6 +3917,7 @@ int main() {
         std::pair{"GCMZDrops adapter contract", &test_gcmz_adapter_contract},
         std::pair{"PSD value and alias codecs", &test_psd_value_and_alias_codecs},
         std::pair{"native PSD setup request handler", &test_native_psd_setup_request_handler},
+        std::pair{"native PSD item request handlers", &test_native_psd_item_request_handlers},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
