@@ -11,6 +11,7 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/locator_resolver.cpp
   src/named_pipe_server.cpp
   src/native_capabilities_request_handler.cpp
+  src/native_effect_request_handlers.cpp
   src/native_ipc_frame_codec.cpp
   src/native_log_request_handler.cpp
   src/native_operation_result.cpp

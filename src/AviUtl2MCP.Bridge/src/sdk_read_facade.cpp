@@ -28,6 +28,14 @@ constexpr std::size_t MAXIMUM_TIMELINE_SCAN = 1'000'000U;
 constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
 constexpr std::size_t MAXIMUM_EFFECT_ITEMS = 1'000U;
 constexpr std::size_t MAXIMUM_EFFECT_ITEM_VALUE_BYTES = 64U * 1024U;
+constexpr std::size_t MAXIMUM_EFFECT_DEFINITIONS = 100'000U;
+constexpr std::size_t MAXIMUM_MODULES = 10'000U;
+constexpr std::size_t MAXIMUM_FONT_NAMES = 100'000U;
+constexpr std::size_t MAXIMUM_PALETTE_NAMES = 10'000U;
+constexpr std::size_t MAXIMUM_CATALOG_PAGE_ITEMS = 1'000U;
+constexpr std::size_t MAXIMUM_CATALOG_OFFSET = 1'000'000U;
+constexpr std::size_t MAXIMUM_SDK_TEXT_BYTES = 64U * 1024U;
+constexpr std::size_t MAXIMUM_CATALOG_TEXT_BYTES = 4U * 1024U * 1024U;
 std::atomic<sdk_read_facade*> REGISTERED_FACADE = nullptr;
 
 [[nodiscard]] std::string to_utf8(const LPCWSTR value) {
@@ -317,6 +325,247 @@ struct effect_item_codec final {
             return {"folder", "unsupported", false};
         default:
             return {"unknown", "unsupported", false};
+    }
+}
+
+[[nodiscard]] std::string copy_limited_sdk_text(const LPCWSTR value, const char* field) {
+    std::string result = to_utf8(value);
+    if (result.size() > MAXIMUM_SDK_TEXT_BYTES) {
+        throw std::runtime_error(std::string("SDK ") + field + " exceeded the supported limit");
+    }
+    return result;
+}
+
+void consume_catalog_text_budget(
+    const std::string_view value,
+    std::size_t* consumed_bytes) {
+    if (consumed_bytes == nullptr) {
+        return;
+    }
+    if (*consumed_bytes > MAXIMUM_CATALOG_TEXT_BYTES
+        || value.size() > MAXIMUM_CATALOG_TEXT_BYTES - *consumed_bytes) {
+        throw std::runtime_error("SDK catalog text exceeded the supported limit");
+    }
+    *consumed_bytes += value.size();
+}
+
+[[nodiscard]] const char* get_effect_definition_type(const int type) noexcept {
+    switch (type) {
+        case EDIT_HANDLE::EFFECT_TYPE_FILTER:
+            return "filter";
+        case EDIT_HANDLE::EFFECT_TYPE_INPUT:
+            return "input";
+        case EDIT_HANDLE::EFFECT_TYPE_TRANSITION:
+            return "transition";
+        case EDIT_HANDLE::EFFECT_TYPE_CONTROL:
+            return "control";
+        case EDIT_HANDLE::EFFECT_TYPE_OUTPUT:
+            return "output";
+        default:
+            return "unknown";
+    }
+}
+
+[[nodiscard]] std::vector<std::string> get_effect_definition_flags(const int flags) {
+    constexpr int KNOWN_FLAGS = EDIT_HANDLE::EFFECT_FLAG_VIDEO
+        | EDIT_HANDLE::EFFECT_FLAG_AUDIO
+        | EDIT_HANDLE::EFFECT_FLAG_FILTER
+        | EDIT_HANDLE::EFFECT_FLAG_CAMERA;
+    std::vector<std::string> result;
+    if ((flags & EDIT_HANDLE::EFFECT_FLAG_VIDEO) != 0) {
+        result.emplace_back("video");
+    }
+    if ((flags & EDIT_HANDLE::EFFECT_FLAG_AUDIO) != 0) {
+        result.emplace_back("audio");
+    }
+    if ((flags & EDIT_HANDLE::EFFECT_FLAG_FILTER) != 0) {
+        result.emplace_back("filter");
+    }
+    if ((flags & EDIT_HANDLE::EFFECT_FLAG_CAMERA) != 0) {
+        result.emplace_back("camera");
+    }
+    if ((flags & ~KNOWN_FLAGS) != 0) {
+        result.emplace_back("unknown");
+    }
+    return result;
+}
+
+[[nodiscard]] bool is_effect_creatable(const int type, const int flags) noexcept {
+    if (type == EDIT_HANDLE::EFFECT_TYPE_FILTER) {
+        return (flags & EDIT_HANDLE::EFFECT_FLAG_FILTER) != 0;
+    }
+    return type == EDIT_HANDLE::EFFECT_TYPE_INPUT
+        || type == EDIT_HANDLE::EFFECT_TYPE_TRANSITION
+        || type == EDIT_HANDLE::EFFECT_TYPE_CONTROL
+        || type == EDIT_HANDLE::EFFECT_TYPE_OUTPUT;
+}
+
+[[nodiscard]] const char* get_module_type(const int type) noexcept {
+    switch (type) {
+        case MODULE_INFO::TYPE_SCRIPT_FILTER:
+            return "scriptFilter";
+        case MODULE_INFO::TYPE_SCRIPT_OBJECT:
+            return "scriptObject";
+        case MODULE_INFO::TYPE_SCRIPT_CAMERA:
+            return "scriptCamera";
+        case MODULE_INFO::TYPE_SCRIPT_TRACK:
+            return "scriptTrack";
+        case MODULE_INFO::TYPE_SCRIPT_MODULE:
+            return "scriptModule";
+        case MODULE_INFO::TYPE_PLUGIN_INPUT:
+            return "pluginInput";
+        case MODULE_INFO::TYPE_PLUGIN_OUTPUT:
+            return "pluginOutput";
+        case MODULE_INFO::TYPE_PLUGIN_FILTER:
+            return "pluginFilter";
+        case MODULE_INFO::TYPE_PLUGIN_COMMON:
+            return "pluginCommon";
+        default:
+            return "unknown";
+    }
+}
+
+struct effect_definition_copy_context final {
+    std::vector<sdk_effect_definition> definitions;
+    std::size_t* consumed_text_bytes = nullptr;
+    std::string error;
+};
+
+void copy_effect_definition(
+    void* raw_context,
+    const LPCWSTR name,
+    const int type,
+    const int flags) noexcept {
+    auto* context = static_cast<effect_definition_copy_context*>(raw_context);
+    if (!context->error.empty()) {
+        return;
+    }
+    try {
+        if (context->definitions.size() >= MAXIMUM_EFFECT_DEFINITIONS) {
+            throw std::runtime_error("SDK effect definition count exceeded the supported limit");
+        }
+        std::string copied_name = copy_limited_sdk_text(name, "effect name");
+        consume_catalog_text_budget(copied_name, context->consumed_text_bytes);
+        context->definitions.push_back(sdk_effect_definition{
+            .name = std::move(copied_name),
+            .type = get_effect_definition_type(type),
+            .flags = get_effect_definition_flags(flags),
+            .is_creatable = is_effect_creatable(type, flags),
+        });
+    } catch (const std::exception& exception) {
+        context->error = exception.what();
+    } catch (...) {
+        context->error = "SDK effect definition callback failed with an unknown exception";
+    }
+}
+
+struct module_copy_context final {
+    std::vector<sdk_module_summary> modules;
+    std::size_t* consumed_text_bytes = nullptr;
+    std::string error;
+};
+
+void copy_module(void* raw_context, MODULE_INFO* info) noexcept {
+    auto* context = static_cast<module_copy_context*>(raw_context);
+    if (!context->error.empty()) {
+        return;
+    }
+    try {
+        if (info == nullptr) {
+            throw std::runtime_error("SDK returned a null module definition");
+        }
+        if (context->modules.size() >= MAXIMUM_MODULES) {
+            throw std::runtime_error("SDK module count exceeded the supported limit");
+        }
+        std::string name = copy_limited_sdk_text(info->name, "module name");
+        std::string information = copy_limited_sdk_text(info->information, "module information");
+        consume_catalog_text_budget(name, context->consumed_text_bytes);
+        consume_catalog_text_budget(information, context->consumed_text_bytes);
+        context->modules.push_back(sdk_module_summary{
+            .type = get_module_type(info->type),
+            .name = std::move(name),
+            .information = std::move(information),
+        });
+    } catch (const std::exception& exception) {
+        context->error = exception.what();
+    } catch (...) {
+        context->error = "SDK module callback failed with an unknown exception";
+    }
+}
+
+struct name_copy_context final {
+    std::vector<std::string> names;
+    std::size_t maximum_count;
+    const char* field;
+    std::size_t* consumed_text_bytes = nullptr;
+    std::string error;
+};
+
+void copy_catalog_name(void* raw_context, const LPCWSTR name) noexcept {
+    auto* context = static_cast<name_copy_context*>(raw_context);
+    if (!context->error.empty()) {
+        return;
+    }
+    try {
+        if (context->names.size() >= context->maximum_count) {
+            throw std::runtime_error(std::string("SDK ") + context->field
+                + " count exceeded the supported limit");
+        }
+        std::string copied_name = copy_limited_sdk_text(name, context->field);
+        consume_catalog_text_budget(copied_name, context->consumed_text_bytes);
+        context->names.push_back(std::move(copied_name));
+    } catch (const std::exception& exception) {
+        context->error = exception.what();
+    } catch (...) {
+        context->error = std::string("SDK ") + context->field
+            + " callback failed with an unknown exception";
+    }
+}
+
+struct effect_item_catalog_context final {
+    const std::vector<std::string>* fonts;
+    bool include_choices;
+    std::size_t* consumed_text_bytes;
+    std::vector<sdk_effect_item_snapshot> items;
+    std::string error;
+};
+
+void copy_effect_item_definition(
+    void* raw_context,
+    const LPCWSTR name,
+    const int type) noexcept {
+    auto* context = static_cast<effect_item_catalog_context*>(raw_context);
+    if (!context->error.empty()) {
+        return;
+    }
+    try {
+        if (context->items.size() >= MAXIMUM_EFFECT_ITEMS) {
+            throw std::runtime_error("SDK effect item count exceeded the supported limit");
+        }
+        const effect_item_codec codec = get_effect_item_codec(type);
+        std::vector<std::string> choices;
+        if (context->include_choices
+            && type == EDIT_HANDLE::EFFECT_ITEM_TYPE_FONT
+            && context->fonts != nullptr) {
+            choices = *context->fonts;
+        }
+        std::string copied_name = copy_limited_sdk_text(name, "effect item name");
+        consume_catalog_text_budget(copied_name, context->consumed_text_bytes);
+        for (const std::string& choice : choices) {
+            consume_catalog_text_budget(choice, context->consumed_text_bytes);
+        }
+        context->items.push_back(sdk_effect_item_snapshot{
+            .name = std::move(copied_name),
+            .type = codec.type,
+            .codec = codec.codec,
+            .is_writable = codec.is_writable,
+            .value = std::nullopt,
+            .choices = std::move(choices),
+        });
+    } catch (const std::exception& exception) {
+        context->error = exception.what();
+    } catch (...) {
+        context->error = "SDK effect item catalog callback failed with an unknown exception";
     }
 }
 
@@ -1147,6 +1396,271 @@ sdk_object_query_result sdk_read_facade::query_object(
             .ok = false,
             .error_code = "sdk_query_failed",
             .error_message = "SDK object query failed with an unknown exception",
+        };
+    }
+}
+
+sdk_effect_catalog_query_result sdk_read_facade::query_effects(
+    const sdk_effect_catalog_query& query) const noexcept {
+    const bool has_valid_category = !query.category.has_value()
+        || *query.category == "filter"
+        || *query.category == "input"
+        || *query.category == "transition"
+        || *query.category == "control"
+        || *query.category == "output";
+    if (!has_valid_category || query.limit == 0U
+        || query.limit > MAXIMUM_CATALOG_PAGE_ITEMS
+        || query.offset > MAXIMUM_CATALOG_OFFSET
+        || (query.name_contains.has_value() && query.name_contains->empty())) {
+        return {
+            .ok = false,
+            .error_code = "invalid_argument",
+            .error_message = "Effect catalog query is invalid",
+        };
+    }
+
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr
+        || edit_handle->enum_effect_name == nullptr
+        || edit_handle->enum_module_info == nullptr
+        || edit_handle->enum_font_name == nullptr
+        || edit_handle->enum_palette_name == nullptr) {
+        return {
+            .ok = false,
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK effect catalog functions are not available",
+        };
+    }
+
+    try {
+        std::size_t consumed_text_bytes = 0U;
+        effect_definition_copy_context effect_context{
+            .definitions = {},
+            .consumed_text_bytes = &consumed_text_bytes,
+        };
+        edit_handle->enum_effect_name(&effect_context, &copy_effect_definition);
+        if (!effect_context.error.empty()) {
+            throw std::runtime_error(effect_context.error);
+        }
+
+        module_copy_context module_context{
+            .modules = {},
+            .consumed_text_bytes = &consumed_text_bytes,
+        };
+        edit_handle->enum_module_info(&module_context, &copy_module);
+        if (!module_context.error.empty()) {
+            throw std::runtime_error(module_context.error);
+        }
+
+        name_copy_context font_context{
+            .names = {},
+            .maximum_count = MAXIMUM_FONT_NAMES,
+            .field = "font name",
+            .consumed_text_bytes = &consumed_text_bytes,
+        };
+        edit_handle->enum_font_name(&font_context, &copy_catalog_name);
+        if (!font_context.error.empty()) {
+            throw std::runtime_error(font_context.error);
+        }
+
+        name_copy_context palette_context{
+            .names = {},
+            .maximum_count = MAXIMUM_PALETTE_NAMES,
+            .field = "palette name",
+            .consumed_text_bytes = &consumed_text_bytes,
+        };
+        edit_handle->enum_palette_name(&palette_context, &copy_catalog_name);
+        if (!palette_context.error.empty()) {
+            throw std::runtime_error(palette_context.error);
+        }
+
+        std::vector<sdk_effect_definition> filtered;
+        filtered.reserve(effect_context.definitions.size());
+        for (sdk_effect_definition& definition : effect_context.definitions) {
+            if (query.category.has_value() && definition.type != *query.category) {
+                continue;
+            }
+            if (query.name_contains.has_value()
+                && definition.name.find(*query.name_contains) == std::string::npos) {
+                continue;
+            }
+            filtered.push_back(std::move(definition));
+        }
+
+        const std::size_t page_start = (std::min)(query.offset, filtered.size());
+        const std::size_t page_end = (std::min)(page_start + query.limit, filtered.size());
+        sdk_effect_catalog_snapshot catalog{
+            .effects = {},
+            .modules = std::move(module_context.modules),
+            .fonts = std::move(font_context.names),
+            .palettes = std::move(palette_context.names),
+            .next_offset = page_end,
+            .is_truncated = page_end < filtered.size(),
+        };
+        catalog.effects.reserve(page_end - page_start);
+        for (std::size_t index = page_start; index < page_end; ++index) {
+            catalog.effects.push_back(std::move(filtered[index]));
+        }
+        return {
+            .ok = true,
+            .catalog = std::move(catalog),
+        };
+    } catch (const std::exception& exception) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = exception.what(),
+        };
+    } catch (...) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = "SDK effect catalog query failed with an unknown exception",
+        };
+    }
+}
+
+sdk_effect_items_query_result sdk_read_facade::query_effect_items(
+    const std::string& effect_name,
+    const bool include_choices) const noexcept {
+    std::size_t character_count = 0U;
+    for (const unsigned char byte : effect_name) {
+        if ((byte & 0xc0U) != 0x80U) {
+            ++character_count;
+        }
+    }
+    if (effect_name.empty() || character_count > 4096U) {
+        return {
+            .ok = false,
+            .error_code = "invalid_argument",
+            .error_message = "Effect name is outside the supported length",
+        };
+    }
+
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr
+        || edit_handle->enum_effect_name == nullptr
+        || edit_handle->enum_effect_item == nullptr
+        || (include_choices && edit_handle->enum_font_name == nullptr)) {
+        return {
+            .ok = false,
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK effect item functions are not available",
+        };
+    }
+
+    try {
+        std::size_t consumed_text_bytes = 0U;
+        effect_definition_copy_context effect_context{
+            .definitions = {},
+            .consumed_text_bytes = &consumed_text_bytes,
+        };
+        edit_handle->enum_effect_name(&effect_context, &copy_effect_definition);
+        if (!effect_context.error.empty()) {
+            throw std::runtime_error(effect_context.error);
+        }
+        const std::size_t match_count = static_cast<std::size_t>(std::ranges::count_if(
+            effect_context.definitions,
+            [&effect_name](const sdk_effect_definition& definition) {
+                return definition.name == effect_name;
+            }));
+        if (match_count == 0U) {
+            return {
+                .ok = false,
+                .error_code = "effect_not_found",
+                .error_message = "The effect definition was not found",
+            };
+        }
+        if (match_count > 1U) {
+            return {
+                .ok = false,
+                .error_code = "effect_ambiguous",
+                .error_message = "The effect name matched multiple definitions",
+            };
+        }
+
+        name_copy_context font_context{
+            .names = {},
+            .maximum_count = MAXIMUM_FONT_NAMES,
+            .field = "font name",
+            .consumed_text_bytes = &consumed_text_bytes,
+        };
+        if (include_choices) {
+            edit_handle->enum_font_name(&font_context, &copy_catalog_name);
+            if (!font_context.error.empty()) {
+                throw std::runtime_error(font_context.error);
+            }
+        }
+
+        const int wide_size = MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            effect_name.data(),
+            static_cast<int>(effect_name.size()),
+            nullptr,
+            0);
+        if (wide_size <= 0) {
+            return {
+                .ok = false,
+                .error_code = "invalid_argument",
+                .error_message = "Effect name is not valid UTF-8",
+            };
+        }
+        std::wstring wide_name(static_cast<std::size_t>(wide_size), L'\0');
+        if (MultiByteToWideChar(
+                CP_UTF8,
+                MB_ERR_INVALID_CHARS,
+                effect_name.data(),
+                static_cast<int>(effect_name.size()),
+                wide_name.data(),
+                wide_size)
+            != wide_size) {
+            throw std::runtime_error("MultiByteToWideChar failed while copying an effect name");
+        }
+
+        effect_item_catalog_context item_context{
+            .fonts = &font_context.names,
+            .include_choices = include_choices,
+            .consumed_text_bytes = &consumed_text_bytes,
+            .items = {},
+        };
+        const bool was_enumerated = edit_handle->enum_effect_item(
+            wide_name.c_str(),
+            &item_context,
+            &copy_effect_item_definition);
+        if (!item_context.error.empty()) {
+            throw std::runtime_error(item_context.error);
+        }
+        if (!was_enumerated) {
+            return {
+                .ok = false,
+                .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 did not enumerate the selected effect items",
+            };
+        }
+        return {
+            .ok = true,
+            .items = std::move(item_context.items),
+        };
+    } catch (const std::exception& exception) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = exception.what(),
+        };
+    } catch (...) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = "SDK effect item query failed with an unknown exception",
         };
     }
 }

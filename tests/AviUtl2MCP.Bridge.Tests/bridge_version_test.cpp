@@ -10,6 +10,7 @@
 #include "aviutl2_mcp/locator_resolver.h"
 #include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_capabilities_request_handler.h"
+#include "aviutl2_mcp/native_effect_request_handlers.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
 #include "aviutl2_mcp/native_object_request_handler.h"
@@ -279,6 +280,7 @@ struct fake_sdk_state final {
     void (*project_load_handler)(PROJECT_FILE*) = nullptr;
     void (*project_save_handler)(PROJECT_FILE*) = nullptr;
     bool should_throw_edit_state = false;
+    bool has_duplicate_effect_name = false;
     bool is_read_active = false;
 };
 
@@ -417,7 +419,6 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
     const LPCWSTR effect,
     void* parameter,
     void (*callback)(void*, LPCWSTR, int)) {
-    require(ACTIVE_FAKE_SDK->is_read_active, "fake effect items were read outside a read callback");
     if (effect == nullptr) {
         return false;
     }
@@ -429,8 +430,68 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
         callback(parameter, L"Blob", EDIT_HANDLE::EFFECT_ITEM_TYPE_DATA);
     } else if (std::wstring_view(effect) == L"Text") {
         callback(parameter, L"Text", EDIT_HANDLE::EFFECT_ITEM_TYPE_TEXT);
+        callback(parameter, L"Font", EDIT_HANDLE::EFFECT_ITEM_TYPE_FONT);
     }
     return true;
+}
+
+void enumerate_fake_effect_names(
+    void* parameter,
+    void (*callback)(void*, LPCWSTR, int, int)) {
+    callback(
+        parameter,
+        L"Audio File",
+        EDIT_HANDLE::EFFECT_TYPE_INPUT,
+        EDIT_HANDLE::EFFECT_FLAG_AUDIO);
+    callback(
+        parameter,
+        L"Standard Playback",
+        EDIT_HANDLE::EFFECT_TYPE_OUTPUT,
+        EDIT_HANDLE::EFFECT_FLAG_AUDIO);
+    callback(
+        parameter,
+        L"Text",
+        EDIT_HANDLE::EFFECT_TYPE_FILTER,
+        EDIT_HANDLE::EFFECT_FLAG_VIDEO | EDIT_HANDLE::EFFECT_FLAG_FILTER);
+    callback(
+        parameter,
+        L"Camera Control",
+        EDIT_HANDLE::EFFECT_TYPE_CONTROL,
+        EDIT_HANDLE::EFFECT_FLAG_CAMERA | 0x20);
+    if (ACTIVE_FAKE_SDK->has_duplicate_effect_name) {
+        callback(
+            parameter,
+            L"Text",
+            EDIT_HANDLE::EFFECT_TYPE_FILTER,
+            EDIT_HANDLE::EFFECT_FLAG_VIDEO);
+    }
+}
+
+void enumerate_fake_modules(
+    void* parameter,
+    void (*callback)(void*, MODULE_INFO*)) {
+    MODULE_INFO psd_toolkit{
+        .type = MODULE_INFO::TYPE_PLUGIN_FILTER,
+        .name = L"PSDToolKit2",
+        .information = L"PSDToolKit 2.0.0alpha10",
+    };
+    MODULE_INFO script{
+        .type = MODULE_INFO::TYPE_SCRIPT_MODULE,
+        .name = L"PSDToolKit",
+        .information = L"Animation scripts",
+    };
+    callback(parameter, &psd_toolkit);
+    callback(parameter, &script);
+}
+
+void enumerate_fake_fonts(void* parameter, void (*callback)(void*, LPCWSTR)) {
+    callback(parameter, L"Yu Gothic UI");
+    callback(parameter, L"Noto Sans JP");
+}
+
+void enumerate_fake_palettes(void* parameter, void (*callback)(void*, LPCWSTR)) {
+    callback(parameter, L"Default");
+    callback(parameter, L"Vivid");
 }
 
 [[nodiscard]] LPCSTR get_fake_effect_item_value(
@@ -460,6 +521,9 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
     }
     if (effect == &ACTIVE_FAKE_SDK->third_effect && name == L"Text") {
         return "hello";
+    }
+    if (effect == &ACTIVE_FAKE_SDK->third_effect && name == L"Font") {
+        return "Yu Gothic UI";
     }
     return nullptr;
 }
@@ -505,7 +569,11 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_handle.get_edit_info = &get_fake_edit_info;
     state.edit_handle.get_edit_state = &get_fake_edit_state;
     state.edit_handle.call_read_section_param = &call_fake_read_section;
+    state.edit_handle.enum_effect_name = &enumerate_fake_effect_names;
+    state.edit_handle.enum_module_info = &enumerate_fake_modules;
     state.edit_handle.enum_effect_item = &enumerate_fake_effect_items;
+    state.edit_handle.enum_font_name = &enumerate_fake_fonts;
+    state.edit_handle.enum_palette_name = &enumerate_fake_palettes;
     state.edit_section.info = &state.edit_info;
     state.edit_section.find_object = &find_fake_object;
     state.edit_section.get_object_alias = &get_fake_object_alias;
@@ -1481,6 +1549,62 @@ void test_sdk_read_facade() {
                 false).error_code == "invalid_argument",
         "SDK facade accepted a locator from another project generation");
 
+    aviutl2_mcp::sdk_effect_catalog_query effect_query{
+        .offset = 0U,
+        .limit = 2U,
+    };
+    const aviutl2_mcp::sdk_effect_catalog_query_result first_effect_page =
+        facade.query_effects(effect_query);
+    require(first_effect_page.ok && first_effect_page.catalog.effects.size() == 2U
+            && first_effect_page.catalog.is_truncated
+            && first_effect_page.catalog.next_offset == 2U,
+        "SDK facade did not page effect definitions");
+    require(first_effect_page.catalog.effects[0].name == "Audio File"
+            && first_effect_page.catalog.effects[0].type == "input"
+            && first_effect_page.catalog.effects[0].flags == std::vector<std::string>({"audio"})
+            && first_effect_page.catalog.effects[0].is_creatable,
+        "SDK facade did not map effect type, flags, or creatability");
+    require(first_effect_page.catalog.modules.size() == 2U
+            && first_effect_page.catalog.modules[0].type == "pluginFilter"
+            && first_effect_page.catalog.modules[0].name == "PSDToolKit2"
+            && first_effect_page.catalog.fonts.size() == 2U
+            && first_effect_page.catalog.palettes.size() == 2U,
+        "SDK facade did not copy module, font, and palette catalogs");
+
+    effect_query.category = "filter";
+    effect_query.name_contains = "Text";
+    effect_query.limit = 100U;
+    const aviutl2_mcp::sdk_effect_catalog_query_result filtered_effects =
+        facade.query_effects(effect_query);
+    require(filtered_effects.ok && filtered_effects.catalog.effects.size() == 1U
+            && filtered_effects.catalog.effects[0].name == "Text"
+            && filtered_effects.catalog.effects[0].is_creatable
+            && filtered_effects.catalog.effects[0].flags
+                == std::vector<std::string>({"video", "filter"}),
+        "SDK facade did not filter or map filter effect definitions");
+
+    const aviutl2_mcp::sdk_effect_items_query_result text_items =
+        facade.query_effect_items("Text", true);
+    require(text_items.ok && text_items.items.size() == 2U
+            && text_items.items[0].name == "Text"
+            && text_items.items[0].codec == "aliasString"
+            && !text_items.items[0].is_writable
+            && text_items.items[1].type == "font"
+            && text_items.items[1].choices
+                == std::vector<std::string>({"Yu Gothic UI", "Noto Sans JP"}),
+        "SDK facade did not return effect item codecs and public font choices");
+    const aviutl2_mcp::sdk_effect_items_query_result text_items_without_choices =
+        facade.query_effect_items("Text", false);
+    require(text_items_without_choices.ok
+            && text_items_without_choices.items[1].choices.empty(),
+        "SDK facade ignored includeChoices=false");
+    require(facade.query_effect_items("Missing", true).error_code == "effect_not_found",
+        "SDK facade returned items for an unknown effect");
+    fake.has_duplicate_effect_name = true;
+    require(facade.query_effect_items("Text", true).error_code == "effect_ambiguous",
+        "SDK facade selected an ambiguous effect definition");
+    fake.has_duplicate_effect_name = false;
+
     fake.project_path.clear();
     fake.project_save_handler(&fake.project_file);
     require(facade.query_status().project_state == aviutl2_mcp::sdk_project_state::unsaved,
@@ -1530,6 +1654,8 @@ void test_native_query_request_handlers() {
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_object_request_handler>(
         identity,
         facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_effect_list_request_handler>(facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_effect_items_request_handler>(facade));
     const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
 
     const nlohmann::json status = nlohmann::json::parse(get_json(dispatcher.dispatch(
@@ -1573,6 +1699,87 @@ void test_native_query_request_handlers() {
     require(capabilities.at("result").at("versions").at("sdk") == "2003300"
             && capabilities.at("result").at("limits").at("pagingCursorTtlSeconds") == 300,
         "native capabilities returned incorrect versions or limits");
+
+    const nlohmann::json effects = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 61U),
+            "effect.list",
+            correlation_id,
+            R"({"limit":2})"),
+        identity.instance_id).get()));
+    require(effects.at("ok").get<bool>()
+            && effects.at("result").at("effects").size() == 2U
+            && effects.at("result").at("nextCursor") == "effects:2"
+            && effects.at("result").at("isTruncated").get<bool>(),
+        "native effect handler did not return the first catalog page");
+    require(effects.at("result").at("modules")[0].at("name") == "PSDToolKit2"
+            && effects.at("result").at("fonts").size() == 2U
+            && effects.at("result").at("palettes").size() == 2U,
+        "native effect handler omitted independent SDK catalogs");
+
+    const nlohmann::json second_effect_page = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 65U),
+            "effect.list",
+            correlation_id,
+            R"({"cursor":"effects:2","limit":2})"),
+        identity.instance_id).get()));
+    require(second_effect_page.at("ok").get<bool>()
+            && second_effect_page.at("result").at("effects").size() == 2U
+            && second_effect_page.at("result").at("nextCursor").is_null()
+            && !second_effect_page.at("result").at("isTruncated").get<bool>()
+            && second_effect_page.at("result").at("effects")[1].at("flags")
+                == nlohmann::json::array({"camera", "unknown"}),
+        "native effect handler did not resume paging or preserve unknown flags");
+
+    const nlohmann::json filtered_effects = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 62U),
+            "effect.list",
+            correlation_id,
+            R"({"category":"filter","nameContains":"Text"})"),
+        identity.instance_id).get()));
+    require(filtered_effects.at("ok").get<bool>()
+            && filtered_effects.at("result").at("effects").size() == 1U
+            && filtered_effects.at("result").at("effects")[0].at("name") == "Text"
+            && filtered_effects.at("result").at("effects")[0].at("isCreatable").get<bool>(),
+        "native effect handler did not apply category and name filters");
+
+    const nlohmann::json effect_items = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 63U),
+            "effect.items.list",
+            correlation_id,
+            R"({"effect":{"name":"Text"},"includeChoices":true})"),
+        identity.instance_id).get()));
+    require(effect_items.at("ok").get<bool>()
+            && effect_items.at("result").at("items").size() == 2U
+            && effect_items.at("result").at("items")[1].at("type") == "font"
+            && effect_items.at("result").at("items")[1].at("choices").size() == 2U
+            && !effect_items.at("result").at("items")[1].at("isWritable").get<bool>(),
+        "native effect item handler omitted codec or font choices");
+
+    const nlohmann::json missing_effect_items = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 64U),
+            "effect.items.list",
+            correlation_id,
+            R"({"effect":{"name":"Missing"}})"),
+        identity.instance_id).get()));
+    require(!missing_effect_items.at("ok").get<bool>()
+            && missing_effect_items.at("error").at("code") == "effect_not_found",
+        "native effect item handler accepted an unknown effect");
+
+    const nlohmann::json invalid_effect_cursor = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 66U),
+            "effect.list",
+            correlation_id,
+            R"({"cursor":"timeline:1"})"),
+        identity.instance_id).get()));
+    require(!invalid_effect_cursor.at("ok").get<bool>()
+            && invalid_effect_cursor.at("error").at("code") == "invalid_argument",
+        "native effect handler accepted a cursor from another query");
 
     const nlohmann::json project = nlohmann::json::parse(get_json(dispatcher.dispatch(
         create_request_frame(

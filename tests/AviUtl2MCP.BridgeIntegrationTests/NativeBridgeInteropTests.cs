@@ -147,6 +147,32 @@ public sealed class NativeBridgeInteropTests
                 Assert.AreEqual("sdk_not_available", timeline.GetProperty("error").GetProperty("code").GetString());
             }
 
+            Guid effectRequestId = Guid.CreateVersion7();
+            string effectRequestJson = JsonSerializer.Serialize(new
+            {
+                method = "effect.list",
+                correlationId = effectRequestId,
+                timeoutMs = 5000,
+                dryRun = false,
+                @params = new { limit = 1 },
+            });
+            IpcEncodedFrame effectRequest = IpcFrameCodec.EncodeFrame(
+                IpcMessageKind.Request,
+                IpcFrameOption.None,
+                effectRequestId,
+                Encoding.UTF8.GetBytes(effectRequestJson),
+                []);
+            await transport.WriteAsync(effectRequest.Bytes, timeout.Token);
+            IpcFrame effectResponse = await IpcFrameCodec.DecodeFrameAsync(transport, timeout.Token);
+            Assert.AreEqual(effectRequestId, effectResponse.Header.RequestId);
+            Assert.AreEqual(IpcFrameOption.ErrorResponse, effectResponse.Header.Flags);
+            using (JsonDocument effectDocument = JsonDocument.Parse(effectResponse.JsonBytes))
+            {
+                JsonElement effects = effectDocument.RootElement;
+                Assert.IsFalse(effects.GetProperty("ok").GetBoolean());
+                Assert.AreEqual("sdk_not_available", effects.GetProperty("error").GetProperty("code").GetString());
+            }
+
             Guid logRequestId = Guid.CreateVersion7();
             string logRequestJson = JsonSerializer.Serialize(new
             {

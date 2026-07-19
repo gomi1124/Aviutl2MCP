@@ -1,5 +1,6 @@
 #include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_capabilities_request_handler.h"
+#include "aviutl2_mcp/native_effect_request_handlers.h"
 #include "aviutl2_mcp/native_project_request_handler.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
@@ -251,6 +252,10 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
         get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_object_request_handler>(
         identity_,
+        get_sdk_read_facade()));
+    dispatcher_.register_handler(std::make_unique<native_effect_list_request_handler>(
+        get_sdk_read_facade()));
+    dispatcher_.register_handler(std::make_unique<native_effect_items_request_handler>(
         get_sdk_read_facade()));
     project_load_callback_state_ = std::make_shared<project_load_callback_state>();
     project_load_callback_state_->revisions = &dispatcher_.revisions();

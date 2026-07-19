@@ -151,6 +151,49 @@ struct sdk_object_query_result final {
     std::string error_message;
 };
 
+struct sdk_effect_definition final {
+    std::string name;
+    std::string type;
+    std::vector<std::string> flags;
+    bool is_creatable;
+};
+
+struct sdk_module_summary final {
+    std::string type;
+    std::string name;
+    std::string information;
+};
+
+struct sdk_effect_catalog_query final {
+    std::optional<std::string> category;
+    std::optional<std::string> name_contains;
+    std::size_t offset = 0U;
+    std::size_t limit = 100U;
+};
+
+struct sdk_effect_catalog_snapshot final {
+    std::vector<sdk_effect_definition> effects;
+    std::vector<sdk_module_summary> modules;
+    std::vector<std::string> fonts;
+    std::vector<std::string> palettes;
+    std::size_t next_offset = 0U;
+    bool is_truncated = false;
+};
+
+struct sdk_effect_catalog_query_result final {
+    bool ok = false;
+    sdk_effect_catalog_snapshot catalog{};
+    std::string error_code;
+    std::string error_message;
+};
+
+struct sdk_effect_items_query_result final {
+    bool ok = false;
+    std::vector<sdk_effect_item_snapshot> items;
+    std::string error_code;
+    std::string error_message;
+};
+
 class sdk_read_facade final {
 public:
     sdk_read_facade() = default;
@@ -171,6 +214,11 @@ public:
         const std::string& current_project_generation,
         bool include_alias,
         bool include_effect_items) const noexcept;
+    [[nodiscard]] sdk_effect_catalog_query_result query_effects(
+        const sdk_effect_catalog_query& query) const noexcept;
+    [[nodiscard]] sdk_effect_items_query_result query_effect_items(
+        const std::string& effect_name,
+        bool include_choices) const noexcept;
 
     void capture_project(PROJECT_FILE* project, bool is_load = true) noexcept;
     void set_project_loaded_callback(std::function<void()> callback);
