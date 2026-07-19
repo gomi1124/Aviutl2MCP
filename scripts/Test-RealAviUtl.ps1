@@ -6,6 +6,7 @@ param(
     [string]$AviUtlPath = "C:\Program Files\AviUtl2\aviutl2.exe",
     [string]$DataPath = "C:\ProgramData\aviutl2",
     [string]$ProjectPath = "",
+    [string]$BridgePackagePath = "",
     [string]$TemporaryRoot = "C:\tmp\AviUtl2MCP-real",
     [string]$Configuration = "Debug",
     [string]$TestFilter = "TestCategory=RealAviUtl2"
@@ -28,6 +29,12 @@ $repositoryRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot))
 $resolvedAviUtlPath = (Resolve-Path -LiteralPath $AviUtlPath).Path
 $resolvedDataPath = (Resolve-Path -LiteralPath $DataPath).Path
 $resolvedProjectPath = (Resolve-Path -LiteralPath $ProjectPath).Path
+$resolvedBridgePackagePath = if ([string]::IsNullOrWhiteSpace($BridgePackagePath)) {
+    $null
+}
+else {
+    (Resolve-Path -LiteralPath $BridgePackagePath).Path
+}
 $resolvedTemporaryRoot = [IO.Path]::GetFullPath($TemporaryRoot).TrimEnd([IO.Path]::DirectorySeparatorChar)
 $allowedTemporaryRoot = [IO.Path]::GetFullPath("C:\tmp").TrimEnd([IO.Path]::DirectorySeparatorChar)
 if (-not $resolvedTemporaryRoot.StartsWith(
@@ -40,6 +47,10 @@ if ([IO.Path]::GetExtension($resolvedProjectPath) -ine ".aup2") {
 }
 if ([IO.Path]::GetFileName($resolvedAviUtlPath) -ine "aviutl2.exe") {
     throw "AviUtlPath must identify aviutl2.exe."
+}
+if ($null -ne $resolvedBridgePackagePath -and
+    -not $resolvedBridgePackagePath.EndsWith(".au2pkg.zip", [StringComparison]::OrdinalIgnoreCase)) {
+    throw "BridgePackagePath must identify an .au2pkg.zip file."
 }
 
 New-Item -ItemType Directory -Path $resolvedTemporaryRoot -Force | Out-Null
@@ -61,6 +72,7 @@ $environmentValues = [ordered]@{
     AVIUTL2_MCP_REAL_PROJECT_PATH = $resolvedProjectPath
     AVIUTL2_MCP_REAL_TEMP_ROOT = $resolvedTemporaryRoot
     AVIUTL2_MCP_NATIVE_BRIDGE_PATH = $nativeBridgePath
+    AVIUTL2_MCP_REAL_BRIDGE_PACKAGE_PATH = $resolvedBridgePackagePath
     AVIUTL2_MCP_REPOSITORY_ROOT = $repositoryRoot
 }
 $executionError = $null

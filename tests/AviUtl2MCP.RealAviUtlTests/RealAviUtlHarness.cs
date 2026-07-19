@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -6,7 +8,7 @@ using AviUtl2MCP.BridgeClient.Discovery;
 
 namespace AviUtl2MCP.RealAviUtlTests;
 
-internal sealed class RealAviUtlHarness : IAsyncDisposable
+internal sealed partial class RealAviUtlHarness : IAsyncDisposable
 {
     private const string OPT_IN_VARIABLE = "AVIUTL2_MCP_REAL_TEST";
     private const string AVIUTL_PATH_VARIABLE = "AVIUTL2_MCP_REAL_AVIUTL_PATH";
@@ -14,11 +16,19 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
     private const string PROJECT_PATH_VARIABLE = "AVIUTL2_MCP_REAL_PROJECT_PATH";
     private const string TEMP_ROOT_VARIABLE = "AVIUTL2_MCP_REAL_TEMP_ROOT";
     private const string BRIDGE_PATH_VARIABLE = "AVIUTL2_MCP_NATIVE_BRIDGE_PATH";
+    private const string BRIDGE_PACKAGE_PATH_VARIABLE =
+        "AVIUTL2_MCP_REAL_BRIDGE_PACKAGE_PATH";
     private static readonly UTF8Encoding UTF8_NO_BOM = new(false, true);
     private static readonly JsonSerializerOptions INDENTED_JSON_OPTIONS = new()
     {
         WriteIndented = true,
     };
+    private const uint MF_BYPOSITION = 0x00000400;
+    private const uint MF_DISABLED = 0x00000002;
+    private const uint MF_GRAYED = 0x00000001;
+    private const uint INVALID_MENU_ITEM_ID = 0xffffffff;
+    private const uint WM_COMMAND = 0x00000111;
+    private const uint SMTO_ABORTIFHUNG = 0x00000002;
     private readonly string sourceProjectHash;
     private readonly DateTime processStartTimeUtc;
     private string? beforeRevision;
@@ -96,6 +106,51 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
         afterPreviewPath = ValidateOwnedArtifact(afterPath);
     }
 
+    public string InvokeUndo()
+    {
+        if (!IsOwnedProcessRunning())
+        {
+            throw new InvalidOperationException("The owned AviUtl2 process is not running.");
+        }
+        LaunchedProcess.Refresh();
+        nint window = LaunchedProcess.MainWindowHandle;
+        if (window == nint.Zero)
+        {
+            throw new InvalidOperationException("The owned AviUtl2 main window is unavailable.");
+        }
+        _ = GetWindowThreadProcessId(window, out uint windowProcessId);
+        if (windowProcessId != (uint)LaunchedProcess.Id)
+        {
+            throw new InvalidOperationException("The AviUtl2 window process identity changed.");
+        }
+        nint menu = GetMenu(window);
+        if (menu == nint.Zero)
+        {
+            throw new InvalidOperationException("The owned AviUtl2 window has no standard menu.");
+        }
+        List<string> observedLabels = [];
+        (uint CommandId, string Label)? undo = FindUndoMenuItem(menu, observedLabels);
+        if (undo is null)
+        {
+            throw new InvalidOperationException(
+                $"The AviUtl2 Undo menu item was not found. Menus: {string.Join(" | ", observedLabels.Take(64))}");
+        }
+        nint sent = SendMessageTimeout(
+            window,
+            WM_COMMAND,
+            undo.Value.CommandId,
+            nint.Zero,
+            SMTO_ABORTIFHUNG,
+            5_000,
+            out _);
+        if (sent == nint.Zero)
+        {
+            throw new InvalidOperationException(
+                $"The AviUtl2 Undo command timed out ({Marshal.GetLastPInvokeError()}).");
+        }
+        return undo.Value.Label;
+    }
+
     public static async Task<RealAviUtlHarness> StartAsync(
         CancellationToken cancellationToken,
         Action<string>? prepareFixture = null)
@@ -108,7 +163,10 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
         string aviUtlPath = GetRequiredFile(AVIUTL_PATH_VARIABLE, "aviutl2.exe");
         string dataPath = GetRequiredDirectory(DATA_PATH_VARIABLE);
         string sourceProjectPath = GetRequiredFile(PROJECT_PATH_VARIABLE, ".aup2");
-        string bridgePath = GetRequiredFile(BRIDGE_PATH_VARIABLE, ".aux2");
+        string? bridgePackagePath = GetOptionalPackagePath();
+        string? bridgePath = bridgePackagePath is null
+            ? GetRequiredFile(BRIDGE_PATH_VARIABLE, ".aux2")
+            : null;
         string temporaryRoot = ValidateTemporaryRoot(GetRequiredDirectory(TEMP_ROOT_VARIABLE));
         Guid setupCorrelationId = Guid.CreateVersion7();
         string runtimeDirectory = Path.Combine(temporaryRoot, setupCorrelationId.ToString("D"));
@@ -130,26 +188,14 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
             Directory.CreateDirectory(fixtureDirectory);
             CopyDirectory(Path.GetDirectoryName(aviUtlPath)!, portableApplicationDirectory);
             CopyRequiredData(dataPath, portableDataDirectory);
-            string bridgeDirectory = Path.Combine(
-                portableDataDirectory,
-                "Plugin",
-                "AviUtl2MCP");
-            Directory.CreateDirectory(bridgeDirectory);
-            File.Copy(
-                bridgePath,
-                Path.Combine(bridgeDirectory, "AviUtl2MCP.Bridge.aux2"),
-                overwrite: false);
-            string bridgeAssetsDirectory = Path.Combine(
-                Path.GetDirectoryName(bridgePath)!,
-                "assets");
-            if (!Directory.Exists(bridgeAssetsDirectory))
+            if (bridgePackagePath is null)
             {
-                throw new DirectoryNotFoundException(
-                    "The native Bridge PSDToolKit2 assets directory was not produced.");
+                InstallBuiltBridge(bridgePath!, portableDataDirectory);
             }
-            CopyDirectory(
-                bridgeAssetsDirectory,
-                Path.Combine(bridgeDirectory, "assets"));
+            else
+            {
+                InstallPackagedBridge(bridgePackagePath, portableDataDirectory);
+            }
             PrepareModuleTrust(dataPath, portableDataDirectory);
             CreateFixtureProject(sourceProjectPath, fixtureProjectPath);
             prepareFixture?.Invoke(fixtureProjectPath);
@@ -287,6 +333,100 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
             return false;
         }
     }
+
+    private static (uint CommandId, string Label)? FindUndoMenuItem(
+        nint menu,
+        List<string> observedLabels)
+    {
+        int count = GetMenuItemCount(menu);
+        if (count < 0)
+        {
+            return null;
+        }
+        for (int position = 0; position < count; position++)
+        {
+            StringBuilder buffer = new(512);
+            int length = GetMenuString(
+                menu,
+                (uint)position,
+                buffer,
+                buffer.Capacity,
+                MF_BYPOSITION);
+            string label = length > 0 ? buffer.ToString() : string.Empty;
+            if (!string.IsNullOrWhiteSpace(label))
+            {
+                observedLabels.Add(label);
+            }
+            nint subMenu = GetSubMenu(menu, position);
+            if (subMenu != nint.Zero)
+            {
+                (uint CommandId, string Label)? nested = FindUndoMenuItem(
+                    subMenu,
+                    observedLabels);
+                if (nested is not null)
+                {
+                    return nested;
+                }
+            }
+            uint commandId = GetMenuItemID(menu, position);
+            bool isUndo = label.Contains("元に戻す", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("Undo", StringComparison.OrdinalIgnoreCase);
+            if (!isUndo || commandId == INVALID_MENU_ITEM_ID)
+            {
+                continue;
+            }
+            uint state = GetMenuState(menu, (uint)position, MF_BYPOSITION);
+            if ((state & (MF_DISABLED | MF_GRAYED)) != 0)
+            {
+                throw new InvalidOperationException(
+                    $"The AviUtl2 Undo menu item is disabled: {label}");
+            }
+            return (commandId, label);
+        }
+        return null;
+    }
+
+#pragma warning disable CA1838, SYSLIB1054
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern nint GetMenu(nint window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int GetMenuItemCount(nint menu);
+
+    [DllImport(
+        "user32.dll",
+        EntryPoint = "GetMenuStringW",
+        CharSet = CharSet.Unicode,
+        SetLastError = true)]
+    private static extern int GetMenuString(
+        nint menu,
+        uint item,
+        StringBuilder buffer,
+        int maximumCount,
+        uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern nint GetSubMenu(nint menu, int position);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetMenuItemID(nint menu, int position);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetMenuState(nint menu, uint item, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)]
+    private static extern nint SendMessageTimeout(
+        nint window,
+        uint message,
+        nuint wordParameter,
+        nint longParameter,
+        uint flags,
+        uint timeoutMilliseconds,
+        out nuint result);
+#pragma warning restore CA1838, SYSLIB1054
 
     private static async Task<Guid> WaitForInstanceAsync(
         Process launchedProcess,
@@ -551,6 +691,107 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
         }
     }
 
+    private static void InstallBuiltBridge(
+        string bridgePath,
+        string portableDataDirectory)
+    {
+        string bridgeDirectory = Path.Combine(
+            portableDataDirectory,
+            "Plugin",
+            "AviUtl2MCP");
+        Directory.CreateDirectory(bridgeDirectory);
+        File.Copy(
+            bridgePath,
+            Path.Combine(bridgeDirectory, "AviUtl2MCP.Bridge.aux2"),
+            overwrite: false);
+        string bridgeAssetsDirectory = Path.Combine(
+            Path.GetDirectoryName(bridgePath)!,
+            "assets");
+        if (!Directory.Exists(bridgeAssetsDirectory))
+        {
+            throw new DirectoryNotFoundException(
+                "The native Bridge PSDToolKit2 assets directory was not produced.");
+        }
+        CopyDirectory(
+            bridgeAssetsDirectory,
+            Path.Combine(bridgeDirectory, "assets"));
+    }
+
+    private static void InstallPackagedBridge(
+        string packagePath,
+        string portableDataDirectory)
+    {
+        const string packagePrefix = "Plugin/AviUtl2MCP/";
+        string normalizedData = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(portableDataDirectory));
+        int extractedFileCount = 0;
+        long extractedByteCount = 0;
+        using ZipArchive archive = ZipFile.OpenRead(packagePath);
+        foreach (ZipArchiveEntry entry in archive.Entries)
+        {
+            string entryName = entry.FullName.Replace('\\', '/');
+            if (!entryName.StartsWith(packagePrefix, StringComparison.Ordinal)
+                || entryName.EndsWith('/'))
+            {
+                continue;
+            }
+            string[] segments = entryName.Split('/');
+            if (segments.Any(segment =>
+                    segment.Length == 0
+                    || segment == "."
+                    || segment == ".."
+                    || segment.Contains(':')))
+            {
+                throw new InvalidDataException("The Bridge package contains an unsafe path.");
+            }
+            if (++extractedFileCount > 128)
+            {
+                throw new InvalidDataException("The Bridge package contains too many files.");
+            }
+            extractedByteCount = checked(extractedByteCount + entry.Length);
+            if (extractedByteCount > 128L * 1024L * 1024L)
+            {
+                throw new InvalidDataException("The Bridge package exceeds the extraction limit.");
+            }
+            string destinationPath = Path.GetFullPath(Path.Combine(
+                normalizedData,
+                entryName.Replace('/', Path.DirectorySeparatorChar)));
+            if (!destinationPath.StartsWith(
+                    normalizedData + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("The Bridge package escaped the data directory.");
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            using Stream input = entry.Open();
+            using FileStream output = new(
+                destinationPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None);
+            input.CopyTo(output);
+        }
+        string bridgeDirectory = Path.Combine(
+            normalizedData,
+            "Plugin",
+            "AviUtl2MCP");
+        string bridgePath = Path.Combine(bridgeDirectory, "AviUtl2MCP.Bridge.aux2");
+        string manifestPath = Path.Combine(bridgeDirectory, "manifest.json");
+        if (!File.Exists(bridgePath) || !File.Exists(manifestPath))
+        {
+            throw new InvalidDataException(
+                "The Bridge package omitted the plugin binary or manifest.");
+        }
+        using JsonDocument manifest = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
+        if (manifest.RootElement.GetProperty("packageId").GetString()
+                != "gomi1124.AviUtl2MCP"
+            || string.IsNullOrWhiteSpace(
+                manifest.RootElement.GetProperty("version").GetString()))
+        {
+            throw new InvalidDataException("The Bridge package manifest is invalid.");
+        }
+    }
+
     private static void PrepareModuleTrust(
         string sourceDataPath,
         string destinationDataPath)
@@ -624,6 +865,23 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
         if (!matches)
         {
             throw new InvalidDataException($"{variableName} has an unexpected file type.");
+        }
+        return path;
+    }
+
+    private static string? GetOptionalPackagePath()
+    {
+        string? value = Environment.GetEnvironmentVariable(BRIDGE_PACKAGE_PATH_VARIABLE);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+        string path = Path.GetFullPath(value);
+        if (!File.Exists(path)
+            || !path.EndsWith(".au2pkg.zip", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                $"{BRIDGE_PACKAGE_PATH_VARIABLE} must identify an .au2pkg.zip file.");
         }
         return path;
     }

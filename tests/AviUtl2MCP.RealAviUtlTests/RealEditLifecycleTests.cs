@@ -19,6 +19,7 @@ public sealed class RealEditLifecycleTests
     [TestCategory("RealAviUtl2")]
     [TestProperty("TestId", "real.object-create-three-ways")]
     [TestProperty("TestId", "real.object-edit-lifecycle")]
+    [TestProperty("TestId", "real.batch-single-undo")]
     [Timeout(240_000)]
     public async Task RealAviUtlCreatesEditsBatchesAndDeletesIsolatedObjects()
     {
@@ -338,17 +339,36 @@ public sealed class RealEditLifecycleTests
             Assert.HasCount(
                 1,
                 await FindByNameAsync(query, harness.InstanceId, batchName, timeout.Token));
+            Assert.AreEqual(
+                "AviUtl2 MCP Batch Layer",
+                (await GetLayerAsync(
+                    query,
+                    harness.InstanceId,
+                    sceneId: 0,
+                    layer: 33,
+                    timeout.Token)).Name);
+
+            string undoLabel = harness.InvokeUndo();
+            Assert.IsFalse(string.IsNullOrWhiteSpace(undoLabel));
+            await WaitForBatchUndoAsync(
+                query,
+                harness.InstanceId,
+                batchName,
+                timeout.Token);
+            Assert.AreEqual(
+                "AviUtl2 MCP Real Layer",
+                (await GetLayerAsync(
+                    query,
+                    harness.InstanceId,
+                    sceneId: 0,
+                    layer: 33,
+                    timeout.Token)).Name);
 
             foreach (ObjectSummary target in new[]
             {
                 lifecycleObject,
                 createdMedia.Data.TimelineObject,
                 createdAlias.Data.Objects[0],
-                (await FindByNameAsync(
-                    query,
-                    harness.InstanceId,
-                    batchName,
-                    timeout.Token)).Single(),
             })
             {
                 DeleteObjectInput deleteInput = new()
@@ -457,6 +477,60 @@ public sealed class RealEditLifecycleTests
             cancellationToken);
         Assert.IsTrue(found.Ok, found.Error?.Message);
         return found.Data!.Objects.Where(candidate => candidate.Name == name).ToArray();
+    }
+
+    private static async Task<LayerSummary> GetLayerAsync(
+        BridgeQueryGateway query,
+        Guid instanceId,
+        int sceneId,
+        int layer,
+        CancellationToken cancellationToken)
+    {
+        GatewayResponse<TimelineData> timeline = await query.GetTimelineAsync(
+            CreateGatewayRequest(
+                instanceId,
+                new GetTimelineInput
+                {
+                    SceneId = sceneId,
+                    LayerStart = layer,
+                    LayerEnd = layer,
+                    Limit = 100,
+                }),
+            cancellationToken);
+        Assert.IsTrue(timeline.Ok, timeline.Error?.Message);
+        return timeline.Data!.Layers.Single(candidate =>
+            candidate.SceneId == sceneId && candidate.Layer == layer);
+    }
+
+    private static async Task WaitForBatchUndoAsync(
+        BridgeQueryGateway query,
+        Guid instanceId,
+        string batchName,
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        do
+        {
+            IReadOnlyList<ObjectSummary> batchObjects = await FindByNameAsync(
+                query,
+                instanceId,
+                batchName,
+                cancellationToken);
+            LayerSummary layer = await GetLayerAsync(
+                query,
+                instanceId,
+                sceneId: 0,
+                layer: 33,
+                cancellationToken);
+            if (batchObjects.Count == 0
+                && layer.Name == "AviUtl2 MCP Real Layer")
+            {
+                return;
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+        Assert.Fail("One AviUtl2 Undo did not revert the complete MCP batch.");
     }
 
     private static async Task<(string Path, string Sha256)> SavePreviewAsync(
