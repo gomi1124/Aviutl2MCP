@@ -21,6 +21,10 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
     };
     private readonly string sourceProjectHash;
     private readonly DateTime processStartTimeUtc;
+    private string? beforeRevision;
+    private string? afterRevision;
+    private string? beforePreviewPath;
+    private string? afterPreviewPath;
     private Exception? recordedFailure;
     private bool isDisposed;
 
@@ -77,6 +81,19 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(exception);
         recordedFailure ??= exception;
+    }
+
+    public void RecordRevision(string revision)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(revision);
+        beforeRevision ??= revision;
+        afterRevision = revision;
+    }
+
+    public void RecordPreviewArtifacts(string beforePath, string afterPath)
+    {
+        beforePreviewPath = ValidateOwnedArtifact(beforePath);
+        afterPreviewPath = ValidateOwnedArtifact(afterPath);
     }
 
     public static async Task<RealAviUtlHarness> StartAsync(
@@ -230,6 +247,18 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
                 Trace.WriteLine($"Real-test failure artifact capture failed: {preserveException.Message}");
             }
         }
+        Exception? debugReportFailure = null;
+        try
+        {
+            await CreateLifecycleDebugReportAsync(
+                launchedProcessId,
+                currentSourceHash).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            debugReportFailure = exception;
+            Trace.WriteLine($"Real-test debug report generation failed: {exception.Message}");
+        }
         DeleteOwnedRuntimeDirectory(
             TemporaryRoot,
             RuntimeDirectory,
@@ -237,6 +266,12 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
         if (!string.Equals(sourceProjectHash, currentSourceHash, StringComparison.Ordinal))
         {
             throw new InvalidDataException("The source fixture project changed during the real test.");
+        }
+        if (recordedFailure is null && debugReportFailure is not null)
+        {
+            throw new InvalidOperationException(
+                "The real test passed but its debug report could not be generated.",
+                debugReportFailure);
         }
     }
 
@@ -276,6 +311,224 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
             await Task.Delay(250, cancellationToken).ConfigureAwait(false);
         }
         throw new TimeoutException("AviUtl2 did not publish an MCP Bridge descriptor within 30 seconds.");
+    }
+
+    private async Task CreateLifecycleDebugReportAsync(
+        int launchedProcessId,
+        string currentSourceHash)
+    {
+        string repositoryRoot = GetRequiredDirectory("AVIUTL2_MCP_REPOSITORY_ROOT");
+        string evidenceDirectory = Path.Combine(RuntimeDirectory, "debug-evidence");
+        Directory.CreateDirectory(evidenceDirectory);
+        bool isSourceUnchanged = string.Equals(
+            sourceProjectHash,
+            currentSourceHash,
+            StringComparison.Ordinal);
+        string testStatus = recordedFailure is null ? "pass" : "fail";
+        string checksPath = Path.Combine(evidenceDirectory, "checks.json");
+        object[] checks =
+        [
+            new
+            {
+                name = "real.test-outcome",
+                status = testStatus,
+                evidence = recordedFailure is null
+                    ? new[] { $"instanceId={InstanceId:D}" }
+                    : new[]
+                    {
+                        $"instanceId={InstanceId:D}",
+                        $"exception={recordedFailure.GetType().FullName}",
+                        recordedFailure.Message,
+                    },
+            },
+            new
+            {
+                name = "real.source-fixture-unchanged",
+                status = isSourceUnchanged ? "pass" : "fail",
+                evidence = new[]
+                {
+                    $"beforeSha256={sourceProjectHash}",
+                    $"afterSha256={currentSourceHash}",
+                },
+            },
+            new
+            {
+                name = "real.owned-process",
+                status = "pass",
+                evidence = new[]
+                {
+                    $"processId={launchedProcessId}",
+                    $"setupCorrelationId={SetupCorrelationId:D}",
+                },
+            },
+        ];
+        await File.WriteAllTextAsync(
+            checksPath,
+            JsonSerializer.Serialize(checks, INDENTED_JSON_OPTIONS),
+            UTF8_NO_BOM).ConfigureAwait(false);
+
+        string versionsPath = Path.Combine(evidenceDirectory, "versions.json");
+        await File.WriteAllTextAsync(
+            versionsPath,
+            JsonSerializer.Serialize(
+                new { realAviUtlHarness = "1.0.0" },
+                INDENTED_JSON_OPTIONS),
+            UTF8_NO_BOM).ConfigureAwait(false);
+
+        string serverSummaryPath = await WriteComponentSummaryAsync(
+            evidenceDirectory,
+            "server",
+            "Direct Bridge gateway tests may not launch the MCP stdio server.").ConfigureAwait(false);
+        string bridgeSummaryPath = await WriteComponentSummaryAsync(
+            evidenceDirectory,
+            "bridge",
+            $"Bridge instance {InstanceId:D} completed the isolated run.").ConfigureAwait(false);
+        string aviUtlSummaryPath = await WriteComponentSummaryAsync(
+            evidenceDirectory,
+            "aviutl",
+            $"Owned AviUtl2 process {launchedProcessId} completed the isolated run.").ConfigureAwait(false);
+        string scriptPath = Path.Combine(repositoryRoot, "scripts", "New-DebugReport.ps1");
+        string reportRoot = Path.Combine(repositoryRoot, "artifacts", "real-e2e");
+        ProcessStartInfo startInfo = new(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                "WindowsPowerShell",
+                "v1.0",
+                "powershell.exe"))
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        AddArguments(
+            startInfo,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            scriptPath,
+            "-CorrelationId",
+            SetupCorrelationId.ToString("D"),
+            "-OutputDirectory",
+            reportRoot,
+            "-Command",
+            "real.aviutl2-harness",
+            "-ExitCode",
+            recordedFailure is null ? "0" : "1");
+        if (beforeRevision is not null)
+        {
+            AddArguments(startInfo, "-BeforeRevision", beforeRevision);
+        }
+        if (afterRevision is not null)
+        {
+            AddArguments(startInfo, "-AfterRevision", afterRevision);
+        }
+        if (beforePreviewPath is not null)
+        {
+            AddArguments(startInfo, "-BeforePreviewPath", beforePreviewPath);
+        }
+        if (afterPreviewPath is not null)
+        {
+            AddArguments(startInfo, "-AfterPreviewPath", afterPreviewPath);
+        }
+        AddArguments(
+            startInfo,
+            "-ServerLogPath",
+            serverSummaryPath,
+            "-BridgeLogPath",
+            bridgeSummaryPath,
+            "-AviUtlLogPath",
+            aviUtlSummaryPath,
+            "-ChecksPath",
+            checksPath,
+            "-ComponentVersionsPath",
+            versionsPath,
+            "-LaunchedProcessId",
+            launchedProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "-RepositoryRoot",
+            repositoryRoot);
+
+        using Process process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("The lifecycle debug-report generator did not start.");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
+        Task<string> standardOutput = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        Task<string> standardError = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            throw new TimeoutException("Lifecycle debug-report generation exceeded 30 seconds.");
+        }
+        string output = await standardOutput.ConfigureAwait(false);
+        string error = await standardError.ConfigureAwait(false);
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Lifecycle debug-report generation failed ({process.ExitCode}): {error}{output}");
+        }
+        string reportPath = Path.Combine(
+            reportRoot,
+            SetupCorrelationId.ToString("D"),
+            "debug-report.json");
+        if (!File.Exists(reportPath))
+        {
+            throw new FileNotFoundException(
+                "The lifecycle debug-report generator did not produce its output.",
+                reportPath);
+        }
+    }
+
+    private async Task<string> WriteComponentSummaryAsync(
+        string evidenceDirectory,
+        string component,
+        string message)
+    {
+        string path = Path.Combine(evidenceDirectory, $"{component}.jsonl");
+        string line = JsonSerializer.Serialize(new
+        {
+            timestamp = DateTimeOffset.UtcNow,
+            level = recordedFailure is null ? "information" : "error",
+            source = component,
+            correlationId = SetupCorrelationId,
+            message,
+        });
+        await File.WriteAllTextAsync(
+            path,
+            line + Environment.NewLine,
+            UTF8_NO_BOM).ConfigureAwait(false);
+        return path;
+    }
+
+    private static void AddArguments(ProcessStartInfo startInfo, params string[] arguments)
+    {
+        foreach (string argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+    }
+
+    private string ValidateOwnedArtifact(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        string normalizedPath = Path.GetFullPath(path);
+        string normalizedRuntime = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(RuntimeDirectory));
+        if (!normalizedPath.StartsWith(
+                normalizedRuntime + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(normalizedPath))
+        {
+            throw new InvalidOperationException(
+                "Debug preview artifacts must be existing files in the owned runtime directory.");
+        }
+        return normalizedPath;
     }
 
     private static void CopyRequiredData(string sourceDataPath, string destinationDataPath)

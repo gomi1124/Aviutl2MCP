@@ -47,6 +47,12 @@ $sourceHashBefore = (Get-FileHash -LiteralPath $resolvedProjectPath -Algorithm S
 $cmakePath = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 $nativeBridgePath = Join-Path $repositoryRoot "build\native\artifacts\$Configuration\AviUtl2MCP.Bridge.aux2"
 $testProjectPath = Join-Path $repositoryRoot "tests\AviUtl2MCP.RealAviUtlTests\AviUtl2MCP.RealAviUtlTests.csproj"
+$reportRoot = Join-Path $repositoryRoot "artifacts\real-e2e"
+$existingReportPaths = @{}
+if (Test-Path -LiteralPath $reportRoot) {
+    Get-ChildItem -LiteralPath $reportRoot -Filter "debug-report.json" -File -Recurse |
+        ForEach-Object { $existingReportPaths[$_.FullName] = $true }
+}
 $savedEnvironment = @{}
 $environmentValues = [ordered]@{
     AVIUTL2_MCP_REAL_TEST = "1"
@@ -57,6 +63,7 @@ $environmentValues = [ordered]@{
     AVIUTL2_MCP_NATIVE_BRIDGE_PATH = $nativeBridgePath
     AVIUTL2_MCP_REPOSITORY_ROOT = $repositoryRoot
 }
+$executionError = $null
 
 try {
     foreach ($entry in $environmentValues.GetEnumerator()) {
@@ -87,6 +94,9 @@ try {
         throw "Real AviUtl2 test failed with exit code $LASTEXITCODE."
     }
 }
+catch {
+    $executionError = $_
+}
 finally {
     foreach ($entry in $environmentValues.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable($entry.Key, $savedEnvironment[$entry.Key], "Process")
@@ -97,12 +107,18 @@ finally {
     }
 }
 
-$reportRoot = Join-Path $repositoryRoot "artifacts\real-e2e"
 $latestReport = Get-ChildItem -LiteralPath $reportRoot -Filter "debug-report.json" -File -Recurse |
+    Where-Object { -not $existingReportPaths.ContainsKey($_.FullName) } |
     Sort-Object LastWriteTimeUtc -Descending |
     Select-Object -First 1
 if ($null -eq $latestReport) {
-    throw "The real test passed but did not produce a debug report."
+    if ($null -ne $executionError) {
+        throw "The real test failed and did not produce a new debug report. $($executionError.Exception.Message)"
+    }
+    throw "The real test passed but did not produce a new debug report."
+}
+Write-Output "Debug report: $($latestReport.FullName)"
+if ($null -ne $executionError) {
+    throw $executionError
 }
 Write-Output "Real AviUtl2 E2E passed."
-Write-Output "Debug report: $($latestReport.FullName)"
