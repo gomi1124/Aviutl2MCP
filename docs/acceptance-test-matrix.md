@@ -10,7 +10,7 @@
 |---|---|---|---|---|
 | AC-BLD-001 | `build.clean-windows` | Windows CI | locked restoreからServer/Bridgeを警告エラーなしでbuild | [CI] `managed` / `native` / `contract` / `integration` |
 | AC-BLD-002 | `ci.required-jobs` | GitHub Actions | managed/native/contract/integration jobが全成功 | [CI] 全required job成功 |
-| AC-BLD-003 | `real.package-install` | 専用AviUtl2実機 | `.au2pkg.zip`導入後にbridge versionをstatusで取得 | `artifacts/real-e2e/019f79f0-72a2-7af1-9daa-913a26e14d21/debug-report.json` |
+| AC-BLD-003 | `real.package-install` | 専用AviUtl2実機 | `.au2pkg.zip`導入後にbridge versionをstatusで取得 | `artifacts/real-e2e/019f7a05-6bd9-76e4-8294-83623bb51a44/debug-report.json` |
 | AC-MCP-001 | `stdio.offline-initialize` | stdio black-box | AviUtl2なしでinitializeと28 tools listが成功 | [CI] `contract` |
 | AC-MCP-002 | `pipe.late-connect` | fake bridge統合 | Server維持中にbridge起動しReadyへ遷移 | [CI] `integration` |
 | AC-MCP-003 | `mcp.catalog-snapshot` | MCP contract | 28 tools、5 resources、4 promptsとSchema catalogが一致 | [CI] `contract` |
@@ -22,7 +22,7 @@
 | AC-EDT-004 | `app.dry-run-no-change` | Application単体＋実機 | revision、object snapshot、Undo履歴が不変 | [CI] `managed` + `real-e2e/019f79ef-7a3a-785f-ad59-2c4c7c30369e` |
 | AC-EDT-005 | `app.revision-conflict` | Application/pipe統合 | 旧revisionを拒否し状態不変、連続2編集でも検出 | [CI] `integration` + `real-e2e/019f79ef-7a3a-785f-ad59-2c4c7c30369e` |
 | AC-EDT-006 | `real.batch-single-undo` | 専用AviUtl2実機 | batch全変更が1回のUndoでgolden snapshotへ戻る | `artifacts/real-e2e/019f79ef-7a3a-785f-ad59-2c4c7c30369e/debug-report.json` |
-| AC-EDT-007 | `app.stable-edit-errors` | Application単体 | not-found/collision/play/saveを別codeで返す | [CI] `managed` |
+| AC-EDT-007 | `app.stable-edit-errors` | Application単体 | not-found/collision/play/saveを別codeで返す | [CI] `native` |
 | AC-EDT-008 | `bridge.batch-partial` | native fake＋実機 | N件目失敗で適用ID/状態/Undo推奨、1 Undo復旧 | [CI] `native` / `integration` + `real-e2e/019f79ef-7a3a-785f-ad59-2c4c7c30369e` |
 | AC-PSD-001 | `real.psd-create` | 専用PSD実機 | PSD投入後にprofile一致objectをSDK再検索 | **保留** target不一致を安全拒否: `real-e2e/019f79f1-0d5e-7d45-a10f-45fd39f7583c` |
 | AC-PSD-002 | `real.psd-setup` | 専用PSD実機 | 不足/誤配置を検出し、安全候補へsetupを作成 | `artifacts/real-e2e/019f79ef-ce94-7340-8803-bf6ea373c2d7/debug-report.json` |
