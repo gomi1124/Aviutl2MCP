@@ -234,6 +234,8 @@ New-Item -ItemType Directory -Path $correlationDirectory -Force | Out-Null
 $repositoryRevision = Invoke-VersionCommand -FilePath "git" -Arguments @(
     "-c",
     "safe.directory=$resolvedRepositoryRoot",
+    "-c",
+    "core.fsmonitor=false",
     "-C",
     $resolvedRepositoryRoot,
     "rev-parse",
@@ -241,6 +243,8 @@ $repositoryRevision = Invoke-VersionCommand -FilePath "git" -Arguments @(
 $repositoryBranch = Invoke-VersionCommand -FilePath "git" -Arguments @(
     "-c",
     "safe.directory=$resolvedRepositoryRoot",
+    "-c",
+    "core.fsmonitor=false",
     "-C",
     $resolvedRepositoryRoot,
     "branch",
@@ -248,6 +252,8 @@ $repositoryBranch = Invoke-VersionCommand -FilePath "git" -Arguments @(
 $repositoryStatus = Invoke-VersionCommand -FilePath "git" -Arguments @(
     "-c",
     "safe.directory=$resolvedRepositoryRoot",
+    "-c",
+    "core.fsmonitor=false",
     "-C",
     $resolvedRepositoryRoot,
     "status",
