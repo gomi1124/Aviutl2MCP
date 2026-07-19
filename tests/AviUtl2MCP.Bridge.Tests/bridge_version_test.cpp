@@ -26,6 +26,7 @@
 #include "aviutl2_mcp/native_timeline_request_handlers.h"
 #include "aviutl2_mcp/pipe_security.h"
 #include "aviutl2_mcp/preview_png_encoder.h"
+#include "aviutl2_mcp/psd_contract.h"
 #include "aviutl2_mcp/request_dispatcher.h"
 #include "aviutl2_mcp/revision_tracker.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
@@ -3261,6 +3262,105 @@ void test_native_preview_request_handler() {
     ACTIVE_FAKE_SDK = nullptr;
 }
 
+void test_psd_profile_detector() {
+    const aviutl2_mcp::psd_profile_observation golden{
+        .version = "2.0.0alpha10",
+        .effects = {
+            {.name = "最初に置くやつ@PSDToolKit", .items = {}},
+            {.name = "PSDファイル@PSDToolKit", .items = {
+                {.name = "PSDファイル", .type = "file"},
+                {.name = "セーフガード", .type = "check"},
+                {.name = "タグ", .type = "string"},
+                {.name = "シーンID", .type = "integer"},
+                {.name = "キャラクターID", .type = "string"},
+                {.name = "レイヤー", .type = "string"},
+            }},
+            {.name = "セリフ準備@PSDToolKit", .items = {
+                {.name = "キャラクターID", .type = "string"},
+                {.name = "テキスト", .type = "text"},
+                {.name = "音声ファイル", .type = "file"},
+            }},
+        },
+    };
+    const aviutl2_mcp::psd_profile_detection matched = aviutl2_mcp::detect_psd_profile(golden);
+    require(matched.is_match
+            && matched.profile == "ptk2-2.0.0alpha10-ja"
+            && matched.failures.empty(),
+        "PSDToolKit golden contract did not match the profile");
+
+    aviutl2_mcp::psd_profile_observation unknown_version = golden;
+    unknown_version.version = "2.0.0alpha11";
+    require(!aviutl2_mcp::detect_psd_profile(unknown_version).is_match,
+        "unknown PSDToolKit version enabled write capability");
+
+    aviutl2_mcp::psd_profile_observation missing_item = golden;
+    missing_item.effects[1].items.pop_back();
+    const aviutl2_mcp::psd_profile_detection missing = aviutl2_mcp::detect_psd_profile(missing_item);
+    require(!missing.is_match && !missing.failures.empty(),
+        "missing PSDToolKit item enabled write capability");
+
+    aviutl2_mcp::psd_profile_observation changed_type = golden;
+    changed_type.effects[2].items[1].type = "string";
+    require(!aviutl2_mcp::detect_psd_profile(changed_type).is_match,
+        "changed PSDToolKit item type enabled write capability");
+}
+
+void test_psdtoolkit_config_reader() {
+    const std::filesystem::path root = create_test_directory(
+        aviutl2_mcp::create_bridge_identity().instance_id);
+    directory_cleanup cleanup(root);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path module = root / L"PSDToolKit.aux2";
+    const std::filesystem::path config = root / L"PSDToolKit.json";
+
+    {
+        std::ofstream output(config, std::ios::binary);
+        output << R"({"external_wav_txt_pair":true,"external_object_audio_text":true})";
+    }
+    const aviutl2_mcp::psdtoolkit_config_result direct =
+        aviutl2_mcp::read_psdtoolkit_config(module);
+    require(direct.ok
+            && direct.voice_route == aviutl2_mcp::psd_voice_route::direct_wav_txt
+            && std::string(aviutl2_mcp::to_string(direct.voice_route)) == "direct-wav-txt",
+        "PSDToolKit direct voice route was not selected first");
+
+    {
+        std::ofstream output(config, std::ios::binary | std::ios::trunc);
+        output << R"({"external_wav_txt_pair":false,"external_object_audio_text":true})";
+    }
+    const aviutl2_mcp::psdtoolkit_config_result intermediate =
+        aviutl2_mcp::read_psdtoolkit_config(module);
+    require(intermediate.ok
+            && intermediate.voice_route
+                == aviutl2_mcp::psd_voice_route::intermediate_object_audio_text_v1,
+        "PSDToolKit intermediate voice route was not selected");
+
+    {
+        std::ofstream output(config, std::ios::binary | std::ios::trunc);
+        output << R"({"external_wav_txt_pair":false,"external_object_audio_text":false})";
+    }
+    const aviutl2_mcp::psdtoolkit_config_result unavailable =
+        aviutl2_mcp::read_psdtoolkit_config(module);
+    require(unavailable.ok
+            && unavailable.voice_route == aviutl2_mcp::psd_voice_route::unavailable,
+        "disabled PSDToolKit routes did not remain unavailable");
+
+    {
+        std::ofstream output(config, std::ios::binary | std::ios::trunc);
+        output << "{invalid";
+    }
+    const aviutl2_mcp::psdtoolkit_config_result invalid =
+        aviutl2_mcp::read_psdtoolkit_config(module);
+    require(!invalid.ok && invalid.error_code == "config_invalid",
+        "invalid PSDToolKit JSON did not fail closed");
+
+    std::filesystem::remove(config);
+    const aviutl2_mcp::psdtoolkit_config_result missing =
+        aviutl2_mcp::read_psdtoolkit_config(module);
+    require(!missing.ok && missing.error_code == "config_missing",
+        "missing PSDToolKit JSON did not fail closed");
+}
+
 }  // namespace
 
 int main() {
@@ -3291,6 +3391,8 @@ int main() {
         std::pair{"native effect/layer/view request handlers", &test_native_effect_layer_view_request_handlers},
         std::pair{"native batch request handler", &test_native_batch_request_handler},
         std::pair{"native preview request handler", &test_native_preview_request_handler},
+        std::pair{"PSD profile detector", &test_psd_profile_detector},
+        std::pair{"PSDToolKit config reader", &test_psdtoolkit_config_reader},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

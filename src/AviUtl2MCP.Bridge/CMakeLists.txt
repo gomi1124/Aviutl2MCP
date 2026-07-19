@@ -28,6 +28,7 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/native_timeline_request_handlers.cpp
   src/pipe_security.cpp
   src/preview_png_encoder.cpp
+  src/psd_contract.cpp
   src/request_dispatcher.cpp
   src/revision_tracker.cpp
   src/sdk_read_facade.cpp
