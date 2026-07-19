@@ -7,6 +7,7 @@
 #include <memory>
 #include <stdexcept>
 #include <system_error>
+#include <vector>
 
 namespace aviutl2_mcp {
 namespace {
@@ -86,6 +87,32 @@ std::filesystem::path get_default_descriptor_directory() {
     }
     const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> path(raw_path, CoTaskMemFree);
     return std::filesystem::path(path.get()) / L"AviUtl2MCP" / L"v1" / L"instances";
+}
+
+std::filesystem::path get_configured_descriptor_directory() {
+    constexpr wchar_t variable_name[] = L"AVIUTL2_MCP_INSTANCE_DIRECTORY";
+    SetLastError(ERROR_SUCCESS);
+    const DWORD required_size = GetEnvironmentVariableW(variable_name, nullptr, 0);
+    if (required_size == 0U) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_SUCCESS || error == ERROR_ENVVAR_NOT_FOUND) {
+            return get_default_descriptor_directory();
+        }
+        throw std::system_error(
+            static_cast<int>(error),
+            std::system_category(),
+            "GetEnvironmentVariableW failed");
+    }
+
+    std::vector<wchar_t> buffer(required_size);
+    const DWORD written = GetEnvironmentVariableW(
+        variable_name,
+        buffer.data(),
+        static_cast<DWORD>(buffer.size()));
+    if (written == 0U || written >= buffer.size()) {
+        throw_last_error("GetEnvironmentVariableW failed");
+    }
+    return std::filesystem::path(std::wstring(buffer.data(), written));
 }
 
 bool uuid_equals(const std::string& left, const std::string& right) noexcept {

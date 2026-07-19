@@ -38,7 +38,7 @@ public sealed class RealPackageInstallTests
             "real.fixture-process-guard");
         try
         {
-            InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
+            InstanceDescriptorWatcher watcher = new(harness.InstanceDirectory);
             BridgeConnectionFactory connectionFactory = new(
                 Guid.NewGuid(),
                 "0.1.0-real-package-test");
@@ -80,9 +80,4 @@ public sealed class RealPackageInstallTests
             DryRun: false,
             parameters);
 
-    private static string GetDescriptorDirectory() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "AviUtl2MCP",
-        "v1",
-        "instances");
 }

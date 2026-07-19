@@ -52,7 +52,7 @@ public sealed class RealReadPreviewDiagnosticTests
             WorkingDirectory = Path.GetDirectoryName(typeof(ServerMarker).Assembly.Location),
             EnvironmentVariables = new Dictionary<string, string?>
             {
-                ["AVIUTL2_MCP_INSTANCE_DIRECTORY"] = GetDescriptorDirectory(),
+                ["AVIUTL2_MCP_INSTANCE_DIRECTORY"] = harness.InstanceDirectory,
                 ["AVIUTL2_MCP_LOG_DIRECTORY"] = harness.ServerLogDirectory,
                 ["AVIUTL2_LOG_DIRECTORY"] = harness.AviUtlLogDirectory,
             },
@@ -131,9 +131,13 @@ public sealed class RealReadPreviewDiagnosticTests
             },
             cancellationToken: timeout.Token));
         Assert.AreEqual(
-            "healthy",
+            "degraded",
             diagnostics.GetProperty("data").GetProperty("status").GetString());
-        AssertDiagnosticPassed(diagnostics, "known-logs");
+        AssertDiagnosticStatus(diagnostics, "known-logs", "warning");
+        JsonElement cacheWarning = diagnostics.GetProperty("data").GetProperty("knownLogMatches")
+            .EnumerateArray()
+            .Single(match => match.GetProperty("ruleId").GetString() == "psdtoolkit.cache-missing");
+        Assert.AreEqual("warning", cacheWarning.GetProperty("severity").GetString());
         AssertDiagnosticPassed(diagnostics, "read-smoke");
         AssertDiagnosticPassed(diagnostics, "preview-smoke");
 
@@ -188,7 +192,7 @@ public sealed class RealReadPreviewDiagnosticTests
             "real.fixture-process-guard");
         try
         {
-            InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
+            InstanceDescriptorWatcher watcher = new(harness.InstanceDirectory);
             BridgeConnectionFactory connectionFactory = new(Guid.NewGuid(), "0.1.0-real-test");
             await using BridgeConnectionRegistry registry = new(watcher, connectionFactory);
             BridgeQueryGateway query = new(registry);
@@ -308,7 +312,7 @@ public sealed class RealReadPreviewDiagnosticTests
             "real.fixture-process-guard");
         try
         {
-            InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
+            InstanceDescriptorWatcher watcher = new(harness.InstanceDirectory);
             BridgeConnectionFactory connectionFactory = new(Guid.NewGuid(), "0.1.0-real-test");
             await using BridgeConnectionRegistry registry = new(watcher, connectionFactory);
             BridgeQueryGateway query = new(registry);
@@ -431,7 +435,7 @@ public sealed class RealReadPreviewDiagnosticTests
             "real.fixture-process-guard");
         try
         {
-            InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
+            InstanceDescriptorWatcher watcher = new(harness.InstanceDirectory);
             BridgeConnectionFactory connectionFactory = new(Guid.NewGuid(), "0.1.0-real-test");
             await using BridgeConnectionRegistry registry = new(watcher, connectionFactory);
             BridgeQueryGateway query = new(registry);
@@ -541,7 +545,7 @@ public sealed class RealReadPreviewDiagnosticTests
             "real.fixture-process-guard");
         try
         {
-            InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
+            InstanceDescriptorWatcher watcher = new(harness.InstanceDirectory);
             BridgeConnectionFactory connectionFactory = new(Guid.NewGuid(), "0.1.0-real-test");
             await using BridgeConnectionRegistry registry = new(watcher, connectionFactory);
             BridgeQueryGateway query = new(registry);
@@ -1132,10 +1136,18 @@ public sealed class RealReadPreviewDiagnosticTests
 
     private static void AssertDiagnosticPassed(JsonElement diagnostics, string checkId)
     {
+        AssertDiagnosticStatus(diagnostics, checkId, "pass");
+    }
+
+    private static void AssertDiagnosticStatus(
+        JsonElement diagnostics,
+        string checkId,
+        string expectedStatus)
+    {
         JsonElement check = diagnostics.GetProperty("data").GetProperty("checks")
             .EnumerateArray()
             .Single(candidate => candidate.GetProperty("checkId").GetString() == checkId);
-        Assert.AreEqual("pass", check.GetProperty("status").GetString());
+        Assert.AreEqual(expectedStatus, check.GetProperty("status").GetString());
         Assert.IsGreaterThan(0, check.GetProperty("evidence").GetArrayLength());
     }
 
@@ -1145,12 +1157,6 @@ public sealed class RealReadPreviewDiagnosticTests
             ["instanceId"] = instanceId,
             ["timeoutMs"] = 60_000,
         };
-
-    private static string GetDescriptorDirectory() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "AviUtl2MCP",
-        "v1",
-        "instances");
 
     private static string GetRequiredEnvironmentPath(string variableName, bool isDirectory)
     {

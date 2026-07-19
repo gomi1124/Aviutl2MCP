@@ -28,7 +28,7 @@ bool bridge_runtime::start(const std::uint32_t host_version) noexcept {
 
     try {
         if (descriptor_directory_.empty()) {
-            descriptor_directory_ = get_default_descriptor_directory();
+            descriptor_directory_ = get_configured_descriptor_directory();
         }
         identity_ = create_bridge_identity();
         server_ = std::make_unique<named_pipe_server>(*identity_, std::to_string(host_version));

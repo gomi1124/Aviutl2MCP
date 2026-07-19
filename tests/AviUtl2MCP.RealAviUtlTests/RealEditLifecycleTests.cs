@@ -53,7 +53,7 @@ public sealed class RealEditLifecycleTests
             "real.fixture-process-guard");
         try
         {
-            InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
+            InstanceDescriptorWatcher watcher = new(harness.InstanceDirectory);
             BridgeConnectionFactory connectionFactory = new(Guid.NewGuid(), "0.1.0-real-test");
             await using BridgeConnectionRegistry registry = new(watcher, connectionFactory);
             BridgeQueryGateway query = new(registry);
@@ -597,12 +597,6 @@ public sealed class RealEditLifecycleTests
             expectedRevision,
             dryRun,
             parameters);
-
-    private static string GetDescriptorDirectory() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "AviUtl2MCP",
-        "v1",
-        "instances");
 
     private static void CreateSilentWave(string path)
     {

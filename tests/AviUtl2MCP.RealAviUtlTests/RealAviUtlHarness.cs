@@ -16,6 +16,8 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
     private const string PROJECT_PATH_VARIABLE = "AVIUTL2_MCP_REAL_PROJECT_PATH";
     private const string TEMP_ROOT_VARIABLE = "AVIUTL2_MCP_REAL_TEMP_ROOT";
     private const string BRIDGE_PATH_VARIABLE = "AVIUTL2_MCP_NATIVE_BRIDGE_PATH";
+    private const string INSTANCE_DIRECTORY_VARIABLE =
+        "AVIUTL2_MCP_INSTANCE_DIRECTORY";
     private const string BRIDGE_PACKAGE_PATH_VARIABLE =
         "AVIUTL2_MCP_REAL_BRIDGE_PACKAGE_PATH";
     private static readonly UTF8Encoding UTF8_NO_BOM = new(false, true);
@@ -47,6 +49,7 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
         string sourceProjectHash,
         string fixtureProjectPath,
         string portableDataDirectory,
+        string instanceDirectory,
         Process launchedProcess,
         DateTime processStartTimeUtc,
         Guid instanceId)
@@ -58,6 +61,7 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
         this.sourceProjectHash = sourceProjectHash;
         FixtureProjectPath = fixtureProjectPath;
         PortableDataDirectory = portableDataDirectory;
+        InstanceDirectory = instanceDirectory;
         LaunchedProcess = launchedProcess;
         this.processStartTimeUtc = processStartTimeUtc;
         InstanceId = instanceId;
@@ -74,6 +78,8 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
     public string FixtureProjectPath { get; }
 
     public string PortableDataDirectory { get; }
+
+    public string InstanceDirectory { get; }
 
     public string AviUtlLogDirectory => Path.Combine(PortableDataDirectory, "Log");
 
@@ -202,6 +208,7 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
         string sourceProjectHash = CalculateSha256(sourceProjectPath);
         string portableApplicationDirectory = Path.Combine(runtimeDirectory, "aviutl2");
         string portableDataDirectory = Path.Combine(portableApplicationDirectory, "data");
+        string instanceDirectory = Path.Combine(runtimeDirectory, "instances");
         string fixtureDirectory = Path.Combine(runtimeDirectory, "fixture");
         string fixtureProjectPath = Path.Combine(fixtureDirectory, "fixture.aup2");
         Process? launchedProcess = null;
@@ -209,6 +216,7 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
         {
             Directory.CreateDirectory(portableApplicationDirectory);
             Directory.CreateDirectory(portableDataDirectory);
+            Directory.CreateDirectory(instanceDirectory);
             Directory.CreateDirectory(fixtureDirectory);
             CopyDirectory(Path.GetDirectoryName(aviUtlPath)!, portableApplicationDirectory);
             CopyRequiredData(dataPath, portableDataDirectory);
@@ -232,12 +240,14 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
                 WorkingDirectory = portableApplicationDirectory,
                 UseShellExecute = false,
             };
+            startInfo.Environment[INSTANCE_DIRECTORY_VARIABLE] = instanceDirectory;
             startInfo.ArgumentList.Add(fixtureProjectPath);
             launchedProcess = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("AviUtl2 did not return a process handle.");
             DateTime processStartTimeUtc = launchedProcess.StartTime.ToUniversalTime();
             Guid instanceId = await WaitForInstanceAsync(
                 launchedProcess,
+                instanceDirectory,
                 cancellationToken).ConfigureAwait(false);
             return new RealAviUtlHarness(
                 setupCorrelationId,
@@ -247,6 +257,7 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
                 sourceProjectHash,
                 fixtureProjectPath,
                 portableDataDirectory,
+                instanceDirectory,
                 launchedProcess,
                 processStartTimeUtc,
                 instanceId);
@@ -454,9 +465,10 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
 
     private static async Task<Guid> WaitForInstanceAsync(
         Process launchedProcess,
+        string instanceDirectory,
         CancellationToken cancellationToken)
     {
-        InstanceDescriptorWatcher watcher = new();
+        InstanceDescriptorWatcher watcher = new(instanceDirectory);
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(30);
         while (DateTimeOffset.UtcNow < deadline)
         {

@@ -56,6 +56,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -66,6 +67,59 @@ using aviutl2_mcp::byte_transport;
 
 std::mutex HOST_LOG_MUTEX;
 std::vector<std::pair<std::string, std::wstring>> HOST_LOG_MESSAGES;
+
+class scoped_environment_variable final {
+public:
+    scoped_environment_variable(const wchar_t* name, const std::wstring& value)
+        : name_(name), original_value_(read(name)) {
+        if (SetEnvironmentVariableW(name_.c_str(), value.c_str()) == FALSE) {
+            throw std::system_error(
+                static_cast<int>(GetLastError()),
+                std::system_category(),
+                "SetEnvironmentVariableW failed");
+        }
+    }
+
+    ~scoped_environment_variable() {
+        SetEnvironmentVariableW(
+            name_.c_str(),
+            original_value_.has_value() ? original_value_->c_str() : nullptr);
+    }
+
+    scoped_environment_variable(const scoped_environment_variable&) = delete;
+    scoped_environment_variable& operator=(const scoped_environment_variable&) = delete;
+
+private:
+    static std::optional<std::wstring> read(const wchar_t* name) {
+        SetLastError(ERROR_SUCCESS);
+        const DWORD required_size = GetEnvironmentVariableW(name, nullptr, 0);
+        if (required_size == 0U) {
+            const DWORD error = GetLastError();
+            if (error == ERROR_SUCCESS || error == ERROR_ENVVAR_NOT_FOUND) {
+                return std::nullopt;
+            }
+            throw std::system_error(
+                static_cast<int>(error),
+                std::system_category(),
+                "GetEnvironmentVariableW failed");
+        }
+        std::vector<wchar_t> buffer(required_size);
+        const DWORD written = GetEnvironmentVariableW(
+            name,
+            buffer.data(),
+            static_cast<DWORD>(buffer.size()));
+        if (written == 0U || written >= buffer.size()) {
+            throw std::system_error(
+                static_cast<int>(GetLastError()),
+                std::system_category(),
+                "GetEnvironmentVariableW failed");
+        }
+        return std::wstring(buffer.data(), written);
+    }
+
+    std::wstring name_;
+    std::optional<std::wstring> original_value_;
+};
 
 void capture_host_message(const char* level, const LPCWSTR message) {
     std::scoped_lock lock(HOST_LOG_MUTEX);
@@ -1242,6 +1296,17 @@ void test_frame_fragmentation_and_hash() {
     }
     require(recognized_clean_disconnect,
         "clean IPC disconnect was not distinguished from a truncated frame");
+}
+
+void test_configured_descriptor_directory() {
+    const std::filesystem::path configured =
+        std::filesystem::temp_directory_path() / L"AviUtl2MCP-configured-instances";
+    const scoped_environment_variable environment(
+        L"AVIUTL2_MCP_INSTANCE_DIRECTORY",
+        configured.wstring());
+    require(
+        aviutl2_mcp::get_configured_descriptor_directory() == configured,
+        "Bridge ignored the configured instance descriptor directory");
 }
 
 void test_invalid_utf8() {
@@ -4741,6 +4806,7 @@ void test_native_psd_voice_request_handler() {
 int main() {
     const std::array tests{
         std::pair{"bridge version", &test_bridge_version},
+        std::pair{"configured descriptor directory", &test_configured_descriptor_directory},
         std::pair{"header golden vector", &test_header_golden_vector},
         std::pair{"frame fragmentation and hash", &test_frame_fragmentation_and_hash},
         std::pair{"strict UTF-8", &test_invalid_utf8},
