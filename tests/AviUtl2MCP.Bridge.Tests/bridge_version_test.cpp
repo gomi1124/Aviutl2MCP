@@ -2986,6 +2986,49 @@ void test_native_object_edit_request_handlers() {
     require(replayed_delete == deleted && fake.is_first_deleted,
         "native object delete did not preserve at-most-once behavior");
 
+    const std::string deleted_revision = deleted.at("revision").get<std::string>();
+    fake.edit_state = EDIT_HANDLE::EDIT_STATE_PLAY;
+    const nlohmann::json playing = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 178U),
+            "object.delete",
+            correlation_id,
+            delete_params,
+            deleted_revision,
+            true),
+        identity.instance_id).get()));
+    require(!playing.at("ok").get<bool>()
+            && playing.at("error").at("code") == "project_playing",
+        "native object delete did not distinguish playback from other edit failures");
+
+    fake.edit_state = EDIT_HANDLE::EDIT_STATE_SAVE;
+    const nlohmann::json saving = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 179U),
+            "object.delete",
+            correlation_id,
+            delete_params,
+            deleted_revision,
+            true),
+        identity.instance_id).get()));
+    require(!saving.at("ok").get<bool>()
+            && saving.at("error").at("code") == "project_saving",
+        "native object delete did not distinguish save or export from other edit failures");
+
+    fake.edit_state = EDIT_HANDLE::EDIT_STATE_EDIT;
+    const nlohmann::json missing = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 180U),
+            "object.delete",
+            correlation_id,
+            delete_params,
+            deleted_revision,
+            true),
+        identity.instance_id).get()));
+    require(!missing.at("ok").get<bool>()
+            && missing.at("error").at("code") == "object_not_found",
+        "native object delete did not distinguish a missing target");
+
     dispatcher.stop();
     facade.detach();
     ACTIVE_FAKE_SDK = nullptr;
@@ -4618,7 +4661,8 @@ int main() {
         std::pair{"SDK read facade", &test_sdk_read_facade},
         std::pair{"native query request handlers", &test_native_query_request_handlers},
         std::pair{"native create request handlers", &test_native_create_request_handlers},
-        std::pair{"native object edit request handlers", &test_native_object_edit_request_handlers},
+        std::pair{"app.stable-edit-errors / native object edit request handlers",
+            &test_native_object_edit_request_handlers},
         std::pair{"native effect/layer/view request handlers", &test_native_effect_layer_view_request_handlers},
         std::pair{"native batch request handler", &test_native_batch_request_handler},
         std::pair{"native preview request handler", &test_native_preview_request_handler},

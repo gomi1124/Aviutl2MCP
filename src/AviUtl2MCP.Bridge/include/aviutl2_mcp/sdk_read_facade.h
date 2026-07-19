@@ -31,6 +31,10 @@ enum class sdk_edit_state {
     unknown,
 };
 
+[[nodiscard]] const char* sdk_edit_state_error_code(sdk_edit_state state) noexcept;
+
+[[nodiscard]] const char* sdk_edit_state_error_message(sdk_edit_state state) noexcept;
+
 struct sdk_status_snapshot final {
     bool is_sdk_ready = false;
     bool has_query_error = false;

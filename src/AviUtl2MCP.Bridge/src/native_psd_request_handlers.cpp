@@ -2090,17 +2090,25 @@ operation_result native_psd_create_request_handler::execute(
                 context);
         }
         const sdk_status_snapshot status = sdk_.query_status();
-        if (!status.is_sdk_ready || status.has_query_error
-            || (status.project_state != sdk_project_state::saved
-                && status.project_state != sdk_project_state::unsaved)
-            || status.edit_state != sdk_edit_state::edit) {
+        if (!status.is_sdk_ready || status.has_query_error) {
             return create_native_failure(
-                status.has_query_error ? "sdk_query_failed" : "edit_not_available",
-                status.has_query_error
-                    ? status.query_error
-                    : "AviUtl2 is not ready for a PSD create operation",
+                "sdk_query_failed",
+                status.has_query_error ? status.query_error : "AviUtl2 SDK is not ready",
                 context,
-                status.has_query_error);
+                true);
+        }
+        if (status.project_state != sdk_project_state::saved
+            && status.project_state != sdk_project_state::unsaved) {
+            return create_native_failure(
+                "project_not_open",
+                "No AviUtl2 project is open",
+                context);
+        }
+        if (status.edit_state != sdk_edit_state::edit) {
+            return create_native_failure(
+                sdk_edit_state_error_code(status.edit_state),
+                sdk_edit_state_error_message(status.edit_state),
+                context);
         }
         const sdk_project_query_result project = sdk_.query_project(false);
         if (!project.ok) {
@@ -2343,17 +2351,25 @@ operation_result native_psd_voice_request_handler::execute(
         }
 
         const sdk_status_snapshot status = sdk_.query_status();
-        if (!status.is_sdk_ready || status.has_query_error
-            || (status.project_state != sdk_project_state::saved
-                && status.project_state != sdk_project_state::unsaved)
-            || status.edit_state != sdk_edit_state::edit) {
+        if (!status.is_sdk_ready || status.has_query_error) {
             return create_native_failure(
-                status.has_query_error ? "sdk_query_failed" : "edit_not_available",
-                status.has_query_error
-                    ? status.query_error
-                    : "AviUtl2 is not ready for a PSD voice operation",
+                "sdk_query_failed",
+                status.has_query_error ? status.query_error : "AviUtl2 SDK is not ready",
                 context,
-                status.has_query_error);
+                true);
+        }
+        if (status.project_state != sdk_project_state::saved
+            && status.project_state != sdk_project_state::unsaved) {
+            return create_native_failure(
+                "project_not_open",
+                "No AviUtl2 project is open",
+                context);
+        }
+        if (status.edit_state != sdk_edit_state::edit) {
+            return create_native_failure(
+                sdk_edit_state_error_code(status.edit_state),
+                sdk_edit_state_error_message(status.edit_state),
+                context);
         }
         const sdk_project_query_result project = sdk_.query_project(false);
         if (!project.ok) {

@@ -2630,6 +2630,32 @@ void copy_project(void* raw_context, EDIT_SECTION* edit) noexcept {
 
 }  // namespace
 
+const char* sdk_edit_state_error_code(const sdk_edit_state state) noexcept {
+    switch (state) {
+        case sdk_edit_state::play:
+            return "project_playing";
+        case sdk_edit_state::save:
+            return "project_saving";
+        case sdk_edit_state::edit:
+        case sdk_edit_state::unknown:
+        default:
+            return "edit_not_available";
+    }
+}
+
+const char* sdk_edit_state_error_message(const sdk_edit_state state) noexcept {
+    switch (state) {
+        case sdk_edit_state::play:
+            return "AviUtl2 is playing and cannot be edited";
+        case sdk_edit_state::save:
+            return "AviUtl2 is saving or exporting and cannot be edited";
+        case sdk_edit_state::edit:
+        case sdk_edit_state::unknown:
+        default:
+            return "AviUtl2 is not currently editable";
+    }
+}
+
 sdk_read_facade::~sdk_read_facade() {
     detach();
 }
@@ -3531,8 +3557,8 @@ sdk_create_result sdk_read_facade::create_objects(
     if (status.edit_state != sdk_edit_state::edit) {
         return {
             .ok = false,
-            .error_code = "edit_not_available",
-            .error_message = "AviUtl2 is not currently editable",
+            .error_code = sdk_edit_state_error_code(status.edit_state),
+            .error_message = sdk_edit_state_error_message(status.edit_state),
         };
     }
 
@@ -3664,8 +3690,8 @@ sdk_object_edit_result sdk_read_facade::edit_object(
     if (status.edit_state != sdk_edit_state::edit) {
         return {
             .ok = false,
-            .error_code = "edit_not_available",
-            .error_message = "AviUtl2 is not currently editable",
+            .error_code = sdk_edit_state_error_code(status.edit_state),
+            .error_message = sdk_edit_state_error_message(status.edit_state),
         };
     }
 
@@ -3784,8 +3810,8 @@ sdk_effect_edit_result sdk_read_facade::edit_effect(
             .error_message = "No AviUtl2 project is open"};
     }
     if (status.edit_state != sdk_edit_state::edit) {
-        return {.ok = false, .error_code = "edit_not_available",
-            .error_message = "AviUtl2 is not currently editable"};
+        return {.ok = false, .error_code = sdk_edit_state_error_code(status.edit_state),
+            .error_message = sdk_edit_state_error_message(status.edit_state)};
     }
 
     EDIT_HANDLE* edit_handle = nullptr;
@@ -3863,8 +3889,8 @@ sdk_layer_edit_result sdk_read_facade::edit_layer(
             .error_message = "No AviUtl2 project is open"};
     }
     if (status.edit_state != sdk_edit_state::edit) {
-        return {.ok = false, .error_code = "edit_not_available",
-            .error_message = "AviUtl2 is not currently editable"};
+        return {.ok = false, .error_code = sdk_edit_state_error_code(status.edit_state),
+            .error_message = sdk_edit_state_error_message(status.edit_state)};
     }
     EDIT_HANDLE* edit_handle = nullptr;
     {
@@ -3941,8 +3967,8 @@ sdk_view_edit_result sdk_read_facade::edit_view(
             .error_message = "No AviUtl2 project is open"};
     }
     if (status.edit_state != sdk_edit_state::edit) {
-        return {.ok = false, .error_code = "edit_not_available",
-            .error_message = "AviUtl2 is not currently editable"};
+        return {.ok = false, .error_code = sdk_edit_state_error_code(status.edit_state),
+            .error_message = sdk_edit_state_error_message(status.edit_state)};
     }
     EDIT_HANDLE* edit_handle = nullptr;
     {
@@ -4121,8 +4147,8 @@ sdk_batch_edit_result sdk_read_facade::edit_batch(
             .error_message = "No AviUtl2 project is open"};
     }
     if (status.edit_state != sdk_edit_state::edit) {
-        return {.ok = false, .error_code = "edit_not_available",
-            .error_message = "AviUtl2 is not currently editable"};
+        return {.ok = false, .error_code = sdk_edit_state_error_code(status.edit_state),
+            .error_message = sdk_edit_state_error_message(status.edit_state)};
     }
     EDIT_HANDLE* edit_handle = nullptr;
     {

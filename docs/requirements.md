@@ -285,7 +285,9 @@ Resources は読み取り専用とし、未接続時も構造化された状態�
 | `operation_cancelled` | commit point前に取消され変更されなかった |
 | `protocol_incompatible` | MCPサーバーとブリッジのprotocol major範囲が一致しない |
 | `project_not_open` | 編集可能なプロジェクトがない |
-| `edit_not_available` | 再生・出力中などで編集できない |
+| `edit_not_available` | SDK状態不明、layer lock、編集section拒否などで編集できない |
+| `project_playing` | 再生中のため編集できない |
+| `project_saving` | 保存・出力中のため編集できない |
 | `capability_not_available` | 現在の環境で操作を提供できない |
 | `object_not_found` | ロケーターを再解決できない |
 | `object_ambiguous` | 複数候補があり一意に解決できない |
