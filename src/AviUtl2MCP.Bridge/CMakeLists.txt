@@ -22,10 +22,12 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/native_object_request_handler.cpp
   src/native_object_edit_request_handler.cpp
   src/native_project_request_handler.cpp
+  src/native_preview_request_handler.cpp
   src/native_ring_logger.cpp
   src/native_status_request_handler.cpp
   src/native_timeline_request_handlers.cpp
   src/pipe_security.cpp
+  src/preview_png_encoder.cpp
   src/request_dispatcher.cpp
   src/revision_tracker.cpp
   src/sdk_read_facade.cpp
@@ -46,7 +48,7 @@ target_compile_features(AviUtl2MCP.Bridge.Core PUBLIC cxx_std_20)
 target_compile_definitions(AviUtl2MCP.Bridge.Core PRIVATE UNICODE _UNICODE)
 
 if(WIN32)
-  target_link_libraries(AviUtl2MCP.Bridge.Core PUBLIC Advapi32 Bcrypt Rpcrt4 Shell32 Ole32)
+  target_link_libraries(AviUtl2MCP.Bridge.Core PUBLIC Advapi32 Bcrypt Rpcrt4 Shell32 Ole32 Windowscodecs)
 endif()
 
 add_library(AviUtl2MCP.Bridge MODULE

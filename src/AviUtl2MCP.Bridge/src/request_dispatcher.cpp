@@ -593,7 +593,10 @@ ipc_frame request_dispatcher::create_response_frame(
             {"details", nlohmann::json::object()},
         };
     }
-    ipc_frame response = create_frame_from_json(request.request_id, document.dump());
+    ipc_frame response = create_frame_from_json(
+        request.request_id,
+        document.dump(),
+        result.binary);
     const double duration_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - request.received_at).count();
     get_native_logger().write(
@@ -657,19 +660,23 @@ ipc_frame request_dispatcher::create_error_frame(
 
 ipc_frame request_dispatcher::create_frame_from_json(
     const std::array<std::uint8_t, 16>& request_id,
-    const std::string& response_json) const {
+    const std::string& response_json,
+    std::vector<std::uint8_t> binary) const {
     const nlohmann::json document = nlohmann::json::parse(response_json);
     const bool is_error = !document.at("ok").get<bool>();
+    const auto flags = static_cast<frame_flags>(
+        (is_error ? static_cast<std::uint8_t>(frame_flags::error_response) : 0U)
+        | (!binary.empty() ? static_cast<std::uint8_t>(frame_flags::has_binary) : 0U));
     ipc_frame frame{
         .header = frame_header{
             .kind = message_kind::response,
-            .flags = is_error ? frame_flags::error_response : frame_flags::none,
+            .flags = flags,
             .request_id = request_id,
             .json_length = static_cast<std::uint32_t>(response_json.size()),
-            .binary_length = 0U,
+            .binary_length = binary.size(),
         },
         .json = to_bytes(response_json),
-        .binary = {},
+        .binary = std::move(binary),
         .payload_hash = {},
     };
     frame.payload_hash = calculate_payload_hash(frame.header, frame.json, frame.binary);

@@ -20,10 +20,12 @@
 #include "aviutl2_mcp/native_object_request_handler.h"
 #include "aviutl2_mcp/native_object_edit_request_handler.h"
 #include "aviutl2_mcp/native_project_request_handler.h"
+#include "aviutl2_mcp/native_preview_request_handler.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/native_status_request_handler.h"
 #include "aviutl2_mcp/native_timeline_request_handlers.h"
 #include "aviutl2_mcp/pipe_security.h"
+#include "aviutl2_mcp/preview_png_encoder.h"
 #include "aviutl2_mcp/request_dispatcher.h"
 #include "aviutl2_mcp/revision_tracker.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
@@ -212,11 +214,12 @@ private:
     const std::string& correlation_id,
     const std::string& params = "{}",
     const std::optional<std::string>& expected_revision = std::nullopt,
-    const bool dry_run = false) {
+    const bool dry_run = false,
+    const std::uint32_t timeout_ms = 5000U) {
     nlohmann::json document{
         {"method", method},
         {"correlationId", correlation_id},
-        {"timeoutMs", 5000},
+        {"timeoutMs", timeout_ms},
         {"dryRun", dry_run},
         {"params", nlohmann::json::parse(params)},
     };
@@ -327,6 +330,18 @@ struct fake_sdk_state final {
     bool should_reject_move = false;
     int read_section_count = 0;
     int edit_section_count = 0;
+    int render_frame = 0;
+    int render_width = 4;
+    int render_height = 2;
+    int render_pitch = 20;
+    int render_delay_ms = 0;
+    int render_request_count = 0;
+    int render_wait_count = 0;
+    int active_render_callbacks = 0;
+    bool should_reject_render = false;
+    void* render_parameter = nullptr;
+    void (*render_callback)(void*, int, const void*, int, int, int) = nullptr;
+    std::vector<std::uint8_t> render_buffer;
     std::array<created_object, 8> created_objects{};
     std::size_t created_object_count = 0U;
 };
@@ -375,6 +390,44 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
     callback(parameter, &ACTIVE_FAKE_SDK->edit_section);
     ACTIVE_FAKE_SDK->is_read_active = false;
     return true;
+}
+
+[[nodiscard]] bool render_fake_scene_video(
+    const int frame,
+    void* parameter,
+    void (*callback)(void*, int, const void*, int, int, int)) {
+    if (ACTIVE_FAKE_SDK->should_reject_render || callback == nullptr) {
+        return false;
+    }
+    ACTIVE_FAKE_SDK->render_frame = frame;
+    ACTIVE_FAKE_SDK->render_parameter = parameter;
+    ACTIVE_FAKE_SDK->render_callback = callback;
+    ++ACTIVE_FAKE_SDK->render_request_count;
+    ++ACTIVE_FAKE_SDK->active_render_callbacks;
+    return true;
+}
+
+void wait_fake_rendering_task() {
+    ++ACTIVE_FAKE_SDK->render_wait_count;
+    fake_sdk_state* state = ACTIVE_FAKE_SDK;
+    void* parameter = state->render_parameter;
+    const auto callback = state->render_callback;
+    std::thread renderer([state, parameter, callback] {
+        if (state->render_delay_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(state->render_delay_ms));
+        }
+        callback(
+            parameter,
+            state->render_frame,
+            state->render_buffer.data(),
+            state->render_width,
+            state->render_height,
+            state->render_pitch);
+    });
+    renderer.join();
+    state->render_parameter = nullptr;
+    state->render_callback = nullptr;
+    --state->active_render_callbacks;
 }
 
 [[nodiscard]] fake_sdk_state::created_object* find_created_object(const OBJECT_HANDLE object) {
@@ -841,6 +894,18 @@ void delete_fake_object(const OBJECT_HANDLE object) {
 void configure_fake_sdk(fake_sdk_state& state) {
     ACTIVE_FAKE_SDK = &state;
     state.layer_enabled.fill(true);
+    state.render_buffer.assign(
+        static_cast<std::size_t>(state.render_pitch * state.render_height),
+        0U);
+    const std::array<std::uint8_t, 32> render_pixels{
+        255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 255, 255, 255, 255, 64,
+        0, 0, 0, 255, 255, 0, 255, 255, 0, 255, 255, 32, 128, 128, 128, 255,
+    };
+    std::ranges::copy_n(render_pixels.begin(), 16, state.render_buffer.begin());
+    std::ranges::copy_n(
+        render_pixels.begin() + 16,
+        16,
+        state.render_buffer.begin() + state.render_pitch);
     state.layer_locked.fill(false);
     state.layer_names[1] = L"Voice Layer";
     state.layer_enabled[3] = false;
@@ -870,6 +935,8 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_handle.get_edit_state = &get_fake_edit_state;
     state.edit_handle.call_read_section_param = &call_fake_read_section;
     state.edit_handle.call_edit_section_param = &call_fake_edit_section;
+    state.edit_handle.rendering_scene_video = &render_fake_scene_video;
+    state.edit_handle.wait_rendering_task = &wait_fake_rendering_task;
     state.edit_handle.enum_effect_name = &enumerate_fake_effect_names;
     state.edit_handle.enum_module_info = &enumerate_fake_modules;
     state.edit_handle.enum_effect_item = &enumerate_fake_effect_items;
@@ -3051,6 +3118,149 @@ void test_native_batch_request_handler() {
     ACTIVE_FAKE_SDK = nullptr;
 }
 
+void test_native_preview_request_handler() {
+    const std::array<std::uint8_t, 24> padded{
+        1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0,
+        9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 0,
+    };
+    const aviutl2_mcp::preview_rgba_image positive = aviutl2_mcp::copy_preview_rgba(
+        padded.data(), 2, 2, 12);
+    const aviutl2_mcp::preview_rgba_image negative = aviutl2_mcp::copy_preview_rgba(
+        padded.data(), 2, 2, -12);
+    require(positive.pixels == std::vector<std::uint8_t>({
+                1, 2, 3, 4, 5, 6, 7, 8,
+                9, 10, 11, 12, 13, 14, 15, 16,
+            })
+            && negative.pixels == std::vector<std::uint8_t>({
+                9, 10, 11, 12, 13, 14, 15, 16,
+                1, 2, 3, 4, 5, 6, 7, 8,
+            }),
+        "preview RGBA copy did not handle padded positive and negative pitch");
+
+    fake_sdk_state fake;
+    configure_fake_sdk(fake);
+    const aviutl2_mcp::preview_rgba_image source = aviutl2_mcp::copy_preview_rgba(
+        fake.render_buffer.data(),
+        fake.render_width,
+        fake.render_height,
+        fake.render_pitch);
+    const aviutl2_mcp::preview_png_image opaque = aviutl2_mcp::encode_preview_png(
+        source, 2, 2, false);
+    const aviutl2_mcp::preview_png_image alpha = aviutl2_mcp::encode_preview_png(
+        source, 8, 8, true);
+    const auto read_big_endian = [](const std::vector<std::uint8_t>& bytes, const std::size_t offset) {
+        return (static_cast<std::uint32_t>(bytes[offset]) << 24U)
+            | (static_cast<std::uint32_t>(bytes[offset + 1U]) << 16U)
+            | (static_cast<std::uint32_t>(bytes[offset + 2U]) << 8U)
+            | static_cast<std::uint32_t>(bytes[offset + 3U]);
+    };
+    const std::array<std::uint8_t, 8> png_signature{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+    require(opaque.width == 2 && opaque.height == 1
+            && opaque.bytes.size() > 26U
+            && std::equal(png_signature.begin(), png_signature.end(), opaque.bytes.begin())
+            && read_big_endian(opaque.bytes, 16U) == 2U
+            && read_big_endian(opaque.bytes, 20U) == 1U
+            && opaque.bytes[25U] == 2U
+            && alpha.width == 4 && alpha.height == 2
+            && alpha.bytes.size() > 26U
+            && alpha.bytes[25U] == 6U,
+        "WIC preview PNG did not preserve aspect, prevent upscale, or select RGB/RGBA");
+
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "preview fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(
+        std::make_unique<aviutl2_mcp::native_preview_request_handler>(facade));
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string initial_revision = dispatcher.revisions().content_revision();
+    const std::string params = nlohmann::json{
+        {"sceneId", 7},
+        {"frame", 15},
+        {"maxWidth", 2},
+        {"maxHeight", 2},
+        {"includeAlpha", false},
+    }.dump();
+    const aviutl2_mcp::ipc_frame rendered = dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 110U),
+            "preview.render",
+            correlation_id,
+            params),
+        identity.instance_id).get();
+    const nlohmann::json rendered_json = nlohmann::json::parse(get_json(rendered));
+    require(rendered_json.at("ok").get<bool>()
+            && rendered_json.at("result").at("mimeType") == "image/png"
+            && rendered_json.at("result").at("width") == 2
+            && rendered_json.at("result").at("height") == 1
+            && rendered_json.at("result").at("frame") == 15
+            && rendered_json.at("result").at("byteLength") == rendered.binary.size()
+            && rendered_json.at("result").at("sha256")
+                == aviutl2_mcp::calculate_sha256(rendered.binary)
+            && (static_cast<std::uint8_t>(rendered.header.flags)
+                & static_cast<std::uint8_t>(aviutl2_mcp::frame_flags::has_binary)) != 0U
+            && rendered.header.binary_length == rendered.binary.size()
+            && std::equal(png_signature.begin(), png_signature.end(), rendered.binary.begin())
+            && rendered_json.at("revision") == initial_revision
+            && fake.render_request_count == 1
+            && fake.render_wait_count == 1
+            && fake.active_render_callbacks == 0,
+        "native preview did not return matching PNG metadata and IPC binary");
+
+    const int requests_before_invalid_scene = fake.render_request_count;
+    const nlohmann::json invalid_scene = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 111U),
+            "preview.render",
+            correlation_id,
+            nlohmann::json{{"sceneId", 8}, {"frame", 15}}.dump()),
+        identity.instance_id).get()));
+    require(!invalid_scene.at("ok").get<bool>()
+            && invalid_scene.at("error").at("code") == "invalid_argument"
+            && fake.render_request_count == requests_before_invalid_scene,
+        "native preview rendered a non-active scene");
+
+    fake.render_delay_ms = 120;
+    const aviutl2_mcp::ipc_frame timed_out_frame = dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 112U),
+            "preview.render",
+            correlation_id,
+            nlohmann::json{{"frame", 15}}.dump(),
+            std::nullopt,
+            false,
+            100U),
+        identity.instance_id).get();
+    const nlohmann::json timed_out = nlohmann::json::parse(get_json(timed_out_frame));
+    require(!timed_out.at("ok").get<bool>()
+            && timed_out.at("error").at("code") == "operation_timeout"
+            && timed_out_frame.binary.empty()
+            && fake.active_render_callbacks == 0,
+        "native preview timeout did not wait for late callback cleanup");
+
+    fake.render_delay_ms = 0;
+    for (std::uint8_t index = 0U; index < 3U; ++index) {
+        const aviutl2_mcp::ipc_frame repeated = dispatcher.dispatch(
+            create_request_frame(
+                create_uuid_v7_bytes(
+                    std::chrono::system_clock::now(),
+                    static_cast<std::uint8_t>(113U + index)),
+                "preview.render",
+                correlation_id,
+                nlohmann::json{{"frame", 15}, {"includeAlpha", true}}.dump()),
+            identity.instance_id).get();
+        require(nlohmann::json::parse(get_json(repeated)).at("ok").get<bool>()
+                && !repeated.binary.empty()
+                && fake.active_render_callbacks == 0,
+            "native preview repeat left an owned callback or buffer active");
+    }
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -3080,6 +3290,7 @@ int main() {
         std::pair{"native object edit request handlers", &test_native_object_edit_request_handlers},
         std::pair{"native effect/layer/view request handlers", &test_native_effect_layer_view_request_handlers},
         std::pair{"native batch request handler", &test_native_batch_request_handler},
+        std::pair{"native preview request handler", &test_native_preview_request_handler},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

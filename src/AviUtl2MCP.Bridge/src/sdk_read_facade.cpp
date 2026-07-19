@@ -2,6 +2,7 @@
 
 #include "aviutl2_mcp/bridge_identity.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
+#include "aviutl2_mcp/preview_png_encoder.h"
 
 #include <Windows.h>
 
@@ -12,6 +13,7 @@
 #include <atomic>
 #include <charconv>
 #include <cmath>
+#include <chrono>
 #include <exception>
 #include <limits>
 #include <span>
@@ -2314,6 +2316,43 @@ void edit_sdk_batch(void* raw_context, EDIT_SECTION* edit) noexcept {
     }
 }
 
+struct preview_render_callback_context final {
+    std::mutex mutex;
+    sdk_preview_render_result result;
+    bool was_called = false;
+};
+
+void copy_rendered_preview(
+    void* raw_context,
+    const int frame,
+    const void* buffer,
+    const int width,
+    const int height,
+    const int pitch) noexcept {
+    auto* context = static_cast<preview_render_callback_context*>(raw_context);
+    std::scoped_lock lock(context->mutex);
+    if (context->was_called) {
+        return;
+    }
+    context->was_called = true;
+    try {
+        preview_rgba_image image = copy_preview_rgba(buffer, width, height, pitch);
+        context->result = sdk_preview_render_result{
+            .ok = true,
+            .frame = frame + 1,
+            .width = image.width,
+            .height = image.height,
+            .rgba = std::move(image.pixels),
+        };
+    } catch (const std::exception& exception) {
+        context->result.error_code = "preview_invalid_buffer";
+        context->result.error_message = exception.what();
+    } catch (...) {
+        context->result.error_code = "preview_invalid_buffer";
+        context->result.error_message = "SDK preview buffer copy failed";
+    }
+}
+
 [[nodiscard]] sdk_view_snapshot copy_view_snapshot(const EDIT_INFO& info) {
     std::optional<sdk_selection> selection;
     if (info.select_range_start >= 0 && info.select_range_end >= info.select_range_start) {
@@ -3796,6 +3835,68 @@ sdk_batch_edit_result sdk_read_facade::edit_batch(
     } catch (...) {
         return {.ok = false, .error_code = "sdk_query_failed",
             .error_message = "SDK batch edit failed with an unknown exception"};
+    }
+}
+
+sdk_preview_render_result sdk_read_facade::render_preview(
+    const int frame,
+    const std::uint32_t timeout_ms) const noexcept {
+    if (frame < 1 || timeout_ms < 1U || timeout_ms > 120'000U) {
+        return {.ok = false, .error_code = "invalid_argument",
+            .error_message = "Preview frame or timeout is invalid"};
+    }
+    const sdk_status_snapshot status = query_status();
+    if (!status.is_sdk_ready) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available"};
+    }
+    if (status.has_query_error) {
+        return {.ok = false, .error_code = "sdk_query_failed",
+            .error_message = status.query_error};
+    }
+    if (status.project_state != sdk_project_state::saved
+        && status.project_state != sdk_project_state::unsaved) {
+        return {.ok = false, .error_code = "project_not_open",
+            .error_message = "No AviUtl2 project is open"};
+    }
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr || edit_handle->rendering_scene_video == nullptr
+        || edit_handle->wait_rendering_task == nullptr) {
+        return {.ok = false, .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK preview rendering is unavailable"};
+    }
+    preview_render_callback_context callback;
+    try {
+        const auto started_at = std::chrono::steady_clock::now();
+        if (!edit_handle->rendering_scene_video(
+                frame - 1,
+                &callback,
+                &copy_rendered_preview)) {
+            return {.ok = false, .error_code = "preview_busy",
+                .error_message = "AviUtl2 rejected the preview rendering request"};
+        }
+        edit_handle->wait_rendering_task();
+        const auto elapsed = std::chrono::steady_clock::now() - started_at;
+        std::scoped_lock lock(callback.mutex);
+        if (!callback.was_called) {
+            return {.ok = false, .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 completed rendering without a preview callback"};
+        }
+        if (elapsed > std::chrono::milliseconds(timeout_ms)) {
+            return {.ok = false, .error_code = "operation_timeout",
+                .error_message = "Preview rendering exceeded the request timeout"};
+        }
+        return std::move(callback.result);
+    } catch (const std::exception& exception) {
+        return {.ok = false, .error_code = "sdk_query_failed",
+            .error_message = exception.what()};
+    } catch (...) {
+        return {.ok = false, .error_code = "sdk_query_failed",
+            .error_message = "SDK preview rendering failed with an unknown exception"};
     }
 }
 

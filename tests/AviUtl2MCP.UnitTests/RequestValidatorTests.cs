@@ -289,6 +289,58 @@ public sealed class RequestValidatorTests
         action();
     }
 
+    [TestMethod]
+    public void ValidatePreviewInputAcceptsPairedDimensions()
+    {
+        // Arrange
+        RenderPreviewInput input = new()
+        {
+            Frame = 1,
+            MaxWidth = 1920,
+            MaxHeight = 1080,
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidatePreviewInput(input);
+
+        // Assert
+        action();
+    }
+
+    [TestMethod]
+    public void ValidatePreviewInputRejectsUnpairedDimensions()
+    {
+        // Arrange
+        RenderPreviewInput input = new() { Frame = 1, MaxWidth = 1920 };
+
+        // Act
+        Action action = () => RequestValidator.ValidatePreviewInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(action);
+    }
+
+    [TestMethod]
+    public void ValidatePreviewInputRejectsInvalidFrameAndDimensions()
+    {
+        // Arrange
+        RenderPreviewInput invalidFrame = new() { Frame = 0 };
+        RenderPreviewInput invalidDimensions = new()
+        {
+            Frame = 1,
+            MaxWidth = 4097,
+            MaxHeight = 1080,
+        };
+
+        // Act
+        Action frameAction = () => RequestValidator.ValidatePreviewInput(invalidFrame);
+        Action dimensionAction = () => RequestValidator.ValidatePreviewInput(invalidDimensions);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(frameAction);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(dimensionAction);
+    }
+
     private static ObjectLocator CreateValidLocator() => new(
         Guid.CreateVersion7(),
         Guid.CreateVersion7(),

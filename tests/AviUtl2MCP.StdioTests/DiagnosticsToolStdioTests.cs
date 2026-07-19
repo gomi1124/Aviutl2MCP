@@ -18,6 +18,7 @@ public sealed class DiagnosticsToolStdioTests
         "aviutl_get_object",
         "aviutl_list_effects",
         "aviutl_list_effect_items",
+        "aviutl_render_preview",
     ];
     private static readonly string[] EDIT_TOOL_NAMES =
     [
@@ -76,6 +77,7 @@ public sealed class DiagnosticsToolStdioTests
             McpClientTool diagnoseTool = tools.Single(tool => tool.Name == "aviutl_diagnose");
             McpClientTool statusTool = tools.Single(tool => tool.Name == "aviutl_get_status");
             McpClientTool projectTool = tools.Single(tool => tool.Name == "aviutl_get_project");
+            McpClientTool previewTool = tools.Single(tool => tool.Name == "aviutl_render_preview");
             McpClientTool timelineTool = tools.Single(tool => tool.Name == "aviutl_get_timeline");
             McpClientTool deleteTool = tools.Single(tool => tool.Name == "aviutl_delete_object");
             McpClientTool batchTool = tools.Single(tool => tool.Name == "aviutl_execute_batch");
@@ -92,6 +94,10 @@ public sealed class DiagnosticsToolStdioTests
             CallToolResult projectResult = await client.CallToolAsync(
                 projectTool.Name,
                 new Dictionary<string, object?>(),
+                cancellationToken: timeout.Token);
+            CallToolResult previewResult = await client.CallToolAsync(
+                previewTool.Name,
+                new Dictionary<string, object?> { ["frame"] = 1 },
                 cancellationToken: timeout.Token);
             CallToolResult invalidTimelineResult = await client.CallToolAsync(
                 timelineTool.Name,
@@ -167,7 +173,7 @@ public sealed class DiagnosticsToolStdioTests
                 cancellationToken: timeout.Token);
 
             // Assert
-            Assert.AreEqual(21, tools.Count);
+            Assert.AreEqual(22, tools.Count);
             CollectionAssert.IsSubsetOf(
                 READ_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());
@@ -185,6 +191,7 @@ public sealed class DiagnosticsToolStdioTests
             AssertCursorToolMetadata(tools.Single(tool => tool.Name == "aviutl_set_cursor"));
             AssertToolMetadata(logsTool, "sources", "limit");
             AssertToolMetadata(diagnoseTool, "includeReadSmoke", "includePreviewSmoke", "maxLogLines");
+            AssertToolMetadata(previewTool, "frame", "maxWidth", "maxHeight", "includeAlpha");
 
             Assert.AreEqual(5, resources.Count);
             CollectionAssert.AreEquivalent(
@@ -212,6 +219,13 @@ public sealed class DiagnosticsToolStdioTests
             Assert.AreEqual(
                 "aviutl_not_running",
                 projectEnvelope.GetProperty("error").GetProperty("code").GetString());
+
+            Assert.AreEqual(true, previewResult.IsError);
+            JsonElement previewEnvelope = previewResult.StructuredContent!.Value;
+            Assert.AreEqual(
+                "aviutl_not_running",
+                previewEnvelope.GetProperty("error").GetProperty("code").GetString());
+            Assert.IsInstanceOfType<TextContentBlock>(previewResult.Content.Single());
 
             Assert.AreEqual(true, invalidTimelineResult.IsError);
             JsonElement invalidTimelineEnvelope = invalidTimelineResult.StructuredContent!.Value;

@@ -6,6 +6,7 @@
 #include "aviutl2_mcp/native_effect_request_handlers.h"
 #include "aviutl2_mcp/native_layer_view_request_handlers.h"
 #include "aviutl2_mcp/native_project_request_handler.h"
+#include "aviutl2_mcp/native_preview_request_handler.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
 #include "aviutl2_mcp/native_object_request_handler.h"
@@ -249,6 +250,7 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
         host_version_,
         get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_project_request_handler>(get_sdk_read_facade()));
+    dispatcher_.register_handler(std::make_unique<native_preview_request_handler>(get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_timeline_request_handler>(
         identity_,
         get_sdk_read_facade()));

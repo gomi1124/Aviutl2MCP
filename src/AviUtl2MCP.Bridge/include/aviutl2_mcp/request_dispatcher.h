@@ -44,6 +44,7 @@ struct operation_result final {
     std::string view_revision;
     bool retryable = false;
     bool undo_recommended = false;
+    std::vector<std::uint8_t> binary;
 };
 
 class operation_execution_context final {
@@ -122,7 +123,8 @@ private:
         const std::optional<mutation_record>& record = std::nullopt) const;
     [[nodiscard]] ipc_frame create_frame_from_json(
         const std::array<std::uint8_t, 16>& request_id,
-        const std::string& response_json) const;
+        const std::string& response_json,
+        std::vector<std::uint8_t> binary = {}) const;
     [[nodiscard]] std::future<ipc_frame> create_ready_future(ipc_frame frame) const;
 
     bridge_identity identity_;

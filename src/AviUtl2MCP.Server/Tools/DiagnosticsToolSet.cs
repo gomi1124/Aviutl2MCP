@@ -3,6 +3,7 @@ using AviUtl2MCP.Application.Contracts;
 using AviUtl2MCP.Application.Diagnostics;
 using AviUtl2MCP.Application.Errors;
 using AviUtl2MCP.Application.Instances;
+using AviUtl2MCP.Application.Previews;
 using AviUtl2MCP.Application.Requests;
 using AviUtl2MCP.Application.Results;
 using AviUtl2MCP.Application.Validation;
@@ -18,17 +19,92 @@ public sealed class DiagnosticsToolSet(
     ServerInstanceResolver instanceResolver,
     ServerRuntimeIdentity runtimeIdentity,
     LogQueryService logQueryService,
+    AviUtlPreviewService previewService,
     DiagnosticsService diagnosticsService,
     LatestDiagnosticsStore latestDiagnosticsStore)
 {
     private const int LOG_DEFAULT_TIMEOUT_MS = 2_000;
     private const int DIAGNOSE_DEFAULT_TIMEOUT_MS = 30_000;
+    private const int PREVIEW_DEFAULT_TIMEOUT_MS = 30_000;
     private readonly RequestContextFactory _requestContextFactory = requestContextFactory;
     private readonly ServerInstanceResolver _instanceResolver = instanceResolver;
     private readonly ServerRuntimeIdentity _runtimeIdentity = runtimeIdentity;
     private readonly LogQueryService _logQueryService = logQueryService;
+    private readonly AviUtlPreviewService _previewService = previewService;
     private readonly DiagnosticsService _diagnosticsService = diagnosticsService;
     private readonly LatestDiagnosticsStore _latestDiagnosticsStore = latestDiagnosticsStore;
+
+    [McpServerTool(
+        Name = "aviutl_render_preview",
+        Title = "AviUtl2 preview取得",
+        ReadOnly = true,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<PreviewData>))]
+    [Description("指定frameをPNGへ描画し、metadataとMCP image contentを返します。")]
+    public async ValueTask<CallToolResult> RenderPreviewAsync(
+        [Description("1-basedの描画frame。")] int frame,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        int? sceneId = null,
+        int? maxWidth = null,
+        int? maxHeight = null,
+        bool includeAlpha = false,
+        CancellationToken cancellationToken = default)
+    {
+        RequestContext requestContext;
+        try
+        {
+            requestContext = _requestContextFactory.CreateContext(
+                instanceId,
+                timeoutMs,
+                PREVIEW_DEFAULT_TIMEOUT_MS,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is ArgumentException or OverflowException)
+        {
+            return CreateInvalidArgumentResult<PreviewData>(
+                instanceId,
+                PREVIEW_DEFAULT_TIMEOUT_MS,
+                exception.Message,
+                cancellationToken);
+        }
+        using (requestContext)
+        {
+            RenderPreviewInput input = new()
+            {
+                InstanceId = instanceId,
+                TimeoutMs = requestContext.TimeoutMs,
+                SceneId = sceneId,
+                Frame = frame,
+                MaxWidth = maxWidth,
+                MaxHeight = maxHeight,
+                IncludeAlpha = includeAlpha,
+            };
+            try
+            {
+                RequestValidator.ValidatePreviewInput(input);
+            }
+            catch (Exception exception) when (exception is ArgumentException or OverflowException)
+            {
+                return CreateInvalidArgumentResult<PreviewData>(
+                    requestContext,
+                    exception.Message);
+            }
+            PreviewExecutionResult execution = await _previewService.RenderPreviewAsync(
+                input,
+                requestContext).ConfigureAwait(false);
+            ToolEnvelope<PreviewData> envelope = ToolResultFactory.CreateEnvelope(
+                execution.Result,
+                requestContext,
+                execution.InstanceId,
+                execution.Revision,
+                execution.ViewRevision);
+            return McpToolResultFactory.Create(envelope, execution.PngBytes, "image/png");
+        }
+    }
 
     [McpServerTool(
         Name = "aviutl_get_logs",

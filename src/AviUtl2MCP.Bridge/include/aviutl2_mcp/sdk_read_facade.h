@@ -305,6 +305,16 @@ struct sdk_view_edit_result final {
     std::string error_message;
 };
 
+struct sdk_preview_render_result final {
+    bool ok = false;
+    int frame = 0;
+    int width = 0;
+    int height = 0;
+    std::vector<std::uint8_t> rgba;
+    std::string error_code;
+    std::string error_message;
+};
+
 using sdk_batch_request_value = std::variant<
     sdk_create_request,
     sdk_object_edit_request,
@@ -388,6 +398,9 @@ public:
         const std::string& current_instance_id,
         const std::string& current_project_generation,
         bool dry_run) const noexcept;
+    [[nodiscard]] sdk_preview_render_result render_preview(
+        int frame,
+        std::uint32_t timeout_ms) const noexcept;
 
     void capture_project(PROJECT_FILE* project, bool is_load = true) noexcept;
     void set_project_loaded_callback(std::function<void()> callback);

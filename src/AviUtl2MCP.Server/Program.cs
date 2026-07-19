@@ -3,6 +3,7 @@ using AviUtl2MCP.Application.Edits;
 using AviUtl2MCP.Application.Gateways;
 using AviUtl2MCP.Application.Instances;
 using AviUtl2MCP.Application.Paging;
+using AviUtl2MCP.Application.Previews;
 using AviUtl2MCP.Application.Queries;
 using AviUtl2MCP.Application.Requests;
 using AviUtl2MCP.Application.Serialization;
@@ -40,7 +41,9 @@ builder.Services.AddSingleton<IInstanceResolver>(services =>
 builder.Services.AddSingleton<IBridgeDiagnosticsGateway, BridgeDiagnosticsGateway>();
 builder.Services.AddSingleton<IAviUtlQueryGateway, BridgeQueryGateway>();
 builder.Services.AddSingleton<IAviUtlEditGateway, BridgeEditGateway>();
+builder.Services.AddSingleton<IAviUtlPreviewGateway, BridgePreviewGateway>();
 builder.Services.AddSingleton<AviUtlEditService>();
+builder.Services.AddSingleton<AviUtlPreviewService>();
 builder.Services.AddSingleton(services => new PagingCursorCodec(
     services.GetRequiredService<ServerRuntimeIdentity>().CursorSigningKey.Span));
 builder.Services.AddSingleton(services => new AviUtlQueryService(
@@ -64,7 +67,7 @@ builder.Services.AddSingleton<ILogSource>(services =>
 builder.Services.AddSingleton(services => new LogCursorCodec(
     services.GetRequiredService<ServerRuntimeIdentity>().CursorSigningKey.Span));
 builder.Services.AddSingleton<LogQueryService>();
-builder.Services.AddSingleton<IDiagnosticSmokeProbe>(UnavailableDiagnosticSmokeProbe.Instance);
+builder.Services.AddSingleton<IDiagnosticSmokeProbe, AviUtlDiagnosticSmokeProbe>();
 builder.Services.AddSingleton<DiagnosticContextFactory>();
 builder.Services.AddSingleton<LatestDiagnosticsStore>();
 builder.Services.AddSingleton(services => new DiagnosticsService(

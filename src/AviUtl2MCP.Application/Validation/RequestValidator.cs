@@ -239,6 +239,29 @@ public static partial class RequestValidator
         }
     }
 
+    public static void ValidatePreviewInput(RenderPreviewInput input)
+    {
+        ValidateCommonInput(input);
+        if (input.SceneId.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(input.SceneId.Value);
+        }
+        ArgumentOutOfRangeException.ThrowIfLessThan(input.Frame, 1);
+        if (input.MaxWidth.HasValue != input.MaxHeight.HasValue)
+        {
+            throw new ArgumentException(
+                "maxWidth and maxHeight must be specified together.",
+                nameof(input));
+        }
+        if (input.MaxWidth.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(input.MaxWidth.Value, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(input.MaxWidth.Value, 4096);
+            ArgumentOutOfRangeException.ThrowIfLessThan(input.MaxHeight!.Value, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(input.MaxHeight.Value, 4096);
+        }
+    }
+
     public static void ValidateLocator(ObjectLocator locator)
     {
         ArgumentNullException.ThrowIfNull(locator);
