@@ -27,6 +27,7 @@
 #include "aviutl2_mcp/native_timeline_request_handlers.h"
 #include "aviutl2_mcp/pipe_security.h"
 #include "aviutl2_mcp/preview_png_encoder.h"
+#include "aviutl2_mcp/psd_codecs.h"
 #include "aviutl2_mcp/psd_contract.h"
 #include "aviutl2_mcp/request_dispatcher.h"
 #include "aviutl2_mcp/revision_tracker.h"
@@ -3435,6 +3436,59 @@ void test_gcmz_adapter_contract() {
     }, "relative GCMZDrops path was accepted");
 }
 
+void test_psd_value_and_alias_codecs() {
+    require(aviutl2_mcp::validate_psd_character_id("結月ゆかり").ok,
+        "valid UTF-8 character ID was rejected");
+    require(!aviutl2_mcp::validate_psd_character_id("bad\nname").ok,
+        "multiline character ID was accepted");
+    require(!aviutl2_mcp::validate_psd_character_id(std::string(257U, 'a')).ok,
+        "oversized character ID was accepted");
+    require(aviutl2_mcp::validate_psd_layer_state("L.0").ok
+            && aviutl2_mcp::validate_psd_layer_state("L.0 v1.opaque").ok
+            && aviutl2_mcp::validate_psd_layer_state("v0.opaque").ok,
+        "canonical PSD layer state was rejected");
+    require(!aviutl2_mcp::validate_psd_layer_state("opaque").ok
+            && !aviutl2_mcp::validate_psd_layer_state("v1.a\r\nnext").ok,
+        "non-canonical PSD layer state was accepted");
+
+    const std::string intermediate = aviutl2_mcp::create_intermediate_voice_object(
+        std::filesystem::path(L"C:\\音声\\せりふ.wav"),
+        "一行目\r\n二行目\r三行目\n四行目");
+    require(intermediate.starts_with("[0]\r\nframe=0,0\r\n[0.0]\r\n")
+            && intermediate.find("effect.name=音声ファイル\r\n") != std::string::npos
+            && intermediate.find("ファイル=C:\\音声\\せりふ.wav\r\n") != std::string::npos
+            && intermediate.find("[1]\r\nframe=0,0\r\n[1.0]\r\n") != std::string::npos
+            && intermediate.find("テキスト=一行目\\n二行目\\n三行目\\n四行目\r\n")
+                != std::string::npos
+            && intermediate.find("[2]") == std::string::npos,
+        "intermediate voice object did not preserve the exact two-object codec");
+    require_throws([] {
+        static_cast<void>(aviutl2_mcp::create_intermediate_voice_object(
+            std::filesystem::path(L"relative.wav"),
+            "text"));
+    }, "relative intermediate audio path was accepted");
+
+    const std::string subtitle_template =
+        "[Object]\r\n"
+        "frame=0,0\r\n"
+        "[Object.0]\r\n"
+        "effect.name=テキスト\r\n"
+        "テキスト=<?o={id = \"__AVIUTL2_MCP_CHARACTER_ID__\"}"
+        "require(\"PSDToolKit\").mes(o, obj)\\n?>\r\n";
+    const std::string alias = aviutl2_mcp::create_psd_subtitle_alias(
+        subtitle_template,
+        "ゆかり\\\"A");
+    require(alias.find("__AVIUTL2_MCP_CHARACTER_ID__") == std::string::npos
+            && alias.find("id = \"ゆかり\\\\\\\"A\"") != std::string::npos
+            && alias.find("require(\"PSDToolKit\").mes") != std::string::npos,
+        "subtitle alias did not replace and Lua-escape the character ID");
+    require_throws([&subtitle_template] {
+        static_cast<void>(aviutl2_mcp::create_psd_subtitle_alias(
+            subtitle_template + subtitle_template,
+            "id"));
+    }, "invalid duplicate subtitle template was accepted");
+}
+
 }  // namespace
 
 int main() {
@@ -3468,6 +3522,7 @@ int main() {
         std::pair{"PSD profile detector", &test_psd_profile_detector},
         std::pair{"PSDToolKit config reader", &test_psdtoolkit_config_reader},
         std::pair{"GCMZDrops adapter contract", &test_gcmz_adapter_contract},
+        std::pair{"PSD value and alias codecs", &test_psd_value_and_alias_codecs},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
