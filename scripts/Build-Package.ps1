@@ -244,7 +244,7 @@ try {
         -Value ("[package]`r`nid=gomi1124.AviUtl2MCP`r`nname=AviUtl2 MCP Bridge`r`ninformation=AviUtl2 MCP Bridge v$Version by gomi1124`r`nuninstallSubFolderFile=1`r`n")
     Write-Utf8NoBom `
         -Path (Join-Path $pluginStage "package.txt") `
-        -Value ("AviUtl2 MCP Bridge v$Version`r`n`r`nAviUtl2のプレビュー画面へこのpackageをD&Dして導入してください。`r`nMCP serverは別配布のzipを展開し、MCP clientへ絶対pathを設定します。`r`n")
+        -Value ("AviUtl2 MCP Bridge v$Version`r`n`r`nDrag this package onto the AviUtl2 preview window to install it.`r`nExtract the separately distributed MCP server ZIP and configure its absolute path in the MCP client.`r`n")
 
     Copy-DirectoryContents -Source $publishStage -Destination $serverStage
     Copy-RequiredFile `
