@@ -81,10 +81,12 @@ public sealed class NativeBridgeInteropTests
             IpcFrame response = await IpcFrameCodec.DecodeFrameAsync(transport, timeout.Token);
             Assert.AreEqual(requestId, response.Header.RequestId);
             Assert.AreEqual(IpcFrameOption.None, response.Header.Flags);
+            string nativeRevision;
             using (JsonDocument statusDocument = JsonDocument.Parse(response.JsonBytes))
             {
                 JsonElement status = statusDocument.RootElement;
                 Assert.IsTrue(status.GetProperty("ok").GetBoolean());
+                nativeRevision = status.GetProperty("revision").GetString()!;
                 JsonElement result = status.GetProperty("result");
                 Assert.AreEqual("ready", result.GetProperty("connectionState").GetString());
                 Assert.AreEqual("unknown", result.GetProperty("projectState").GetString());
@@ -171,6 +173,45 @@ public sealed class NativeBridgeInteropTests
                 JsonElement effects = effectDocument.RootElement;
                 Assert.IsFalse(effects.GetProperty("ok").GetBoolean());
                 Assert.AreEqual("sdk_not_available", effects.GetProperty("error").GetProperty("code").GetString());
+            }
+
+            Guid createRequestId = Guid.CreateVersion7();
+            string createRequestJson = JsonSerializer.Serialize(new
+            {
+                method = "object.create",
+                correlationId = createRequestId,
+                timeoutMs = 5000,
+                expectedRevision = nativeRevision,
+                dryRun = true,
+                @params = new
+                {
+                    effect = new { name = "Text" },
+                    placement = new
+                    {
+                        sceneId = 0,
+                        layer = 1,
+                        startFrame = 1,
+                        durationFrames = 1,
+                    },
+                },
+            });
+            IpcEncodedFrame createRequest = IpcFrameCodec.EncodeFrame(
+                IpcMessageKind.Request,
+                IpcFrameOption.None,
+                createRequestId,
+                Encoding.UTF8.GetBytes(createRequestJson),
+                []);
+            await transport.WriteAsync(createRequest.Bytes, timeout.Token);
+            IpcFrame createResponse = await IpcFrameCodec.DecodeFrameAsync(transport, timeout.Token);
+            Assert.AreEqual(createRequestId, createResponse.Header.RequestId);
+            Assert.AreEqual(IpcFrameOption.ErrorResponse, createResponse.Header.Flags);
+            using (JsonDocument createDocument = JsonDocument.Parse(createResponse.JsonBytes))
+            {
+                JsonElement create = createDocument.RootElement;
+                Assert.IsFalse(create.GetProperty("ok").GetBoolean());
+                Assert.AreEqual(
+                    "sdk_not_available",
+                    create.GetProperty("error").GetProperty("code").GetString());
             }
 
             Guid logRequestId = Guid.CreateVersion7();

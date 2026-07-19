@@ -71,6 +71,34 @@ std::atomic<sdk_read_facade*> REGISTERED_FACADE = nullptr;
     return result;
 }
 
+[[nodiscard]] std::wstring to_wide(const std::string_view value) {
+    if (value.empty()) {
+        return {};
+    }
+    const int character_count = MultiByteToWideChar(
+        CP_UTF8,
+        MB_ERR_INVALID_CHARS,
+        value.data(),
+        static_cast<int>(value.size()),
+        nullptr,
+        0);
+    if (character_count <= 0) {
+        throw std::invalid_argument("Text is not valid UTF-8");
+    }
+    std::wstring result(static_cast<std::size_t>(character_count), L'\0');
+    if (MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            value.data(),
+            static_cast<int>(value.size()),
+            result.data(),
+            character_count)
+        != character_count) {
+        throw std::runtime_error("MultiByteToWideChar failed while copying text");
+    }
+    return result;
+}
+
 [[nodiscard]] std::string copy_utf8(const LPCSTR value) {
     if (value == nullptr) {
         return {};
@@ -921,6 +949,188 @@ void copy_timeline(void* raw_context, EDIT_SECTION* edit) noexcept {
     }
 }
 
+struct object_handle_position final {
+    OBJECT_HANDLE handle;
+    OBJECT_LAYER_FRAME position;
+};
+
+[[nodiscard]] std::vector<object_handle_position> scan_object_handles(
+    EDIT_SECTION& edit,
+    const EDIT_INFO& info) {
+    if (edit.find_object == nullptr || edit.get_object_layer_frame == nullptr) {
+        throw std::runtime_error("SDK object enumeration functions are unavailable");
+    }
+    std::vector<object_handle_position> result;
+    std::size_t scanned_count = 0U;
+    for (int layer = 0; layer <= info.layer_max; ++layer) {
+        int search_frame = 0;
+        while (true) {
+            if (++scanned_count > MAXIMUM_TIMELINE_SCAN) {
+                throw std::runtime_error("SDK object scan exceeded the safety limit");
+            }
+            OBJECT_HANDLE object = edit.find_object(layer, search_frame);
+            if (object == nullptr) {
+                break;
+            }
+            const OBJECT_LAYER_FRAME position = edit.get_object_layer_frame(object);
+            if (position.layer != layer || position.start < search_frame || position.end < position.start) {
+                throw std::runtime_error("SDK object order was invalid");
+            }
+            result.push_back({object, position});
+            if (position.end == (std::numeric_limits<int>::max)()) {
+                break;
+            }
+            search_frame = position.end + 1;
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] bool overlaps_requested_range(
+    const std::vector<object_handle_position>& objects,
+    const int layer,
+    const int start,
+    const int end) noexcept {
+    return std::ranges::any_of(objects, [layer, start, end](const object_handle_position& object) {
+        return object.position.layer == layer
+            && object.position.start <= end
+            && object.position.end >= start;
+    });
+}
+
+struct create_callback_context final {
+    EDIT_HANDLE* edit_handle;
+    const sdk_create_request* request;
+    sdk_create_result* result;
+    bool dry_run;
+    bool was_called = false;
+};
+
+void create_sdk_objects(void* raw_context, EDIT_SECTION* edit) noexcept {
+    auto* context = static_cast<create_callback_context*>(raw_context);
+    context->was_called = true;
+    try {
+        if (edit == nullptr || edit->info == nullptr) {
+            throw std::runtime_error("SDK create callback omitted edit information");
+        }
+        const sdk_create_request& request = *context->request;
+        const EDIT_INFO& info = *edit->info;
+        if (request.scene_id != info.scene_id) {
+            context->result->error_code = "invalid_argument";
+            context->result->error_message = "The requested scene is not the active SDK edit scene";
+            return;
+        }
+        const int sdk_layer = request.layer - 1;
+        const int sdk_frame = request.start_frame - 1;
+        const int sdk_end = sdk_frame + request.length - 1;
+        if (edit->get_layer_lock != nullptr && edit->get_layer_lock(sdk_layer)) {
+            context->result->error_code = "edit_not_available";
+            context->result->error_message = "The destination layer is locked";
+            return;
+        }
+        const std::vector<object_handle_position> before = scan_object_handles(*edit, info);
+        if (overlaps_requested_range(before, sdk_layer, sdk_frame, sdk_end)) {
+            context->result->error_code = "object_collision";
+            context->result->error_message = "The destination range overlaps an existing object";
+            return;
+        }
+
+        std::wstring wide_source;
+        if (request.kind != sdk_create_kind::alias) {
+            wide_source = to_wide(request.source);
+        }
+        if (request.kind == sdk_create_kind::media) {
+            if (edit->is_support_media_file == nullptr
+                || !edit->is_support_media_file(wide_source.c_str(), true)) {
+                context->result->error_code = "invalid_media_file";
+                context->result->error_message = "The media file is not supported by AviUtl2";
+                return;
+            }
+        }
+        if (context->dry_run) {
+            context->result->ok = true;
+            return;
+        }
+
+        OBJECT_HANDLE created = nullptr;
+        switch (request.kind) {
+            case sdk_create_kind::effect:
+                if (edit->create_object == nullptr) {
+                    throw std::runtime_error("SDK effect object creation is unavailable");
+                }
+                created = edit->create_object(
+                    wide_source.c_str(), sdk_layer, sdk_frame, request.length);
+                break;
+            case sdk_create_kind::media:
+                if (edit->create_object_from_media_file == nullptr) {
+                    throw std::runtime_error("SDK media object creation is unavailable");
+                }
+                created = edit->create_object_from_media_file(
+                    wide_source.c_str(), sdk_layer, sdk_frame, request.length);
+                break;
+            case sdk_create_kind::alias:
+                if (edit->create_object_from_alias == nullptr) {
+                    throw std::runtime_error("SDK alias object creation is unavailable");
+                }
+                created = edit->create_object_from_alias(
+                    request.source.c_str(), sdk_layer, sdk_frame, request.length);
+                break;
+        }
+        if (created == nullptr) {
+            context->result->error_code = "object_collision";
+            context->result->error_message = "AviUtl2 rejected object creation";
+            return;
+        }
+        context->result->has_changed = true;
+        if (request.name.has_value()) {
+            if (edit->set_object_name == nullptr) {
+                throw std::runtime_error("SDK object naming is unavailable");
+            }
+            const std::wstring wide_name = to_wide(*request.name);
+            edit->set_object_name(created, wide_name.c_str());
+        }
+
+        std::vector<object_handle_position> created_objects;
+        if (request.kind == sdk_create_kind::alias) {
+            const std::vector<object_handle_position> after = scan_object_handles(*edit, info);
+            for (const object_handle_position& object : after) {
+                if (std::ranges::none_of(before, [&object](const object_handle_position& previous) {
+                        return previous.handle == object.handle;
+                    })) {
+                    created_objects.push_back(object);
+                }
+            }
+        } else {
+            created_objects.push_back({created, edit->get_object_layer_frame(created)});
+        }
+        if (created_objects.empty()) {
+            throw std::runtime_error("SDK creation succeeded without an observable object");
+        }
+        const std::vector<OBJECT_HANDLE> selected_objects = copy_selected_objects(*edit);
+        context->result->objects.reserve(created_objects.size());
+        for (const object_handle_position& object : created_objects) {
+            context->result->objects.push_back(copy_object_snapshot(
+                *context->edit_handle,
+                *edit,
+                info,
+                object.handle,
+                object.position,
+                selected_objects,
+                true));
+        }
+        context->result->ok = true;
+    } catch (const std::invalid_argument& exception) {
+        context->result->error_code = "invalid_argument";
+        context->result->error_message = exception.what();
+    } catch (const std::exception& exception) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = exception.what();
+    } catch (...) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = "SDK object creation failed with an unknown exception";
+    }
+}
+
 void capture_loaded_project(PROJECT_FILE* project) noexcept {
     sdk_read_facade* facade = REGISTERED_FACADE.load();
     if (facade != nullptr) {
@@ -1661,6 +1871,150 @@ sdk_effect_items_query_result sdk_read_facade::query_effect_items(
             .ok = false,
             .error_code = "sdk_query_failed",
             .error_message = "SDK effect item query failed with an unknown exception",
+        };
+    }
+}
+
+sdk_create_result sdk_read_facade::create_objects(
+    const sdk_create_request& request,
+    const bool dry_run) const noexcept {
+    const std::int64_t sdk_end = static_cast<std::int64_t>(request.start_frame)
+        + static_cast<std::int64_t>(request.length) - 1;
+    if (request.source.empty() || request.source.find('\0') != std::string::npos
+        || request.scene_id < 0 || request.layer < 1 || request.start_frame < 1
+        || request.length < 1 || sdk_end > (std::numeric_limits<int>::max)()
+        || (request.name.has_value() && request.name->find('\0') != std::string::npos)) {
+        return {
+            .ok = false,
+            .error_code = "invalid_argument",
+            .error_message = "Object creation parameters are outside the supported range",
+        };
+    }
+    if (request.kind == sdk_create_kind::alias
+        && (request.source.size() > MAXIMUM_ALIAS_BYTES
+            || request.source.find("[Object]") == std::string::npos)) {
+        return {
+            .ok = false,
+            .error_code = "invalid_argument",
+            .error_message = "Object alias data is invalid or exceeds the supported limit",
+        };
+    }
+    if (request.kind == sdk_create_kind::effect) {
+        const sdk_effect_catalog_query_result catalog = query_effects(sdk_effect_catalog_query{
+            .name_contains = request.source,
+            .limit = MAXIMUM_CATALOG_PAGE_ITEMS,
+        });
+        if (!catalog.ok) {
+            return {
+                .ok = false,
+                .error_code = catalog.error_code,
+                .error_message = catalog.error_message,
+            };
+        }
+        const std::size_t exact_matches = static_cast<std::size_t>(std::ranges::count_if(
+            catalog.catalog.effects,
+            [&request](const sdk_effect_definition& effect) {
+                return effect.name == request.source && effect.is_creatable;
+            }));
+        if (exact_matches != 1U) {
+            return {
+                .ok = false,
+                .error_code = "invalid_effect_item",
+                .error_message = exact_matches == 0U
+                    ? "The effect definition is not creatable"
+                    : "The effect definition is ambiguous",
+            };
+        }
+    }
+
+    const sdk_status_snapshot status = query_status();
+    if (!status.is_sdk_ready) {
+        return {
+            .ok = false,
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available",
+        };
+    }
+    if (status.has_query_error) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = status.query_error,
+        };
+    }
+    if (status.project_state != sdk_project_state::saved
+        && status.project_state != sdk_project_state::unsaved) {
+        return {
+            .ok = false,
+            .error_code = "project_not_open",
+            .error_message = "No AviUtl2 project is open",
+        };
+    }
+    if (status.edit_state != sdk_edit_state::edit) {
+        return {
+            .ok = false,
+            .error_code = "edit_not_available",
+            .error_message = "AviUtl2 is not currently editable",
+        };
+    }
+
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr || edit_handle->call_read_section_param == nullptr
+        || (!dry_run && edit_handle->call_edit_section_param == nullptr)) {
+        return {
+            .ok = false,
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit section is not available",
+        };
+    }
+
+    sdk_create_result result;
+    create_callback_context callback_context{
+        .edit_handle = edit_handle,
+        .request = &request,
+        .result = &result,
+        .dry_run = dry_run,
+    };
+    try {
+        const bool was_scheduled = dry_run
+            ? edit_handle->call_read_section_param(&callback_context, &create_sdk_objects)
+            : edit_handle->call_edit_section_param(&callback_context, &create_sdk_objects);
+        if (!was_scheduled) {
+            return {
+                .ok = false,
+                .error_code = dry_run ? "read_not_available" : "edit_not_available",
+                .error_message = dry_run
+                    ? "AviUtl2 rejected the creation preflight read section"
+                    : "AviUtl2 rejected the object edit section",
+            };
+        }
+        if (!callback_context.was_called) {
+            return {
+                .ok = false,
+                .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 did not invoke the object creation callback",
+            };
+        }
+        if (!result.ok && result.error_code.empty()) {
+            result.error_code = "sdk_query_failed";
+            result.error_message = "Object creation failed without an SDK error classification";
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = exception.what(),
+        };
+    } catch (...) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = "SDK object creation failed with an unknown exception",
         };
     }
 }

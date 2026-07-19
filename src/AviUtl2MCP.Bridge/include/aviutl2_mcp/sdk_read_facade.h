@@ -194,6 +194,30 @@ struct sdk_effect_items_query_result final {
     std::string error_message;
 };
 
+enum class sdk_create_kind {
+    effect,
+    media,
+    alias,
+};
+
+struct sdk_create_request final {
+    sdk_create_kind kind;
+    std::string source;
+    int scene_id;
+    int layer;
+    int start_frame;
+    int length;
+    std::optional<std::string> name;
+};
+
+struct sdk_create_result final {
+    bool ok = false;
+    bool has_changed = false;
+    std::vector<sdk_object_snapshot> objects;
+    std::string error_code;
+    std::string error_message;
+};
+
 class sdk_read_facade final {
 public:
     sdk_read_facade() = default;
@@ -219,6 +243,9 @@ public:
     [[nodiscard]] sdk_effect_items_query_result query_effect_items(
         const std::string& effect_name,
         bool include_choices) const noexcept;
+    [[nodiscard]] sdk_create_result create_objects(
+        const sdk_create_request& request,
+        bool dry_run) const noexcept;
 
     void capture_project(PROJECT_FILE* project, bool is_load = true) noexcept;
     void set_project_loaded_callback(std::function<void()> callback);

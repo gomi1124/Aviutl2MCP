@@ -10,6 +10,7 @@
 #include "aviutl2_mcp/locator_resolver.h"
 #include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_capabilities_request_handler.h"
+#include "aviutl2_mcp/native_create_request_handler.h"
 #include "aviutl2_mcp/native_effect_request_handlers.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
@@ -38,6 +39,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <mutex>
 #include <span>
 #include <stdexcept>
@@ -204,10 +206,20 @@ private:
     const std::array<std::uint8_t, 16>& request_id,
     const std::string& method,
     const std::string& correlation_id,
-    const std::string& params = "{}") {
-    const std::string json = "{\"method\":\"" + method
-        + "\",\"correlationId\":\"" + correlation_id
-        + "\",\"timeoutMs\":5000,\"dryRun\":false,\"params\":" + params + "}";
+    const std::string& params = "{}",
+    const std::optional<std::string>& expected_revision = std::nullopt,
+    const bool dry_run = false) {
+    nlohmann::json document{
+        {"method", method},
+        {"correlationId", correlation_id},
+        {"timeoutMs", 5000},
+        {"dryRun", dry_run},
+        {"params", nlohmann::json::parse(params)},
+    };
+    if (expected_revision.has_value()) {
+        document["expectedRevision"] = *expected_revision;
+    }
+    const std::string json = document.dump();
     aviutl2_mcp::ipc_frame frame{
         .header = aviutl2_mcp::frame_header{
             .kind = aviutl2_mcp::message_kind::request,
@@ -260,6 +272,13 @@ private:
 };
 
 struct fake_sdk_state final {
+    struct created_object final {
+        int handle = 0;
+        OBJECT_LAYER_FRAME position{};
+        std::string alias;
+        std::wstring name;
+    };
+
     HOST_APP_TABLE host{};
     EDIT_HANDLE edit_handle{};
     EDIT_SECTION edit_section{};
@@ -282,6 +301,8 @@ struct fake_sdk_state final {
     bool should_throw_edit_state = false;
     bool has_duplicate_effect_name = false;
     bool is_read_active = false;
+    std::array<created_object, 8> created_objects{};
+    std::size_t created_object_count = 0U;
 };
 
 fake_sdk_state* ACTIVE_FAKE_SDK = nullptr;
@@ -319,6 +340,25 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
     return true;
 }
 
+[[nodiscard]] bool call_fake_edit_section(
+    void* parameter,
+    void (*callback)(void*, EDIT_SECTION*)) {
+    ACTIVE_FAKE_SDK->is_read_active = true;
+    callback(parameter, &ACTIVE_FAKE_SDK->edit_section);
+    ACTIVE_FAKE_SDK->is_read_active = false;
+    return true;
+}
+
+[[nodiscard]] fake_sdk_state::created_object* find_created_object(const OBJECT_HANDLE object) {
+    for (std::size_t index = 0U; index < ACTIVE_FAKE_SDK->created_object_count; ++index) {
+        fake_sdk_state::created_object& candidate = ACTIVE_FAKE_SDK->created_objects[index];
+        if (object == &candidate.handle) {
+            return &candidate;
+        }
+    }
+    return nullptr;
+}
+
 [[nodiscard]] LPCWSTR get_fake_project_path() {
     return ACTIVE_FAKE_SDK->project_path.c_str();
 }
@@ -340,6 +380,9 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
     if (object == &ACTIVE_FAKE_SDK->second_object) {
         return {.layer = 3, .start = 20, .end = 29};
     }
+    if (fake_sdk_state::created_object* created = find_created_object(object)) {
+        return created->position;
+    }
     return {.layer = -1, .start = -1, .end = -1};
 }
 
@@ -349,17 +392,28 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
 
 [[nodiscard]] OBJECT_HANDLE find_fake_object(const int layer, const int frame) {
     require(ACTIVE_FAKE_SDK->is_read_active, "fake object handle was used outside a read callback");
-    if (layer == 1 && frame <= 9) {
-        return &ACTIVE_FAKE_SDK->first_object;
+    OBJECT_HANDLE result = nullptr;
+    int result_start = (std::numeric_limits<int>::max)();
+    const auto consider = [&](const OBJECT_HANDLE object, const OBJECT_LAYER_FRAME position) {
+        if (position.layer == layer && position.end >= frame && position.start < result_start) {
+            result = object;
+            result_start = position.start;
+        }
+    };
+    consider(&ACTIVE_FAKE_SDK->first_object, {.layer = 1, .start = 9, .end = 19});
+    consider(&ACTIVE_FAKE_SDK->second_object, {.layer = 3, .start = 20, .end = 29});
+    for (std::size_t index = 0U; index < ACTIVE_FAKE_SDK->created_object_count; ++index) {
+        fake_sdk_state::created_object& created = ACTIVE_FAKE_SDK->created_objects[index];
+        consider(&created.handle, created.position);
     }
-    if (layer == 3 && frame <= 20) {
-        return &ACTIVE_FAKE_SDK->second_object;
-    }
-    return nullptr;
+    return result;
 }
 
 [[nodiscard]] LPCSTR get_fake_object_alias(const OBJECT_HANDLE object) {
     require(ACTIVE_FAKE_SDK->is_read_active, "fake alias was read outside a read callback");
+    if (fake_sdk_state::created_object* created = find_created_object(object)) {
+        return created->alias.c_str();
+    }
     return object == &ACTIVE_FAKE_SDK->first_object ? ACTIVE_FAKE_SDK->first_alias.c_str()
         : object == &ACTIVE_FAKE_SDK->second_object ? ACTIVE_FAKE_SDK->second_alias.c_str()
         : nullptr;
@@ -367,6 +421,9 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
 
 [[nodiscard]] LPCWSTR get_fake_object_name(const OBJECT_HANDLE object) {
     require(ACTIVE_FAKE_SDK->is_read_active, "fake object name was read outside a read callback");
+    if (fake_sdk_state::created_object* created = find_created_object(object)) {
+        return created->name.empty() ? nullptr : created->name.c_str();
+    }
     return object == &ACTIVE_FAKE_SDK->first_object ? ACTIVE_FAKE_SDK->first_name.c_str()
         : object == &ACTIVE_FAKE_SDK->second_object ? ACTIVE_FAKE_SDK->second_name.c_str()
         : nullptr;
@@ -392,6 +449,9 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
         std::ranges::copy_n(source.begin(), copy_count, effects);
         return copy_count;
     };
+    if (find_created_object(object) != nullptr) {
+        return copy_effects(first_effects);
+    }
     return object == &ACTIVE_FAKE_SDK->first_object ? copy_effects(first_effects)
         : object == &ACTIVE_FAKE_SDK->second_object ? copy_effects(second_effects)
         : 0;
@@ -543,6 +603,85 @@ void enumerate_fake_palettes(void* parameter, void (*callback)(void*, LPCWSTR)) 
     return layer == 3;
 }
 
+[[nodiscard]] fake_sdk_state::created_object* add_created_object(
+    const int layer,
+    const int frame,
+    const int length,
+    std::string alias) {
+    require(ACTIVE_FAKE_SDK->created_object_count < ACTIVE_FAKE_SDK->created_objects.size(),
+        "fake SDK created object capacity was exceeded");
+    fake_sdk_state::created_object& object =
+        ACTIVE_FAKE_SDK->created_objects[ACTIVE_FAKE_SDK->created_object_count++];
+    object.handle = 100 + static_cast<int>(ACTIVE_FAKE_SDK->created_object_count);
+    object.position = {.layer = layer, .start = frame, .end = frame + length - 1};
+    object.alias = std::move(alias);
+    object.name.clear();
+    return &object;
+}
+
+[[nodiscard]] OBJECT_HANDLE create_fake_effect_object(
+    const LPCWSTR effect,
+    const int layer,
+    const int frame,
+    const int length) {
+    if (effect == nullptr || std::wstring_view(effect) != L"Text") {
+        return nullptr;
+    }
+    return &add_created_object(layer, frame, length, "[Object]\r\neffect.name=Text\r\n")->handle;
+}
+
+[[nodiscard]] bool is_fake_supported_media(const LPCWSTR file, const bool strict) {
+    static_cast<void>(strict);
+    return file != nullptr && std::wstring_view(file).ends_with(L".wav");
+}
+
+[[nodiscard]] OBJECT_HANDLE create_fake_media_object(
+    const LPCWSTR file,
+    const int layer,
+    const int frame,
+    const int length) {
+    if (!is_fake_supported_media(file, true)) {
+        return nullptr;
+    }
+    std::string alias = "[Object]\r\nfile=C:\\Media\\created.wav\r\n";
+    return &add_created_object(layer, frame, length, std::move(alias))->handle;
+}
+
+[[nodiscard]] OBJECT_HANDLE create_fake_alias_object(
+    const LPCSTR alias,
+    const int layer,
+    const int frame,
+    const int length) {
+    if (alias == nullptr) {
+        return nullptr;
+    }
+    const std::string source(alias);
+    std::size_t object_count = 0U;
+    std::size_t offset = 0U;
+    while ((offset = source.find("[Object]", offset)) != std::string::npos) {
+        ++object_count;
+        offset += 8U;
+    }
+    if (object_count == 0U) {
+        return nullptr;
+    }
+    fake_sdk_state::created_object* first = nullptr;
+    for (std::size_t index = 0U; index < object_count; ++index) {
+        fake_sdk_state::created_object* created = add_created_object(
+            layer + static_cast<int>(index), frame, length, source);
+        if (first == nullptr) {
+            first = created;
+        }
+    }
+    return &first->handle;
+}
+
+void set_fake_object_name(const OBJECT_HANDLE object, const LPCWSTR name) {
+    if (fake_sdk_state::created_object* created = find_created_object(object)) {
+        created->name = name == nullptr ? L"" : name;
+    }
+}
+
 void configure_fake_sdk(fake_sdk_state& state) {
     ACTIVE_FAKE_SDK = &state;
     state.edit_info = {
@@ -569,6 +708,7 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_handle.get_edit_info = &get_fake_edit_info;
     state.edit_handle.get_edit_state = &get_fake_edit_state;
     state.edit_handle.call_read_section_param = &call_fake_read_section;
+    state.edit_handle.call_edit_section_param = &call_fake_edit_section;
     state.edit_handle.enum_effect_name = &enumerate_fake_effect_names;
     state.edit_handle.enum_module_info = &enumerate_fake_modules;
     state.edit_handle.enum_effect_item = &enumerate_fake_effect_items;
@@ -590,6 +730,11 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_section.get_effect_enable = &get_fake_effect_enable;
     state.edit_section.get_effect_lock = &get_fake_effect_lock;
     state.edit_section.get_effect_item_value = &get_fake_effect_item_value;
+    state.edit_section.create_object = &create_fake_effect_object;
+    state.edit_section.is_support_media_file = &is_fake_supported_media;
+    state.edit_section.create_object_from_media_file = &create_fake_media_object;
+    state.edit_section.create_object_from_alias = &create_fake_alias_object;
+    state.edit_section.set_object_name = &set_fake_object_name;
     state.project_file.get_project_file_path = &get_fake_project_path;
     state.host.create_edit_handle = &create_fake_edit_handle;
     state.host.register_project_load_handler = &register_fake_project_load_handler;
@@ -1901,6 +2046,188 @@ void test_native_query_request_handlers() {
     ACTIVE_FAKE_SDK = nullptr;
 }
 
+void test_native_create_request_handlers() {
+    fake_sdk_state fake;
+    configure_fake_sdk(fake);
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "create handler fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_create_request_handler>(
+        identity, facade, "object.create", aviutl2_mcp::sdk_create_kind::effect));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_create_request_handler>(
+        identity, facade, "object.createMedia", aviutl2_mcp::sdk_create_kind::media));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_create_request_handler>(
+        identity, facade, "object.createAlias", aviutl2_mcp::sdk_create_kind::alias));
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string initial_revision = dispatcher.revisions().content_revision();
+    const std::string effect_params = nlohmann::json{
+        {"effect", {{"name", "Text"}}},
+        {"placement", {
+            {"sceneId", 7},
+            {"layer", 6},
+            {"startFrame", 31},
+            {"endFrame", 40},
+        }},
+        {"name", "Created text"},
+    }.dump();
+
+    const nlohmann::json dry_run = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 71U),
+            "object.create",
+            correlation_id,
+            effect_params,
+            initial_revision,
+            true),
+        identity.instance_id).get()));
+    require(dry_run.at("ok").get<bool>()
+            && dry_run.at("result").contains("plannedChanges")
+            && !dry_run.at("result").contains("object")
+            && fake.created_object_count == 0U
+            && dispatcher.revisions().content_revision() == initial_revision,
+        "native create dry-run changed SDK or revision state");
+
+    const nlohmann::json created_effect = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 72U),
+            "object.create",
+            correlation_id,
+            effect_params,
+            initial_revision),
+        identity.instance_id).get()));
+    require(created_effect.at("ok").get<bool>()
+            && created_effect.at("result").at("object").at("name") == "Created text"
+            && created_effect.at("result").at("object").at("layer") == 6
+            && created_effect.at("result").at("object").at("startFrame") == 31
+            && created_effect.at("result").contains("appliedChanges")
+            && fake.created_object_count == 1U
+            && created_effect.at("revision") != initial_revision,
+        "native effect create did not return the created object and new revision");
+
+    const std::string second_revision = created_effect.at("revision").get<std::string>();
+    const std::string media_params = nlohmann::json{
+        {"mediaPath", "C:\\Media\\voice.wav"},
+        {"placement", {
+            {"sceneId", 7},
+            {"layer", 7},
+            {"startFrame", 31},
+            {"durationFrames", 10},
+        }},
+    }.dump();
+    const nlohmann::json stale_media = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 73U),
+            "object.createMedia",
+            correlation_id,
+            media_params,
+            initial_revision),
+        identity.instance_id).get()));
+    require(!stale_media.at("ok").get<bool>()
+            && stale_media.at("error").at("code") == "revision_conflict"
+            && fake.created_object_count == 1U,
+        "native media create accepted a stale revision");
+
+    const nlohmann::json created_media = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 74U),
+            "object.createMedia",
+            correlation_id,
+            media_params,
+            second_revision),
+        identity.instance_id).get()));
+    require(created_media.at("ok").get<bool>()
+            && created_media.at("result").at("object").at("mediaPath")
+                == "C:\\Media\\created.wav"
+            && fake.created_object_count == 2U,
+        "native media create did not validate and create the media object");
+
+    const std::string third_revision = created_media.at("revision").get<std::string>();
+    const std::string alias_params = nlohmann::json{
+        {"alias", "[Object]\r\neffect.name=Text\r\n[Object]\r\neffect.name=Text\r\n"},
+        {"placement", {
+            {"sceneId", 7},
+            {"layer", 8},
+            {"startFrame", 41},
+            {"durationFrames", 10},
+        }},
+    }.dump();
+    const auto alias_request_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 75U);
+    const aviutl2_mcp::ipc_frame alias_frame = create_request_frame(
+        alias_request_id,
+        "object.createAlias",
+        correlation_id,
+        alias_params,
+        third_revision);
+    const nlohmann::json created_alias = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        alias_frame,
+        identity.instance_id).get()));
+    require(created_alias.at("ok").get<bool>()
+            && created_alias.at("result").at("objects").size() == 2U
+            && fake.created_object_count == 4U,
+        "native alias create did not return every created object");
+    const std::size_t count_after_alias = fake.created_object_count;
+    const nlohmann::json replayed_alias = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        alias_frame,
+        identity.instance_id).get()));
+    require(replayed_alias == created_alias && fake.created_object_count == count_after_alias,
+        "native alias create did not preserve at-most-once behavior");
+
+    const std::string collision_params = nlohmann::json{
+        {"effect", {{"name", "Text"}}},
+        {"placement", {
+            {"sceneId", 7},
+            {"layer", 6},
+            {"startFrame", 35},
+            {"durationFrames", 2},
+        }},
+    }.dump();
+    const nlohmann::json collision = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 76U),
+            "object.create",
+            correlation_id,
+            collision_params,
+            created_alias.at("revision").get<std::string>(),
+            true),
+        identity.instance_id).get()));
+    require(!collision.at("ok").get<bool>()
+            && collision.at("error").at("code") == "object_collision",
+        "native create preflight missed an object collision");
+
+    const std::string partial_params = nlohmann::json{
+        {"effect", {{"name", "Text"}}},
+        {"placement", {
+            {"sceneId", 7},
+            {"layer", 10},
+            {"startFrame", 51},
+            {"durationFrames", 2},
+        }},
+    }.dump();
+    fake.edit_section.get_effect_list = nullptr;
+    const std::string revision_before_partial = dispatcher.revisions().content_revision();
+    const nlohmann::json partial = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 77U),
+            "object.create",
+            correlation_id,
+            partial_params,
+            revision_before_partial),
+        identity.instance_id).get()));
+    require(!partial.at("ok").get<bool>()
+            && partial.at("error").at("code") == "partial_operation"
+            && partial.at("error").at("outcome") == "partial"
+            && partial.at("error").at("undoRecommended").get<bool>()
+            && partial.at("revision") != revision_before_partial,
+        "native create did not classify a failed postcondition after mutation as partial");
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -1926,6 +2253,7 @@ int main() {
         std::pair{"native log request handler", &test_native_log_request_handler},
         std::pair{"SDK read facade", &test_sdk_read_facade},
         std::pair{"native query request handlers", &test_native_query_request_handlers},
+        std::pair{"native create request handlers", &test_native_create_request_handlers},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
