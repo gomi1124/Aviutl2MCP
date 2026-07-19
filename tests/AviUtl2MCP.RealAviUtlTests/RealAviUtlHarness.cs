@@ -31,6 +31,7 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
     private const uint SMTO_ABORTIFHUNG = 0x00000002;
     private readonly string sourceProjectHash;
     private readonly DateTime processStartTimeUtc;
+    private readonly List<string> acceptanceTestIds = [];
     private string? beforeRevision;
     private string? afterRevision;
     private string? beforePreviewPath;
@@ -91,6 +92,29 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(exception);
         recordedFailure ??= exception;
+    }
+
+    public void RecordAcceptanceTestIds(params string[] testIds)
+    {
+        ArgumentNullException.ThrowIfNull(testIds);
+        foreach (string testId in testIds)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(testId);
+            if (testId.Length > 128 || testId.Any(character =>
+                    character is not (>= 'a' and <= 'z')
+                    and not (>= '0' and <= '9')
+                    and not '.'
+                    and not '-'))
+            {
+                throw new ArgumentException(
+                    "Acceptance test IDs must use lowercase ASCII letters, digits, dots, and hyphens.",
+                    nameof(testIds));
+            }
+            if (!acceptanceTestIds.Contains(testId, StringComparer.Ordinal))
+            {
+                acceptanceTestIds.Add(testId);
+            }
+        }
     }
 
     public void RecordRevision(string revision)
@@ -466,7 +490,7 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
             StringComparison.Ordinal);
         string testStatus = recordedFailure is null ? "pass" : "fail";
         string checksPath = Path.Combine(evidenceDirectory, "checks.json");
-        object[] checks =
+        List<object> checks =
         [
             new
             {
@@ -502,6 +526,28 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
                 },
             },
         ];
+        string acceptanceStatus = recordedFailure is null && isSourceUnchanged
+            ? "pass"
+            : "fail";
+        foreach (string testId in acceptanceTestIds)
+        {
+            string testIdStatus = string.Equals(
+                testId,
+                "real.fixture-process-guard",
+                StringComparison.Ordinal)
+                ? isSourceUnchanged ? "pass" : "fail"
+                : acceptanceStatus;
+            checks.Add(new
+            {
+                name = testId,
+                status = testIdStatus,
+                evidence = new[]
+                {
+                    $"setupCorrelationId={SetupCorrelationId:D}",
+                    $"instanceId={InstanceId:D}",
+                },
+            });
+        }
         await File.WriteAllTextAsync(
             checksPath,
             JsonSerializer.Serialize(checks, INDENTED_JSON_OPTIONS),
@@ -555,7 +601,7 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
             "-Command",
             "real.aviutl2-harness",
             "-ExitCode",
-            recordedFailure is null ? "0" : "1");
+            acceptanceStatus == "pass" ? "0" : "1");
         if (beforeRevision is not null)
         {
             AddArguments(startInfo, "-BeforeRevision", beforeRevision);

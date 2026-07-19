@@ -19,7 +19,10 @@ public sealed class RealEditLifecycleTests
     [TestCategory("RealAviUtl2")]
     [TestProperty("TestId", "real.object-create-three-ways")]
     [TestProperty("TestId", "real.object-edit-lifecycle")]
+    [TestProperty("TestId", "app.dry-run-no-change")]
+    [TestProperty("TestId", "app.revision-conflict")]
     [TestProperty("TestId", "real.batch-single-undo")]
+    [TestProperty("TestId", "smoke.before-after-diff")]
     [Timeout(240_000)]
     public async Task RealAviUtlCreatesEditsBatchesAndDeletesIsolatedObjects()
     {
@@ -40,6 +43,14 @@ public sealed class RealEditLifecycleTests
                     "mcp-real-silence.wav");
                 CreateSilentWave(mediaPath);
             });
+        harness.RecordAcceptanceTestIds(
+            "real.object-create-three-ways",
+            "real.object-edit-lifecycle",
+            "app.dry-run-no-change",
+            "app.revision-conflict",
+            "real.batch-single-undo",
+            "smoke.before-after-diff",
+            "real.fixture-process-guard");
         try
         {
             InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());

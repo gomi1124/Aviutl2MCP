@@ -22,6 +22,10 @@ public sealed class RealReadPreviewDiagnosticTests
 
     [TestMethod]
     [TestCategory("RealAviUtl2")]
+    [TestProperty("TestId", "real.timeline-read")]
+    [TestProperty("TestId", "real.preview-image")]
+    [TestProperty("TestId", "smoke.before-after-diff")]
+    [TestProperty("TestId", "bridge.render-lifetime-stress")]
     [Timeout(180_000)]
     public async Task RealAviUtlReadsRendersAndDiagnosesIsolatedFixture()
     {
@@ -32,6 +36,12 @@ public sealed class RealReadPreviewDiagnosticTests
 
         using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
         await using RealAviUtlHarness harness = await RealAviUtlHarness.StartAsync(timeout.Token);
+        harness.RecordAcceptanceTestIds(
+            "real.timeline-read",
+            "real.preview-image",
+            "smoke.before-after-diff",
+            "bridge.render-lifetime-stress",
+            "real.fixture-process-guard");
         try
         {
         StdioClientTransport transport = new(new StdioClientTransportOptions
@@ -158,6 +168,7 @@ public sealed class RealReadPreviewDiagnosticTests
 
     [TestMethod]
     [TestCategory("RealAviUtl2")]
+    [TestProperty("TestId", "real.psd-setup")]
     [Timeout(180_000)]
     public async Task RealAviUtlCreatesPsdSetupInIsolatedFixture()
     {
@@ -168,6 +179,9 @@ public sealed class RealReadPreviewDiagnosticTests
 
         using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
         await using RealAviUtlHarness harness = await RealAviUtlHarness.StartAsync(timeout.Token);
+        harness.RecordAcceptanceTestIds(
+            "real.psd-setup",
+            "real.fixture-process-guard");
         try
         {
             InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
@@ -274,6 +288,7 @@ public sealed class RealReadPreviewDiagnosticTests
 
     [TestMethod]
     [TestCategory("RealAviUtl2")]
+    [TestProperty("TestId", "real.psd-character-layer")]
     [Timeout(180_000)]
     public async Task RealAviUtlRoundTripsPsdCharacterAndLayerInIsolatedFixture()
     {
@@ -284,6 +299,9 @@ public sealed class RealReadPreviewDiagnosticTests
 
         using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
         await using RealAviUtlHarness harness = await RealAviUtlHarness.StartAsync(timeout.Token);
+        harness.RecordAcceptanceTestIds(
+            "real.psd-character-layer",
+            "real.fixture-process-guard");
         try
         {
             InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
@@ -404,6 +422,9 @@ public sealed class RealReadPreviewDiagnosticTests
 
         using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
         await using RealAviUtlHarness harness = await RealAviUtlHarness.StartAsync(timeout.Token);
+        harness.RecordAcceptanceTestIds(
+            "real.psd-create",
+            "real.fixture-process-guard");
         try
         {
             InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
@@ -510,6 +531,10 @@ public sealed class RealReadPreviewDiagnosticTests
         await using RealAviUtlHarness harness = await RealAviUtlHarness.StartAsync(
             timeout.Token,
             AddLipSyncLabEffect);
+        harness.RecordAcceptanceTestIds(
+            "real.psd-voice-subtitle",
+            "real.psd-lipsync-lab",
+            "real.fixture-process-guard");
         try
         {
             InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());

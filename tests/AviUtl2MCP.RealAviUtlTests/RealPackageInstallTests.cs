@@ -33,6 +33,9 @@ public sealed class RealPackageInstallTests
         using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
         await using RealAviUtlHarness harness = await RealAviUtlHarness.StartAsync(
             timeout.Token);
+        harness.RecordAcceptanceTestIds(
+            "real.package-install",
+            "real.fixture-process-guard");
         try
         {
             InstanceDescriptorWatcher watcher = new(GetDescriptorDirectory());
