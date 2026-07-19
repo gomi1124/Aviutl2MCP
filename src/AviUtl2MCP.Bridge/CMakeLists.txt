@@ -10,12 +10,17 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/ipc_header.cpp
   src/locator_resolver.cpp
   src/named_pipe_server.cpp
+  src/native_capabilities_request_handler.cpp
   src/native_ipc_frame_codec.cpp
   src/native_log_request_handler.cpp
+  src/native_operation_result.cpp
+  src/native_project_request_handler.cpp
   src/native_ring_logger.cpp
+  src/native_status_request_handler.cpp
   src/pipe_security.cpp
   src/request_dispatcher.cpp
   src/revision_tracker.cpp
+  src/sdk_read_facade.cpp
 )
 
 target_include_directories(AviUtl2MCP.Bridge.Core

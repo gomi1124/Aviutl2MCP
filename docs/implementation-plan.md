@@ -9,6 +9,7 @@
 - 完了証拠: [受け入れテスト対応表](acceptance-test-matrix.md)の33 AC
 - M1証拠: locked restore、C# 8 project build、native `.aux2` build、28 tool schema conformance、C#/C++ 40-byte header golden vector
 - M2進捗: 2026-07-19 WP2～WP4完了。plugin lifecycle、atomic descriptor、logon SID＋SYSTEM pipe ACL、frame/handshake、dispatcher、Command gate、cancel、at-most-once、revision、locatorを実装。Native 16 checkと.NET 61 test（実`.aux2` load/C# named-pipe相互運用を含む）で検証済み
+- WP5進捗: W5.1～W5.2完了。必須`RegisterPlugin` export、SDK read facade、load/save callback内project path copy、例外境界、`status.get`・`capabilities.get`・`project.get`を実装。保存済み/未保存/notOpen、1-based座標変換、28操作能力、実`.aux2`相互運用をNative 20 checkと.NET 98 testで検証済み
 - WP9進捗: W9.1～W9.3 logging基盤・3ログ源統合完了。serverのPID別stderr/JSONL、native制限ring/AviUtl `LOG_HANDLE`、共通診断項目、相関ID、秘密値mask、server→bridge→aviutlの安定順page、HMAC-SHA256署名cursor、期限・query・世代照合、部分障害warningをNative 18 checkと.NET 84 testで検証済み
 - WP9 diagnostics進捗: W9.4 context/rules完了。接続・process identity、project/edit state、core version、GCMZDrops Mutex/FMO/API v3/HWND-PID、PSDToolKit2 effect/alias、既知log、read/preview smokeを独立評価し、rule例外隔離・子UUIDv7相関ID・根拠件数/長さ制限を.NET 95 testで検証済み
 - WP9 public進捗: W9.5 logs/diagnose tool公開完了。read-only/closed-world注釈、5分TTLの署名cursor、structured success/tool error、入力schema、runner所有process・UUIDv7 tempだけをcleanupするstdio black-boxを.NET 98 testで検証済み

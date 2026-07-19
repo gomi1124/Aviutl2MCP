@@ -9,16 +9,21 @@
 #include "aviutl2_mcp/ipc_header.h"
 #include "aviutl2_mcp/locator_resolver.h"
 #include "aviutl2_mcp/named_pipe_server.h"
+#include "aviutl2_mcp/native_capabilities_request_handler.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
+#include "aviutl2_mcp/native_project_request_handler.h"
 #include "aviutl2_mcp/native_ring_logger.h"
+#include "aviutl2_mcp/native_status_request_handler.h"
 #include "aviutl2_mcp/pipe_security.h"
 #include "aviutl2_mcp/request_dispatcher.h"
 #include "aviutl2_mcp/revision_tracker.h"
+#include "aviutl2_mcp/sdk_read_facade.h"
 
 #include <Windows.h>
 
 #include "logger2.h"
+#include "plugin2.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -250,6 +255,120 @@ private:
     bool is_mutating_;
     function_type execute_;
 };
+
+struct fake_sdk_state final {
+    HOST_APP_TABLE host{};
+    EDIT_HANDLE edit_handle{};
+    EDIT_SECTION edit_section{};
+    EDIT_INFO edit_info{};
+    PROJECT_FILE project_file{};
+    std::wstring project_path = L"D:\\Video\\fixture.aup2";
+    std::wstring scene_name = L"Main";
+    int edit_state = EDIT_HANDLE::EDIT_STATE_EDIT;
+    int first_object = 1;
+    int second_object = 2;
+    void (*project_load_handler)(PROJECT_FILE*) = nullptr;
+    void (*project_save_handler)(PROJECT_FILE*) = nullptr;
+    bool should_throw_edit_state = false;
+};
+
+fake_sdk_state* ACTIVE_FAKE_SDK = nullptr;
+
+[[nodiscard]] EDIT_HANDLE* create_fake_edit_handle() {
+    return &ACTIVE_FAKE_SDK->edit_handle;
+}
+
+void register_fake_project_load_handler(void (*handler)(PROJECT_FILE*)) {
+    ACTIVE_FAKE_SDK->project_load_handler = handler;
+}
+
+void register_fake_project_save_handler(void (*handler)(PROJECT_FILE*)) {
+    ACTIVE_FAKE_SDK->project_save_handler = handler;
+}
+
+void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
+    require(info != nullptr && info_size == sizeof(EDIT_INFO), "fake SDK received invalid edit info storage");
+    *info = ACTIVE_FAKE_SDK->edit_info;
+}
+
+[[nodiscard]] int get_fake_edit_state() {
+    if (ACTIVE_FAKE_SDK->should_throw_edit_state) {
+        throw std::runtime_error("fake edit state failure");
+    }
+    return ACTIVE_FAKE_SDK->edit_state;
+}
+
+[[nodiscard]] bool call_fake_read_section(
+    void* parameter,
+    void (*callback)(void*, EDIT_SECTION*)) {
+    callback(parameter, &ACTIVE_FAKE_SDK->edit_section);
+    return true;
+}
+
+[[nodiscard]] LPCWSTR get_fake_project_path() {
+    return ACTIVE_FAKE_SDK->project_path.c_str();
+}
+
+[[nodiscard]] int get_fake_selected_object_count() {
+    return 2;
+}
+
+[[nodiscard]] OBJECT_HANDLE get_fake_selected_object(const int index) {
+    return index == 0 ? &ACTIVE_FAKE_SDK->first_object
+        : index == 1 ? &ACTIVE_FAKE_SDK->second_object
+        : nullptr;
+}
+
+[[nodiscard]] OBJECT_LAYER_FRAME get_fake_object_position(const OBJECT_HANDLE object) {
+    if (object == &ACTIVE_FAKE_SDK->first_object) {
+        return {.layer = 1, .start = 9, .end = 19};
+    }
+    if (object == &ACTIVE_FAKE_SDK->second_object) {
+        return {.layer = 3, .start = 20, .end = 29};
+    }
+    return {.layer = -1, .start = -1, .end = -1};
+}
+
+[[nodiscard]] LPCWSTR get_fake_scene_name() {
+    return ACTIVE_FAKE_SDK->scene_name.c_str();
+}
+
+void configure_fake_sdk(fake_sdk_state& state) {
+    ACTIVE_FAKE_SDK = &state;
+    state.edit_info = {
+        .width = 1920,
+        .height = 1080,
+        .rate = 30'000,
+        .scale = 1'001,
+        .sample_rate = 48'000,
+        .frame = 14,
+        .layer = 1,
+        .frame_max = 299,
+        .layer_max = 9,
+        .display_frame_start = 0,
+        .display_layer_start = 0,
+        .display_frame_num = 100,
+        .display_layer_num = 10,
+        .select_range_start = 10,
+        .select_range_end = 20,
+        .grid_bpm_tempo = 120.0F,
+        .grid_bpm_beat = 4,
+        .grid_bpm_offset = 0.0F,
+        .scene_id = 7,
+    };
+    state.edit_handle.get_edit_info = &get_fake_edit_info;
+    state.edit_handle.get_edit_state = &get_fake_edit_state;
+    state.edit_handle.call_read_section_param = &call_fake_read_section;
+    state.edit_section.info = &state.edit_info;
+    state.edit_section.get_selected_object_num = &get_fake_selected_object_count;
+    state.edit_section.get_selected_object = &get_fake_selected_object;
+    state.edit_section.get_object_layer_frame = &get_fake_object_position;
+    state.edit_section.get_scene_name = &get_fake_scene_name;
+    state.project_file.get_project_file_path = &get_fake_project_path;
+    state.host.create_edit_handle = &create_fake_edit_handle;
+    state.host.register_project_load_handler = &register_fake_project_load_handler;
+    state.host.register_project_save_handler = &register_fake_project_save_handler;
+}
 
 void test_bridge_version() {
     require(
@@ -1040,6 +1159,159 @@ void test_native_log_request_handler() {
     dispatcher.stop();
 }
 
+void test_sdk_read_facade() {
+    fake_sdk_state fake;
+    configure_fake_sdk(fake);
+    aviutl2_mcp::sdk_read_facade facade;
+
+    require(facade.register_host(&fake.host), "SDK facade rejected a complete host table");
+    require(fake.project_load_handler != nullptr && fake.project_save_handler != nullptr,
+        "SDK facade did not register project callbacks");
+    fake.project_load_handler(&fake.project_file);
+
+    const aviutl2_mcp::sdk_status_snapshot saved_status = facade.query_status();
+    require(saved_status.is_sdk_ready && !saved_status.has_query_error,
+        "SDK facade did not report a healthy SDK");
+    require(saved_status.project_state == aviutl2_mcp::sdk_project_state::saved,
+        "SDK facade did not distinguish a saved project");
+    require(saved_status.edit_state == aviutl2_mcp::sdk_edit_state::edit,
+        "SDK facade did not map the edit state");
+    require(saved_status.project_path == "D:\\Video\\fixture.aup2",
+        "SDK facade did not copy the project path as UTF-8");
+
+    fake.project_path = L"D:\\Video\\mutated.aup2";
+    require(facade.query_status().project_path == "D:\\Video\\fixture.aup2",
+        "SDK facade retained a callback-owned project path pointer");
+
+    const aviutl2_mcp::sdk_project_query_result project = facade.query_project(true);
+    require(project.ok, "SDK facade failed to copy a readable project");
+    require(project.project.width == 1920 && project.project.height == 1080,
+        "SDK facade copied incorrect project dimensions");
+    require(project.project.current_frame == 15 && project.project.current_scene_id == 7,
+        "SDK facade did not convert the current frame to the public coordinate system");
+    require(project.project.selected_layers == std::vector<int>({2, 4}),
+        "SDK facade did not copy selected layers");
+    require(project.project.selection.has_value()
+            && project.project.selection->start_frame == 11
+            && project.project.selection->end_frame == 21,
+        "SDK facade did not copy the selected frame range");
+    require(project.project.scenes.size() == 1U
+            && project.project.scenes[0].scene_id == 7
+            && project.project.scenes[0].name == "Main",
+        "SDK facade did not copy the current scene");
+
+    fake.project_path.clear();
+    fake.project_save_handler(&fake.project_file);
+    require(facade.query_status().project_state == aviutl2_mcp::sdk_project_state::unsaved,
+        "SDK facade did not distinguish an unsaved project");
+    fake.project_load_handler(nullptr);
+    require(facade.query_status().project_state == aviutl2_mcp::sdk_project_state::not_open,
+        "SDK facade did not distinguish a missing project");
+    require(facade.query_project(true).error_code == "project_not_open",
+        "SDK facade returned an empty success for a missing project");
+
+    fake.project_path = L"D:\\Video\\fixture.aup2";
+    fake.project_load_handler(&fake.project_file);
+    fake.should_throw_edit_state = true;
+    const aviutl2_mcp::sdk_status_snapshot failed_status = facade.query_status();
+    require(failed_status.has_query_error && failed_status.edit_state == aviutl2_mcp::sdk_edit_state::unknown,
+        "SDK facade allowed an SDK exception to escape its boundary");
+    fake.should_throw_edit_state = false;
+
+    facade.detach();
+    require(!facade.query_status().is_sdk_ready, "SDK facade retained the edit handle after detach");
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
+void test_native_query_request_handlers() {
+    fake_sdk_state fake;
+    configure_fake_sdk(fake);
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "query handler fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_status_request_handler>(
+        identity,
+        "2003300",
+        facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_capabilities_request_handler>(
+        "2003300",
+        facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_project_request_handler>(facade));
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+
+    const nlohmann::json status = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 51U),
+            "status.get",
+            correlation_id),
+        identity.instance_id).get()));
+    require(status.at("ok").get<bool>(), "native status query failed");
+    require(status.at("result").at("connectionState") == "ready"
+            && status.at("result").at("projectState") == "saved"
+            && status.at("result").at("editState") == "edit",
+        "native status query returned incorrect state");
+    require(status.at("result").at("selectedInstance") == identity.instance_id
+            && status.at("result").at("instances").size() == 1U,
+        "native status query omitted the selected instance");
+
+    const nlohmann::json capabilities = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 52U),
+            "capabilities.get",
+            correlation_id),
+        identity.instance_id).get()));
+    require(capabilities.at("ok").get<bool>(), "native capabilities query failed");
+    const nlohmann::json& operations = capabilities.at("result").at("operations");
+    require(operations.size() == 28U, "native capabilities query did not return all 28 operations");
+    const auto find_operation = [&operations](const std::string& name) -> const nlohmann::json& {
+        const auto match = std::ranges::find_if(operations, [&name](const nlohmann::json& operation) {
+            return operation.at("name") == name;
+        });
+        if (match == operations.end()) {
+            throw std::runtime_error("native capabilities omitted an operation");
+        }
+        return *match;
+    };
+    require(find_operation("aviutl_get_project").at("available").get<bool>(),
+        "native capabilities disabled a readable project");
+    require(!find_operation("aviutl_psd_create").at("available").get<bool>()
+            && find_operation("aviutl_psd_create").at("reason") == "gcmzdrops_not_available",
+        "native capabilities claimed an unprobed GCMZDrops integration");
+    require(capabilities.at("result").at("versions").at("sdk") == "2003300"
+            && capabilities.at("result").at("limits").at("pagingCursorTtlSeconds") == 300,
+        "native capabilities returned incorrect versions or limits");
+
+    const nlohmann::json project = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 53U),
+            "project.get",
+            correlation_id,
+            R"({"includeScenes":true})"),
+        identity.instance_id).get()));
+    require(project.at("ok").get<bool>(), "native project query failed");
+    require(project.at("result").at("path") == "D:\\Video\\fixture.aup2"
+            && project.at("result").at("currentFrame") == 15
+            && project.at("result").at("coordinateSystem").at("frameBase") == 1,
+        "native project query returned an invalid public DTO");
+
+    const nlohmann::json invalid = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 54U),
+            "project.get",
+            correlation_id,
+            R"({"includeScenes":"yes"})"),
+        identity.instance_id).get()));
+    require(!invalid.at("ok").get<bool>() && invalid.at("error").at("code") == "invalid_argument",
+        "native project query accepted an invalid includeScenes value");
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -1062,6 +1334,8 @@ int main() {
         std::pair{"request dispatcher cancellation", &test_request_dispatcher_cancellation},
         std::pair{"native ring logger and host sink", &test_native_ring_logger_and_host_sink},
         std::pair{"native log request handler", &test_native_log_request_handler},
+        std::pair{"SDK read facade", &test_sdk_read_facade},
+        std::pair{"native query request handlers", &test_native_query_request_handlers},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

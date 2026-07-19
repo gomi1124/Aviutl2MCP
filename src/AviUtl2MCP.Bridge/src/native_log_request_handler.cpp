@@ -1,5 +1,6 @@
 #include "aviutl2_mcp/native_log_request_handler.h"
 
+#include "aviutl2_mcp/native_operation_result.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 
 #include <nlohmann/json.hpp>
@@ -19,21 +20,6 @@ namespace {
 constexpr std::size_t DEFAULT_LOG_LIMIT = 100U;
 constexpr std::size_t MAXIMUM_LOG_LIMIT = 2000U;
 constexpr std::string_view CURSOR_PREFIX = "bridge:";
-
-[[nodiscard]] operation_result create_failure(
-    const std::string& code,
-    const std::string& message,
-    operation_execution_context& context) {
-    return operation_result{
-        .ok = false,
-        .outcome = "unchanged",
-        .result_json = {},
-        .error_code = code,
-        .error_message = message,
-        .revision = context.revisions().content_revision(),
-        .view_revision = context.revisions().view_revision(),
-    };
-}
 
 [[nodiscard]] std::optional<std::uint64_t> parse_cursor(const nlohmann::json& params) {
     const auto cursor = params.find("cursor");
@@ -310,19 +296,11 @@ operation_result native_log_request_handler::execute(
                 : nlohmann::json(nullptr)},
             {"isTruncated", snapshot.is_truncated},
         };
-        return operation_result{
-            .ok = true,
-            .outcome = "completed",
-            .result_json = result.dump(),
-            .error_code = {},
-            .error_message = {},
-            .revision = context.revisions().content_revision(),
-            .view_revision = context.revisions().view_revision(),
-        };
+        return create_native_success(result.dump(), context);
     } catch (const nlohmann::json::exception&) {
-        return create_failure("invalid_argument", "Log query JSON is invalid", context);
+        return create_native_failure("invalid_argument", "Log query JSON is invalid", context);
     } catch (const std::invalid_argument& exception) {
-        return create_failure("invalid_argument", exception.what(), context);
+        return create_native_failure("invalid_argument", exception.what(), context);
     }
 }
 

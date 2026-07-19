@@ -31,6 +31,9 @@ public sealed class NativeBridgeInteropTests
         Assert.IsTrue(
             NativeLibrary.TryGetExport(module, "InitializeLogger", out _),
             "Native bridge did not export InitializeLogger.");
+        Assert.IsTrue(
+            NativeLibrary.TryGetExport(module, "RegisterPlugin", out _),
+            "Native bridge did not export the required RegisterPlugin entry point.");
         InitializePlugin initialize = Marshal.GetDelegateForFunctionPointer<InitializePlugin>(
             NativeLibrary.GetExport(module, "InitializePlugin"));
         UninitializePlugin uninitialize = Marshal.GetDelegateForFunctionPointer<UninitializePlugin>(
@@ -77,8 +80,46 @@ public sealed class NativeBridgeInteropTests
             await transport.WriteAsync(request.Bytes, timeout.Token);
             IpcFrame response = await IpcFrameCodec.DecodeFrameAsync(transport, timeout.Token);
             Assert.AreEqual(requestId, response.Header.RequestId);
-            Assert.AreEqual(IpcFrameOption.ErrorResponse, response.Header.Flags);
-            StringAssert.Contains(Encoding.UTF8.GetString(response.JsonBytes.Span), "operation_not_supported");
+            Assert.AreEqual(IpcFrameOption.None, response.Header.Flags);
+            using (JsonDocument statusDocument = JsonDocument.Parse(response.JsonBytes))
+            {
+                JsonElement status = statusDocument.RootElement;
+                Assert.IsTrue(status.GetProperty("ok").GetBoolean());
+                JsonElement result = status.GetProperty("result");
+                Assert.AreEqual("ready", result.GetProperty("connectionState").GetString());
+                Assert.AreEqual("unknown", result.GetProperty("projectState").GetString());
+                Assert.AreEqual(descriptor.InstanceId, result.GetProperty("selectedInstance").GetGuid());
+                Assert.IsTrue(result.GetProperty("components").EnumerateArray().Any(component =>
+                    component.GetProperty("name").GetString() == "sdk"
+                    && component.GetProperty("status").GetString() == "unavailable"));
+            }
+
+            Guid capabilitiesRequestId = Guid.CreateVersion7();
+            string capabilitiesRequestJson = JsonSerializer.Serialize(new
+            {
+                method = "capabilities.get",
+                correlationId = capabilitiesRequestId,
+                timeoutMs = 5000,
+                dryRun = false,
+                @params = new { },
+            });
+            IpcEncodedFrame capabilitiesRequest = IpcFrameCodec.EncodeFrame(
+                IpcMessageKind.Request,
+                IpcFrameOption.None,
+                capabilitiesRequestId,
+                Encoding.UTF8.GetBytes(capabilitiesRequestJson),
+                []);
+            await transport.WriteAsync(capabilitiesRequest.Bytes, timeout.Token);
+            IpcFrame capabilitiesResponse = await IpcFrameCodec.DecodeFrameAsync(transport, timeout.Token);
+            Assert.AreEqual(capabilitiesRequestId, capabilitiesResponse.Header.RequestId);
+            Assert.AreEqual(IpcFrameOption.None, capabilitiesResponse.Header.Flags);
+            using (JsonDocument capabilitiesDocument = JsonDocument.Parse(capabilitiesResponse.JsonBytes))
+            {
+                JsonElement capabilities = capabilitiesDocument.RootElement.GetProperty("result");
+                Assert.AreEqual(28, capabilities.GetProperty("operations").GetArrayLength());
+                Assert.IsTrue(capabilities.GetProperty("versions").GetProperty("sdk").ValueKind
+                    == JsonValueKind.Null);
+            }
 
             Guid logRequestId = Guid.CreateVersion7();
             string logRequestJson = JsonSerializer.Serialize(new
@@ -110,7 +151,7 @@ public sealed class NativeBridgeInteropTests
             JsonElement entries = logDocument.RootElement.GetProperty("result").GetProperty("entries");
             Assert.IsTrue(entries.GetArrayLength() >= 1, "The correlated bridge log was not returned.");
             Assert.IsTrue(entries.EnumerateArray().Any(entry =>
-                entry.GetProperty("eventId").GetString() == "request.rejected"));
+                entry.GetProperty("eventId").GetString() == "request.completed"));
         }
         finally
         {
