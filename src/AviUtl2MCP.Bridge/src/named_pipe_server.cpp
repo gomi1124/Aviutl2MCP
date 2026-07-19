@@ -1,5 +1,6 @@
 #include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_ring_logger.h"
+#include "aviutl2_mcp/native_log_request_handler.h"
 
 #include "aviutl2_mcp/handshake.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
@@ -220,7 +221,9 @@ private:
 named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_version)
     : identity_(std::move(identity)),
       host_version_(std::move(host_version)),
-      dispatcher_(identity_) {}
+      dispatcher_(identity_) {
+    dispatcher_.register_handler(std::make_unique<native_log_request_handler>());
+}
 
 named_pipe_server::~named_pipe_server() {
     stop();

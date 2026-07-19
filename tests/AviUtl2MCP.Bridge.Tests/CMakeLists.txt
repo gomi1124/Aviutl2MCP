@@ -7,6 +7,7 @@ target_link_libraries(AviUtl2MCP.Bridge.Tests PRIVATE AviUtl2MCP.Bridge.Core)
 target_include_directories(AviUtl2MCP.Bridge.Tests SYSTEM
   PRIVATE
     "${PROJECT_SOURCE_DIR}/external/aviutl2_sdk/include/aviutl2_sdk"
+    "${PROJECT_SOURCE_DIR}/external/nlohmann_json/single_include"
 )
 
 if(MSVC)

@@ -13,6 +13,7 @@ public sealed class NativeBridgeInteropTests
 {
     private const string NATIVE_BRIDGE_PATH_VARIABLE = "AVIUTL2_MCP_NATIVE_BRIDGE_PATH";
     private const uint TEST_HOST_VERSION = 2003300;
+    private static readonly string[] BRIDGE_LOG_SOURCES = ["bridge"];
 
     [TestMethod]
     public async Task NativePluginExportsDescriptorAndCompletesCSharpHandshake()
@@ -78,6 +79,38 @@ public sealed class NativeBridgeInteropTests
             Assert.AreEqual(requestId, response.Header.RequestId);
             Assert.AreEqual(IpcFrameOption.ErrorResponse, response.Header.Flags);
             StringAssert.Contains(Encoding.UTF8.GetString(response.JsonBytes.Span), "operation_not_supported");
+
+            Guid logRequestId = Guid.CreateVersion7();
+            string logRequestJson = JsonSerializer.Serialize(new
+            {
+                method = "logs.get",
+                correlationId = logRequestId,
+                timeoutMs = 5000,
+                dryRun = false,
+                @params = new
+                {
+                    sources = BRIDGE_LOG_SOURCES,
+                    correlationId = requestId,
+                    limit = 10,
+                },
+            });
+            IpcEncodedFrame logRequest = IpcFrameCodec.EncodeFrame(
+                IpcMessageKind.Request,
+                IpcFrameOption.None,
+                logRequestId,
+                Encoding.UTF8.GetBytes(logRequestJson),
+                []);
+            await transport.WriteAsync(logRequest.Bytes, timeout.Token);
+            IpcFrame logResponse = await IpcFrameCodec.DecodeFrameAsync(transport, timeout.Token);
+
+            Assert.AreEqual(logRequestId, logResponse.Header.RequestId);
+            Assert.AreEqual(IpcFrameOption.None, logResponse.Header.Flags);
+            using JsonDocument logDocument = JsonDocument.Parse(logResponse.JsonBytes);
+            Assert.IsTrue(logDocument.RootElement.GetProperty("ok").GetBoolean());
+            JsonElement entries = logDocument.RootElement.GetProperty("result").GetProperty("entries");
+            Assert.IsTrue(entries.GetArrayLength() >= 1, "The correlated bridge log was not returned.");
+            Assert.IsTrue(entries.EnumerateArray().Any(entry =>
+                entry.GetProperty("eventId").GetString() == "request.rejected"));
         }
         finally
         {

@@ -24,6 +24,7 @@ enum class native_log_level {
 struct native_log_entry final {
     std::uint64_t sequence;
     std::string timestamp_utc;
+    std::int64_t timestamp_unix_ms;
     native_log_level level;
     std::string source;
     std::string component;
@@ -47,6 +48,7 @@ struct native_log_context final {
 struct native_log_query final {
     std::size_t limit = 100U;
     std::optional<std::uint64_t> after_sequence;
+    std::optional<std::int64_t> since_unix_ms;
     std::optional<std::string> correlation_id;
     std::optional<std::string> component;
     std::vector<native_log_level> levels;

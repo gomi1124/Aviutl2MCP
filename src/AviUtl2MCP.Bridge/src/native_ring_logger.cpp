@@ -15,8 +15,9 @@
 namespace aviutl2_mcp {
 namespace {
 
-constexpr std::size_t MAXIMUM_QUERY_LIMIT = 1000U;
+constexpr std::size_t MAXIMUM_QUERY_LIMIT = 2000U;
 constexpr std::size_t MAXIMUM_HOST_MESSAGE_CHARS = 1023U;
+constexpr std::uint64_t WINDOWS_TO_UNIX_EPOCH_100NS = 116444736000000000ULL;
 
 [[nodiscard]] std::string mask_sensitive_text(const std::string_view value) {
     static const std::regex bearer_pattern(
@@ -114,9 +115,18 @@ constexpr std::size_t MAXIMUM_HOST_MESSAGE_CHARS = 1023U;
     return value;
 }
 
-[[nodiscard]] std::string current_timestamp_utc() {
+struct native_timestamp final {
+    std::string text;
+    std::int64_t unix_ms;
+};
+
+[[nodiscard]] native_timestamp current_timestamp_utc() {
+    FILETIME file_time{};
+    GetSystemTimePreciseAsFileTime(&file_time);
     SYSTEMTIME time{};
-    GetSystemTime(&time);
+    if (FileTimeToSystemTime(&file_time, &time) == FALSE) {
+        throw std::runtime_error("failed to convert native log timestamp");
+    }
     std::array<char, 25> buffer{};
     const int written = std::snprintf(
         buffer.data(),
@@ -132,7 +142,20 @@ constexpr std::size_t MAXIMUM_HOST_MESSAGE_CHARS = 1023U;
     if (written != static_cast<int>(buffer.size() - 1U)) {
         throw std::runtime_error("failed to format native log timestamp");
     }
-    return std::string(buffer.data(), static_cast<std::size_t>(written));
+    ULARGE_INTEGER ticks{};
+    ticks.LowPart = file_time.dwLowDateTime;
+    ticks.HighPart = file_time.dwHighDateTime;
+    if (ticks.QuadPart < WINDOWS_TO_UNIX_EPOCH_100NS) {
+        throw std::runtime_error("native log timestamp predates the Unix epoch");
+    }
+    const std::uint64_t unix_ms = (ticks.QuadPart - WINDOWS_TO_UNIX_EPOCH_100NS) / 10000ULL;
+    if (unix_ms > static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
+        throw std::runtime_error("native log timestamp is outside the supported range");
+    }
+    return {
+        .text = std::string(buffer.data(), static_cast<std::size_t>(written)),
+        .unix_ms = static_cast<std::int64_t>(unix_ms),
+    };
 }
 
 [[nodiscard]] bool includes_level(
@@ -219,9 +242,11 @@ void native_ring_logger::write(
         host_message += L" " + ring_message_wide;
         host_message = truncate_message(std::move(host_message));
 
+        const native_timestamp timestamp = current_timestamp_utc();
         native_log_entry entry{
             .sequence = 0U,
-            .timestamp_utc = current_timestamp_utc(),
+            .timestamp_utc = timestamp.text,
+            .timestamp_unix_ms = timestamp.unix_ms,
             .level = level,
             .source = "bridge",
             .component = std::string(component),
@@ -273,6 +298,9 @@ native_log_snapshot native_ring_logger::snapshot(const native_log_query& query) 
     result.has_evicted_entries = has_evicted_entries_;
     for (const native_log_entry& entry : entries_) {
         if (query.after_sequence.has_value() && entry.sequence <= *query.after_sequence) {
+            continue;
+        }
+        if (query.since_unix_ms.has_value() && entry.timestamp_unix_ms < *query.since_unix_ms) {
             continue;
         }
         if (query.correlation_id.has_value() && entry.correlation_id != query.correlation_id) {

@@ -10,6 +10,7 @@
 #include "aviutl2_mcp/locator_resolver.h"
 #include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
+#include "aviutl2_mcp/native_log_request_handler.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/pipe_security.h"
 #include "aviutl2_mcp/request_dispatcher.h"
@@ -18,6 +19,7 @@
 #include <Windows.h>
 
 #include "logger2.h"
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
@@ -949,6 +951,95 @@ void test_native_ring_logger_and_host_sink() {
         "native log accepted a zero capacity");
 }
 
+void test_native_log_request_handler() {
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_log_request_handler>());
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string request_correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    aviutl2_mcp::get_native_logger().write(
+        aviutl2_mcp::native_log_level::warning,
+        "diagnostics-test",
+        "fixture.warning",
+        "password=secret native log fixture",
+        {.correlation_id = correlation_id});
+    aviutl2_mcp::get_native_logger().write(
+        aviutl2_mcp::native_log_level::error,
+        "diagnostics-test",
+        "fixture.error",
+        "second native log fixture",
+        {.correlation_id = correlation_id});
+
+    const auto first_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 41U);
+    const std::string params = nlohmann::json{
+        {"sources", {"bridge"}},
+        {"levels", {"warning", "error"}},
+        {"correlationId", correlation_id},
+        {"limit", 1},
+    }.dump();
+    const auto first_response = dispatcher.dispatch(
+        create_request_frame(first_id, "logs.get", request_correlation_id, params),
+        identity.instance_id).get();
+    const nlohmann::json first = nlohmann::json::parse(get_json(first_response));
+    require(first.at("ok").get<bool>(), "native log request failed");
+    require(first.at("result").at("entries").size() == 1U, "native log limit was ignored");
+    require(first.at("result").at("isTruncated").get<bool>(), "native log truncation was omitted");
+    require(first.at("result").at("entries")[0].at("message").get<std::string>().find("secret")
+            == std::string::npos,
+        "native log query exposed a secret");
+    require(first.at("result").at("entries")[0].at("correlationId") == correlation_id,
+        "native log query omitted correlation ID");
+    const std::string cursor = first.at("result").at("nextCursor").get<std::string>();
+
+    const auto second_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 42U);
+    const std::string second_params = nlohmann::json{
+        {"sources", {"bridge"}},
+        {"correlationId", correlation_id},
+        {"limit", 1},
+        {"cursor", cursor},
+    }.dump();
+    const nlohmann::json second = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(second_id, "logs.get", request_correlation_id, second_params),
+        identity.instance_id).get()));
+    require(second.at("result").at("entries").size() == 1U,
+        "native log cursor did not return the next page");
+    require(!second.at("result").at("isTruncated").get<bool>(),
+        "native log final page was truncated");
+
+    const auto invalid_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 43U);
+    const nlohmann::json invalid = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(invalid_id, "logs.get", request_correlation_id, "{\"limit\":0}"),
+        identity.instance_id).get()));
+    require(!invalid.at("ok").get<bool>()
+            && invalid.at("error").at("code") == "invalid_argument",
+        "native log handler accepted an invalid limit");
+
+    const auto future_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 44U);
+    const std::string future_params = nlohmann::json{
+        {"sources", {"bridge"}},
+        {"correlationId", correlation_id},
+        {"since", "9999-12-31T23:59:59.9999999+00:00"},
+    }.dump();
+    const nlohmann::json future = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(future_id, "logs.get", request_correlation_id, future_params),
+        identity.instance_id).get()));
+    require(future.at("result").at("entries").empty(),
+        "native log handler ignored the since timestamp");
+
+    const auto malformed_since_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 45U);
+    const nlohmann::json malformed_since = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            malformed_since_id,
+            "logs.get",
+            request_correlation_id,
+            "{\"since\":\"2026-07-19\"}"),
+        identity.instance_id).get()));
+    require(!malformed_since.at("ok").get<bool>()
+            && malformed_since.at("error").at("code") == "invalid_argument",
+        "native log handler accepted an invalid since timestamp");
+    dispatcher.stop();
+}
+
 }  // namespace
 
 int main() {
@@ -970,6 +1061,7 @@ int main() {
         std::pair{"request dispatcher and at-most-once", &test_request_dispatcher_and_at_most_once},
         std::pair{"request dispatcher cancellation", &test_request_dispatcher_cancellation},
         std::pair{"native ring logger and host sink", &test_native_ring_logger_and_host_sink},
+        std::pair{"native log request handler", &test_native_log_request_handler},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
