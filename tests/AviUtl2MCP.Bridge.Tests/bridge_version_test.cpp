@@ -4195,11 +4195,15 @@ void test_native_psd_voice_request_handler() {
         }.dump();
     };
     write_config(false, true);
-    std::error_code canonical_lab_error;
-    const std::filesystem::path canonical_lab_path =
-        std::filesystem::canonical(lab_path, canonical_lab_error);
-    require(!canonical_lab_error,
-        "PSD voice LAB fixture path could not be canonicalized");
+    const auto canonicalize_fixture = [](const std::filesystem::path& path) {
+        std::error_code error;
+        const std::filesystem::path canonical = std::filesystem::canonical(path, error);
+        require(!error, "PSD voice fixture path could not be canonicalized");
+        return canonical;
+    };
+    const std::filesystem::path canonical_audio_path = canonicalize_fixture(audio_path);
+    const std::filesystem::path canonical_text_path = canonicalize_fixture(text_path);
+    const std::filesystem::path canonical_lab_path = canonicalize_fixture(lab_path);
 
     fake_sdk_state fake;
     fake.has_psd_effects = true;
@@ -4335,7 +4339,7 @@ void test_native_psd_voice_request_handler() {
             && created.at("result").at("subtitleObjects").size() == 1U
             && created.at("result").at("appliedChanges").size() == 3U
             && created.at("result").at("companionFiles").at("audioPath")
-                == audio_path.string()
+                == canonical_audio_path.string()
             && created.at("revision") != initial_revision
             && created.at("viewRevision") != initial_view_revision
             && fake.psd_voice_character_id == "alice"
@@ -4361,10 +4365,15 @@ void test_native_psd_voice_request_handler() {
 
     const std::string intermediate_revision = dispatcher.revisions().content_revision();
     write_config(true, false);
-    gcmz->on_send = [&fake, &audio_path, &text_path](
+    gcmz->on_send = [
+        &fake,
+        &audio_path,
+        &canonical_audio_path,
+        &canonical_text_path](
         const aviutl2_mcp::gcmz_drop_request& request) {
         require(request.layer == 8 && request.files.size() == 2U
-                && request.files[0] == audio_path && request.files[1] == text_path,
+                && request.files[0] == canonical_audio_path
+                && request.files[1] == canonical_text_path,
             "PSD voice direct route did not send the same-basename WAV/TXT pair");
         fake.has_psd_voice_object = true;
         fake.psd_voice_character_id = "inferred";
