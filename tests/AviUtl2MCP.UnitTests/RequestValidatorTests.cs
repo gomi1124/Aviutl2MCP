@@ -8,6 +8,37 @@ namespace AviUtl2MCP.UnitTests;
 public sealed class RequestValidatorTests
 {
     [TestMethod]
+    [TestProperty("TestId", "fuzz.input-boundaries")]
+    public void ValidateBoundaryRejectionsDoNotPoisonSubsequentStatusValidation()
+    {
+        // Arrange
+        const string oversizedUtf8 = "日本語";
+        IReadOnlyList<int> oversizedCollection = [1, 2, 3];
+        string oversizedPath = @"C:\" + new string('a', 32_768);
+        GetStatusInput validStatus = new();
+
+        // Act
+        Action utf8Action = () => RequestValidator.ValidateString(
+            oversizedUtf8,
+            nameof(oversizedUtf8),
+            maxCharacters: 3,
+            maxUtf8Bytes: 8);
+        Action collectionAction = () => RequestValidator.ValidateCollectionCount(
+            oversizedCollection,
+            nameof(oversizedCollection),
+            minimum: 1,
+            maximum: 2);
+        Action pathAction = () => RequestValidator.NormalizePath(oversizedPath);
+        Action statusAction = () => RequestValidator.ValidateCommonInput(validStatus);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(utf8Action);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(collectionAction);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(pathAction);
+        statusAction();
+    }
+
+    [TestMethod]
     public void ValidateCommonInputRejectsTimeoutOutsideContract()
     {
         // Arrange

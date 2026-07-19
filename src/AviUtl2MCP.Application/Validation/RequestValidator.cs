@@ -412,7 +412,18 @@ public static partial class RequestValidator
             throw new ArgumentException("Path must not contain NUL.", nameof(path));
         }
 
-        string normalizedPath = Path.GetFullPath(path);
+        string normalizedPath;
+        try
+        {
+            normalizedPath = Path.GetFullPath(path);
+        }
+        catch (PathTooLongException)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(path),
+                path.Length,
+                "Path is too long.");
+        }
         if (normalizedPath.Length > MAX_PATH_LENGTH)
         {
             throw new ArgumentOutOfRangeException(nameof(path), normalizedPath.Length, "Normalized path is too long.");
