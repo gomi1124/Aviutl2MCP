@@ -431,7 +431,25 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
         }
         if (Directory.Exists(normalizedRuntime))
         {
-            Directory.Delete(normalizedRuntime, recursive: true);
+            const int maximumAttempts = 25;
+            for (int attempt = 1; attempt <= maximumAttempts; attempt++)
+            {
+                try
+                {
+                    Directory.Delete(normalizedRuntime, recursive: true);
+                    return;
+                }
+                catch (Exception exception) when (
+                    attempt < maximumAttempts
+                    && exception is IOException or UnauthorizedAccessException)
+                {
+                    Thread.Sleep(200);
+                    if (!Directory.Exists(normalizedRuntime))
+                    {
+                        return;
+                    }
+                }
+            }
         }
     }
 

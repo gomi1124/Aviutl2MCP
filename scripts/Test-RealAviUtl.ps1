@@ -7,7 +7,8 @@ param(
     [string]$DataPath = "C:\ProgramData\aviutl2",
     [string]$ProjectPath = "",
     [string]$TemporaryRoot = "C:\tmp\AviUtl2MCP-real",
-    [string]$Configuration = "Debug"
+    [string]$Configuration = "Debug",
+    [string]$TestFilter = "TestCategory=RealAviUtl2"
 )
 
 Set-StrictMode -Version Latest
@@ -18,6 +19,9 @@ if (-not $Real.IsPresent) {
 }
 if ([string]::IsNullOrWhiteSpace($ProjectPath)) {
     throw "ProjectPath must be specified explicitly."
+}
+if ([string]::IsNullOrWhiteSpace($TestFilter)) {
+    throw "TestFilter must not be empty."
 }
 
 $repositoryRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
@@ -77,7 +81,7 @@ try {
         --no-restore `
         --no-build `
         --configuration $Configuration `
-        --filter "TestCategory=RealAviUtl2" `
+        --filter $TestFilter `
         --verbosity minimal
     if ($LASTEXITCODE -ne 0) {
         throw "Real AviUtl2 test failed with exit code $LASTEXITCODE."

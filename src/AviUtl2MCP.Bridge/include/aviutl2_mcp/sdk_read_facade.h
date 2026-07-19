@@ -430,6 +430,7 @@ private:
     EDIT_HANDLE* edit_handle_ = nullptr;
     void* sdk_dispatch_window_ = nullptr;
     std::uint32_t sdk_thread_id_ = 0U;
+    std::uint64_t sdk_call_not_before_ms_ = 0U;
     sdk_project_state project_state_ = sdk_project_state::unknown;
     std::optional<std::string> project_path_;
     std::string project_cache_error_;

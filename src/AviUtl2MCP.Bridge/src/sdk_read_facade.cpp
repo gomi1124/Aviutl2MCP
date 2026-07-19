@@ -2741,10 +2741,23 @@ bool sdk_read_facade::invoke_on_sdk_thread(
     }
     HWND dispatch_window = nullptr;
     std::uint32_t sdk_thread_id = 0U;
-    {
-        std::scoped_lock lock(mutex_);
-        dispatch_window = static_cast<HWND>(sdk_dispatch_window_);
-        sdk_thread_id = sdk_thread_id_;
+    while (true) {
+        std::uint64_t call_not_before = 0U;
+        {
+            std::scoped_lock lock(mutex_);
+            dispatch_window = static_cast<HWND>(sdk_dispatch_window_);
+            sdk_thread_id = sdk_thread_id_;
+            call_not_before = sdk_call_not_before_ms_;
+        }
+        if (sdk_thread_id == 0U || sdk_thread_id == GetCurrentThreadId()) {
+            break;
+        }
+        const std::uint64_t now = GetTickCount64();
+        if (now >= call_not_before) {
+            break;
+        }
+        const std::uint64_t remaining = call_not_before - now;
+        Sleep(static_cast<DWORD>((std::min)(remaining, std::uint64_t{100U})));
     }
     if (sdk_thread_id == 0U || sdk_thread_id == GetCurrentThreadId()) {
         try {
@@ -2803,6 +2816,7 @@ bool sdk_read_facade::initialize_sdk_dispatcher(EDIT_HANDLE* edit_handle) noexce
     std::scoped_lock lock(mutex_);
     sdk_dispatch_window_ = dispatch_window;
     sdk_thread_id_ = thread_id;
+    sdk_call_not_before_ms_ = GetTickCount64() + 1'000U;
     return true;
 }
 
@@ -2815,6 +2829,7 @@ void sdk_read_facade::release_sdk_dispatcher() noexcept {
         sdk_thread_id = sdk_thread_id_;
         sdk_dispatch_window_ = nullptr;
         sdk_thread_id_ = 0U;
+        sdk_call_not_before_ms_ = 0U;
     }
     if (dispatch_window == nullptr || IsWindow(dispatch_window) == FALSE) {
         return;
@@ -4255,6 +4270,7 @@ void sdk_read_facade::capture_project(PROJECT_FILE* project, const bool is_load)
         project_path_ = std::move(path);
         project_cache_error_ = std::move(error);
         if (is_load) {
+            sdk_call_not_before_ms_ = GetTickCount64() + 500U;
             callback = project_loaded_callback_;
         }
     }
