@@ -17,6 +17,7 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/native_log_request_handler.cpp
   src/native_operation_result.cpp
   src/native_object_request_handler.cpp
+  src/native_object_edit_request_handler.cpp
   src/native_project_request_handler.cpp
   src/native_ring_logger.cpp
   src/native_status_request_handler.cpp

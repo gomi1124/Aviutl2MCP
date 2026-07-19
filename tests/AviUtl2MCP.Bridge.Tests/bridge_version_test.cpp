@@ -15,6 +15,7 @@
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
 #include "aviutl2_mcp/native_object_request_handler.h"
+#include "aviutl2_mcp/native_object_edit_request_handler.h"
 #include "aviutl2_mcp/native_project_request_handler.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/native_status_request_handler.h"
@@ -289,6 +290,10 @@ struct fake_sdk_state final {
     int edit_state = EDIT_HANDLE::EDIT_STATE_EDIT;
     int first_object = 1;
     int second_object = 2;
+    OBJECT_LAYER_FRAME first_position{.layer = 1, .start = 9, .end = 19};
+    OBJECT_LAYER_FRAME second_position{.layer = 3, .start = 20, .end = 29};
+    bool is_first_deleted = false;
+    bool is_second_deleted = false;
     int first_effect = 3;
     int second_effect = 4;
     int third_effect = 5;
@@ -375,10 +380,10 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
 
 [[nodiscard]] OBJECT_LAYER_FRAME get_fake_object_position(const OBJECT_HANDLE object) {
     if (object == &ACTIVE_FAKE_SDK->first_object) {
-        return {.layer = 1, .start = 9, .end = 19};
+        return ACTIVE_FAKE_SDK->first_position;
     }
     if (object == &ACTIVE_FAKE_SDK->second_object) {
-        return {.layer = 3, .start = 20, .end = 29};
+        return ACTIVE_FAKE_SDK->second_position;
     }
     if (fake_sdk_state::created_object* created = find_created_object(object)) {
         return created->position;
@@ -400,8 +405,12 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
             result_start = position.start;
         }
     };
-    consider(&ACTIVE_FAKE_SDK->first_object, {.layer = 1, .start = 9, .end = 19});
-    consider(&ACTIVE_FAKE_SDK->second_object, {.layer = 3, .start = 20, .end = 29});
+    if (!ACTIVE_FAKE_SDK->is_first_deleted) {
+        consider(&ACTIVE_FAKE_SDK->first_object, ACTIVE_FAKE_SDK->first_position);
+    }
+    if (!ACTIVE_FAKE_SDK->is_second_deleted) {
+        consider(&ACTIVE_FAKE_SDK->second_object, ACTIVE_FAKE_SDK->second_position);
+    }
     for (std::size_t index = 0U; index < ACTIVE_FAKE_SDK->created_object_count; ++index) {
         fake_sdk_state::created_object& created = ACTIVE_FAKE_SDK->created_objects[index];
         consider(&created.handle, created.position);
@@ -677,8 +686,44 @@ void enumerate_fake_palettes(void* parameter, void (*callback)(void*, LPCWSTR)) 
 }
 
 void set_fake_object_name(const OBJECT_HANDLE object, const LPCWSTR name) {
+    if (object == &ACTIVE_FAKE_SDK->first_object) {
+        ACTIVE_FAKE_SDK->first_name = name == nullptr ? L"" : name;
+        return;
+    }
+    if (object == &ACTIVE_FAKE_SDK->second_object) {
+        ACTIVE_FAKE_SDK->second_name = name == nullptr ? L"" : name;
+        return;
+    }
     if (fake_sdk_state::created_object* created = find_created_object(object)) {
         created->name = name == nullptr ? L"" : name;
+    }
+}
+
+[[nodiscard]] bool move_fake_object(
+    const OBJECT_HANDLE object,
+    const int layer,
+    const int frame) {
+    OBJECT_LAYER_FRAME* position = nullptr;
+    if (object == &ACTIVE_FAKE_SDK->first_object && !ACTIVE_FAKE_SDK->is_first_deleted) {
+        position = &ACTIVE_FAKE_SDK->first_position;
+    } else if (object == &ACTIVE_FAKE_SDK->second_object && !ACTIVE_FAKE_SDK->is_second_deleted) {
+        position = &ACTIVE_FAKE_SDK->second_position;
+    } else if (fake_sdk_state::created_object* created = find_created_object(object)) {
+        position = &created->position;
+    }
+    if (position == nullptr) {
+        return false;
+    }
+    const int length = position->end - position->start + 1;
+    *position = {.layer = layer, .start = frame, .end = frame + length - 1};
+    return true;
+}
+
+void delete_fake_object(const OBJECT_HANDLE object) {
+    if (object == &ACTIVE_FAKE_SDK->first_object) {
+        ACTIVE_FAKE_SDK->is_first_deleted = true;
+    } else if (object == &ACTIVE_FAKE_SDK->second_object) {
+        ACTIVE_FAKE_SDK->is_second_deleted = true;
     }
 }
 
@@ -735,6 +780,8 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_section.create_object_from_media_file = &create_fake_media_object;
     state.edit_section.create_object_from_alias = &create_fake_alias_object;
     state.edit_section.set_object_name = &set_fake_object_name;
+    state.edit_section.move_object = &move_fake_object;
+    state.edit_section.delete_object = &delete_fake_object;
     state.project_file.get_project_file_path = &get_fake_project_path;
     state.host.create_edit_handle = &create_fake_edit_handle;
     state.host.register_project_load_handler = &register_fake_project_load_handler;
@@ -2228,6 +2275,183 @@ void test_native_create_request_handlers() {
     ACTIVE_FAKE_SDK = nullptr;
 }
 
+void test_native_object_edit_request_handlers() {
+    fake_sdk_state fake;
+    configure_fake_sdk(fake);
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "object edit fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_object_edit_request_handler>(
+        identity, facade, "object.move", aviutl2_mcp::sdk_object_edit_kind::move));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_object_edit_request_handler>(
+        identity, facade, "object.delete", aviutl2_mcp::sdk_object_edit_kind::delete_object));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_object_edit_request_handler>(
+        identity, facade, "object.setName", aviutl2_mcp::sdk_object_edit_kind::set_name));
+    const std::string project_generation = dispatcher.revisions().project_generation();
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const aviutl2_mcp::sdk_timeline_query_result timeline = facade.query_timeline(
+        aviutl2_mcp::sdk_timeline_query{
+            .limit = 100U,
+            .include_effects = true,
+            .use_display_defaults = false,
+        });
+    require(timeline.ok && timeline.timeline.objects.size() == 2U,
+        "object edit fixture timeline was unavailable");
+    const auto serialize_test_locator = [](const aviutl2_mcp::object_locator& locator) {
+        return nlohmann::json{
+            {"instanceId", locator.instance_id},
+            {"projectGeneration", locator.project_generation},
+            {"sceneId", locator.scene_id},
+            {"layer", locator.layer},
+            {"startFrame", locator.start_frame},
+            {"endFrame", locator.end_frame},
+            {"name", locator.name},
+            {"aliasSha256", locator.alias_sha256},
+            {"effectSignatureSha256", locator.effect_signature_sha256},
+        };
+    };
+    const aviutl2_mcp::object_locator first_locator = aviutl2_mcp::create_object_locator(
+        identity.instance_id, project_generation, timeline.timeline.objects[0].candidate);
+    const aviutl2_mcp::object_locator second_locator = aviutl2_mcp::create_object_locator(
+        identity.instance_id, project_generation, timeline.timeline.objects[1].candidate);
+    const std::string initial_revision = dispatcher.revisions().content_revision();
+    const std::string move_params = nlohmann::json{
+        {"locator", serialize_test_locator(first_locator)},
+        {"placement", {{"sceneId", 7}, {"layer", 3}, {"startFrame", 31}}},
+    }.dump();
+
+    const nlohmann::json dry_move = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 81U),
+            "object.move",
+            correlation_id,
+            move_params,
+            initial_revision,
+            true),
+        identity.instance_id).get()));
+    require(dry_move.at("ok").get<bool>()
+            && dry_move.at("result").contains("plannedChanges")
+            && fake.first_position.layer == 1
+            && dispatcher.revisions().content_revision() == initial_revision,
+        "native move dry-run changed the object or revision");
+
+    const nlohmann::json moved = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 82U),
+            "object.move",
+            correlation_id,
+            move_params,
+            initial_revision),
+        identity.instance_id).get()));
+    require(moved.at("ok").get<bool>()
+            && moved.at("result").at("object").at("layer") == 3
+            && moved.at("result").at("object").at("startFrame") == 31
+            && fake.first_position.layer == 2
+            && fake.first_position.start == 30,
+        "native object move did not preserve length at the destination");
+
+    const nlohmann::json moved_locator = moved.at("result").at("object").at("locator");
+    const std::string moved_revision = moved.at("revision").get<std::string>();
+    static_cast<void>(add_created_object(
+        4, 20, 10, "[Object]\r\neffect.name=Text\r\n"));
+    const std::string collision_params = nlohmann::json{
+        {"locator", moved_locator},
+        {"placement", {{"sceneId", 7}, {"layer", 5}, {"startFrame", 21}}},
+    }.dump();
+    const nlohmann::json collision = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 83U),
+            "object.move",
+            correlation_id,
+            collision_params,
+            moved_revision,
+            true),
+        identity.instance_id).get()));
+    require(!collision.at("ok").get<bool>()
+            && collision.at("error").at("code") == "object_collision",
+        "native object move preflight missed a destination collision");
+
+    const std::string locked_delete_params = nlohmann::json{
+        {"locator", serialize_test_locator(second_locator)},
+    }.dump();
+    const nlohmann::json locked_delete = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 84U),
+            "object.delete",
+            correlation_id,
+            locked_delete_params,
+            moved_revision,
+            true),
+        identity.instance_id).get()));
+    require(!locked_delete.at("ok").get<bool>()
+            && locked_delete.at("error").at("code") == "edit_not_available",
+        "native object delete accepted a locked source layer");
+
+    const std::string name_params = nlohmann::json{
+        {"locator", moved_locator},
+        {"name", "Renamed voice"},
+    }.dump();
+    const nlohmann::json renamed = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 85U),
+            "object.setName",
+            correlation_id,
+            name_params,
+            moved_revision),
+        identity.instance_id).get()));
+    require(renamed.at("ok").get<bool>()
+            && renamed.at("result").at("object").at("name") == "Renamed voice"
+            && fake.first_name == L"Renamed voice",
+        "native object naming did not return the updated fingerprint");
+
+    const std::string renamed_revision = renamed.at("revision").get<std::string>();
+    const nlohmann::json renamed_locator = renamed.at("result").at("object").at("locator");
+    const std::string noop_name_params = nlohmann::json{
+        {"locator", renamed_locator},
+        {"name", "Renamed voice"},
+    }.dump();
+    const nlohmann::json noop_name = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 86U),
+            "object.setName",
+            correlation_id,
+            noop_name_params,
+            renamed_revision),
+        identity.instance_id).get()));
+    require(noop_name.at("ok").get<bool>()
+            && noop_name.at("revision") == renamed_revision,
+        "native no-op object naming advanced the content revision");
+
+    const std::string delete_params = nlohmann::json{{"locator", renamed_locator}}.dump();
+    const auto delete_request_id = create_uuid_v7_bytes(std::chrono::system_clock::now(), 87U);
+    const aviutl2_mcp::ipc_frame delete_frame = create_request_frame(
+        delete_request_id,
+        "object.delete",
+        correlation_id,
+        delete_params,
+        renamed_revision);
+    const nlohmann::json deleted = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        delete_frame,
+        identity.instance_id).get()));
+    require(deleted.at("ok").get<bool>()
+            && deleted.at("result").at("deleted").get<bool>()
+            && deleted.at("result").at("object").at("name") == "Renamed voice"
+            && fake.is_first_deleted,
+        "native object delete omitted the deletion pre-state");
+    const nlohmann::json replayed_delete = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        delete_frame,
+        identity.instance_id).get()));
+    require(replayed_delete == deleted && fake.is_first_deleted,
+        "native object delete did not preserve at-most-once behavior");
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -2254,6 +2478,7 @@ int main() {
         std::pair{"SDK read facade", &test_sdk_read_facade},
         std::pair{"native query request handlers", &test_native_query_request_handlers},
         std::pair{"native create request handlers", &test_native_create_request_handlers},
+        std::pair{"native object edit request handlers", &test_native_object_edit_request_handlers},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

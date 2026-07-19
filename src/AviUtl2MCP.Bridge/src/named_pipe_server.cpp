@@ -6,6 +6,7 @@
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
 #include "aviutl2_mcp/native_object_request_handler.h"
+#include "aviutl2_mcp/native_object_edit_request_handler.h"
 #include "aviutl2_mcp/native_status_request_handler.h"
 #include "aviutl2_mcp/native_timeline_request_handlers.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
@@ -264,6 +265,12 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
         identity_, get_sdk_read_facade(), "object.createMedia", sdk_create_kind::media));
     dispatcher_.register_handler(std::make_unique<native_create_request_handler>(
         identity_, get_sdk_read_facade(), "object.createAlias", sdk_create_kind::alias));
+    dispatcher_.register_handler(std::make_unique<native_object_edit_request_handler>(
+        identity_, get_sdk_read_facade(), "object.move", sdk_object_edit_kind::move));
+    dispatcher_.register_handler(std::make_unique<native_object_edit_request_handler>(
+        identity_, get_sdk_read_facade(), "object.delete", sdk_object_edit_kind::delete_object));
+    dispatcher_.register_handler(std::make_unique<native_object_edit_request_handler>(
+        identity_, get_sdk_read_facade(), "object.setName", sdk_object_edit_kind::set_name));
     project_load_callback_state_ = std::make_shared<project_load_callback_state>();
     project_load_callback_state_->revisions = &dispatcher_.revisions();
     const std::weak_ptr<project_load_callback_state> callback_state(project_load_callback_state_);

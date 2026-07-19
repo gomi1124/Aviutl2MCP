@@ -1131,6 +1131,181 @@ void create_sdk_objects(void* raw_context, EDIT_SECTION* edit) noexcept {
     }
 }
 
+struct object_edit_callback_context final {
+    EDIT_HANDLE* edit_handle;
+    const sdk_object_edit_request* request;
+    const std::string* current_instance_id;
+    const std::string* current_project_generation;
+    sdk_object_edit_result* result;
+    bool dry_run;
+    bool was_called = false;
+};
+
+void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
+    auto* context = static_cast<object_edit_callback_context*>(raw_context);
+    context->was_called = true;
+    try {
+        if (edit == nullptr || edit->info == nullptr || edit->find_object == nullptr
+            || edit->get_object_layer_frame == nullptr || edit->get_object_alias == nullptr) {
+            throw std::runtime_error("SDK object edit callback functions are unavailable");
+        }
+        const sdk_object_edit_request& request = *context->request;
+        const object_locator& locator = request.locator;
+        const EDIT_INFO& info = *edit->info;
+        if (locator.scene_id != info.scene_id) {
+            context->result->error_code = "object_not_found";
+            context->result->error_message = "The object is not in the active SDK edit scene";
+            return;
+        }
+        const int sdk_layer = locator.layer - 1;
+        const int sdk_frame = locator.start_frame - 1;
+        OBJECT_HANDLE object = edit->find_object(sdk_layer, sdk_frame);
+        if (object == nullptr) {
+            context->result->error_code = "object_not_found";
+            context->result->error_message = "The object locator could not be resolved";
+            return;
+        }
+        const OBJECT_LAYER_FRAME position = edit->get_object_layer_frame(object);
+        if (position.layer != sdk_layer || position.start != sdk_frame) {
+            context->result->error_code = "object_not_found";
+            context->result->error_message = "The object locator position is stale";
+            return;
+        }
+        const std::vector<OBJECT_HANDLE> selected_objects = copy_selected_objects(*edit);
+        sdk_object_snapshot before = copy_object_snapshot(
+            *context->edit_handle,
+            *edit,
+            info,
+            object,
+            position,
+            selected_objects,
+            true);
+        const locator_resolution resolution = resolve_object_locator(
+            locator,
+            *context->current_instance_id,
+            *context->current_project_generation,
+            std::span<const object_candidate>(&before.candidate, 1U));
+        if (resolution.status != locator_resolution_status::resolved) {
+            context->result->error_code = resolution.status == locator_resolution_status::ambiguous
+                ? "object_ambiguous"
+                : "object_not_found";
+            context->result->error_message = "The object locator fingerprint is stale";
+            return;
+        }
+        if (edit->get_layer_lock != nullptr && edit->get_layer_lock(position.layer)) {
+            context->result->error_code = "edit_not_available";
+            context->result->error_message = "The source object layer is locked";
+            return;
+        }
+
+        bool is_noop = false;
+        int destination_layer = position.layer;
+        int destination_frame = position.start;
+        if (request.kind == sdk_object_edit_kind::move) {
+            if (!request.destination_scene_id.has_value()
+                || !request.destination_layer.has_value()
+                || !request.destination_start_frame.has_value()
+                || *request.destination_scene_id != info.scene_id) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message = "Move destination is invalid or not the active scene";
+                return;
+            }
+            destination_layer = *request.destination_layer - 1;
+            destination_frame = *request.destination_start_frame - 1;
+            if (edit->get_layer_lock != nullptr && edit->get_layer_lock(destination_layer)) {
+                context->result->error_code = "edit_not_available";
+                context->result->error_message = "The destination layer is locked";
+                return;
+            }
+            is_noop = destination_layer == position.layer && destination_frame == position.start;
+            if (!is_noop) {
+                const std::int64_t destination_end = static_cast<std::int64_t>(destination_frame)
+                    + (position.end - position.start);
+                if (destination_end > (std::numeric_limits<int>::max)()) {
+                    context->result->error_code = "invalid_argument";
+                    context->result->error_message = "The move destination exceeds the supported range";
+                    return;
+                }
+                const std::vector<object_handle_position> objects = scan_object_handles(*edit, info);
+                if (std::ranges::any_of(objects, [&](const object_handle_position& candidate) {
+                        return candidate.handle != object
+                            && candidate.position.layer == destination_layer
+                            && candidate.position.start <= destination_end
+                            && candidate.position.end >= destination_frame;
+                    })) {
+                    context->result->error_code = "object_collision";
+                    context->result->error_message = "The move destination overlaps an existing object";
+                    return;
+                }
+            }
+        } else if (request.kind == sdk_object_edit_kind::set_name) {
+            if (!request.name.has_value()) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message = "Object name is required";
+                return;
+            }
+            is_noop = before.candidate.name == *request.name;
+        }
+        if (context->dry_run || is_noop) {
+            context->result->ok = true;
+            context->result->object = std::move(before);
+            return;
+        }
+
+        switch (request.kind) {
+            case sdk_object_edit_kind::move:
+                if (edit->move_object == nullptr) {
+                    throw std::runtime_error("SDK object movement is unavailable");
+                }
+                if (!edit->move_object(object, destination_layer, destination_frame)) {
+                    context->result->error_code = "object_collision";
+                    context->result->error_message = "AviUtl2 rejected the object move";
+                    return;
+                }
+                break;
+            case sdk_object_edit_kind::delete_object:
+                if (edit->delete_object == nullptr) {
+                    throw std::runtime_error("SDK object deletion is unavailable");
+                }
+                edit->delete_object(object);
+                context->result->was_deleted = true;
+                break;
+            case sdk_object_edit_kind::set_name: {
+                if (edit->set_object_name == nullptr) {
+                    throw std::runtime_error("SDK object naming is unavailable");
+                }
+                const std::wstring wide_name = to_wide(*request.name);
+                edit->set_object_name(object, wide_name.c_str());
+                break;
+            }
+        }
+        context->result->has_changed = true;
+        if (request.kind == sdk_object_edit_kind::delete_object) {
+            context->result->object = std::move(before);
+        } else {
+            const OBJECT_LAYER_FRAME after_position = edit->get_object_layer_frame(object);
+            context->result->object = copy_object_snapshot(
+                *context->edit_handle,
+                *edit,
+                info,
+                object,
+                after_position,
+                selected_objects,
+                true);
+        }
+        context->result->ok = true;
+    } catch (const std::invalid_argument& exception) {
+        context->result->error_code = "invalid_argument";
+        context->result->error_message = exception.what();
+    } catch (const std::exception& exception) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = exception.what();
+    } catch (...) {
+        context->result->error_code = "sdk_query_failed";
+        context->result->error_message = "SDK object edit failed with an unknown exception";
+    }
+}
+
 void capture_loaded_project(PROJECT_FILE* project) noexcept {
     sdk_read_facade* facade = REGISTERED_FACADE.load();
     if (facade != nullptr) {
@@ -2015,6 +2190,125 @@ sdk_create_result sdk_read_facade::create_objects(
             .ok = false,
             .error_code = "sdk_query_failed",
             .error_message = "SDK object creation failed with an unknown exception",
+        };
+    }
+}
+
+sdk_object_edit_result sdk_read_facade::edit_object(
+    const sdk_object_edit_request& request,
+    const std::string& current_instance_id,
+    const std::string& current_project_generation,
+    const bool dry_run) const noexcept {
+    if (!uuid_equals(request.locator.instance_id, current_instance_id)
+        || !uuid_equals(request.locator.project_generation, current_project_generation)
+        || request.locator.scene_id < 0 || request.locator.layer < 1
+        || request.locator.start_frame < 1
+        || request.locator.end_frame < request.locator.start_frame
+        || (request.kind == sdk_object_edit_kind::move
+            && (!request.destination_scene_id.has_value()
+                || !request.destination_layer.has_value()
+                || !request.destination_start_frame.has_value()
+                || *request.destination_scene_id < 0
+                || *request.destination_layer < 1
+                || *request.destination_start_frame < 1))
+        || (request.kind == sdk_object_edit_kind::set_name
+            && (!request.name.has_value() || request.name->find('\0') != std::string::npos))) {
+        return {
+            .ok = false,
+            .error_code = "invalid_argument",
+            .error_message = "Object edit parameters are outside the supported range",
+        };
+    }
+    const sdk_status_snapshot status = query_status();
+    if (!status.is_sdk_ready) {
+        return {
+            .ok = false,
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available",
+        };
+    }
+    if (status.has_query_error) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = status.query_error,
+        };
+    }
+    if (status.project_state != sdk_project_state::saved
+        && status.project_state != sdk_project_state::unsaved) {
+        return {
+            .ok = false,
+            .error_code = "project_not_open",
+            .error_message = "No AviUtl2 project is open",
+        };
+    }
+    if (status.edit_state != sdk_edit_state::edit) {
+        return {
+            .ok = false,
+            .error_code = "edit_not_available",
+            .error_message = "AviUtl2 is not currently editable",
+        };
+    }
+
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr || edit_handle->call_read_section_param == nullptr
+        || (!dry_run && edit_handle->call_edit_section_param == nullptr)) {
+        return {
+            .ok = false,
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit section is not available",
+        };
+    }
+
+    sdk_object_edit_result result;
+    object_edit_callback_context callback_context{
+        .edit_handle = edit_handle,
+        .request = &request,
+        .current_instance_id = &current_instance_id,
+        .current_project_generation = &current_project_generation,
+        .result = &result,
+        .dry_run = dry_run,
+    };
+    try {
+        const bool was_scheduled = dry_run
+            ? edit_handle->call_read_section_param(&callback_context, &edit_sdk_object)
+            : edit_handle->call_edit_section_param(&callback_context, &edit_sdk_object);
+        if (!was_scheduled) {
+            return {
+                .ok = false,
+                .error_code = dry_run ? "read_not_available" : "edit_not_available",
+                .error_message = dry_run
+                    ? "AviUtl2 rejected the object edit preflight"
+                    : "AviUtl2 rejected the object edit section",
+            };
+        }
+        if (!callback_context.was_called) {
+            return {
+                .ok = false,
+                .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 did not invoke the object edit callback",
+            };
+        }
+        if (!result.ok && result.error_code.empty()) {
+            result.error_code = "sdk_query_failed";
+            result.error_message = "Object edit failed without an SDK error classification";
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = exception.what(),
+        };
+    } catch (...) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = "SDK object edit failed with an unknown exception",
         };
     }
 }

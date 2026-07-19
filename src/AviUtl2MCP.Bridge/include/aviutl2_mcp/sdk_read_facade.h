@@ -218,6 +218,30 @@ struct sdk_create_result final {
     std::string error_message;
 };
 
+enum class sdk_object_edit_kind {
+    move,
+    delete_object,
+    set_name,
+};
+
+struct sdk_object_edit_request final {
+    sdk_object_edit_kind kind;
+    object_locator locator;
+    std::optional<int> destination_scene_id;
+    std::optional<int> destination_layer;
+    std::optional<int> destination_start_frame;
+    std::optional<std::string> name;
+};
+
+struct sdk_object_edit_result final {
+    bool ok = false;
+    bool has_changed = false;
+    bool was_deleted = false;
+    std::optional<sdk_object_snapshot> object;
+    std::string error_code;
+    std::string error_message;
+};
+
 class sdk_read_facade final {
 public:
     sdk_read_facade() = default;
@@ -245,6 +269,11 @@ public:
         bool include_choices) const noexcept;
     [[nodiscard]] sdk_create_result create_objects(
         const sdk_create_request& request,
+        bool dry_run) const noexcept;
+    [[nodiscard]] sdk_object_edit_result edit_object(
+        const sdk_object_edit_request& request,
+        const std::string& current_instance_id,
+        const std::string& current_project_generation,
         bool dry_run) const noexcept;
 
     void capture_project(PROJECT_FILE* project, bool is_load = true) noexcept;
