@@ -13,11 +13,17 @@
 namespace aviutl2_mcp {
 namespace {
 
-void read_exact(byte_transport& transport, const std::span<std::uint8_t> buffer) {
+void read_exact(
+    byte_transport& transport,
+    const std::span<std::uint8_t> buffer,
+    const bool allow_clean_end = false) {
     std::size_t offset = 0U;
     while (offset < buffer.size()) {
         const auto read = transport.read_some(buffer.subspan(offset));
         if (read == 0U) {
+            if (allow_clean_end && offset == 0U) {
+                throw ipc_stream_closed();
+            }
             throw std::runtime_error("IPC frame ended before the requested bytes were read");
         }
         if (read > buffer.size() - offset) {
@@ -166,6 +172,9 @@ void append_hash(const BCRYPT_HASH_HANDLE hash, const std::span<const std::uint8
 
 }  // namespace
 
+ipc_stream_closed::ipc_stream_closed()
+    : std::runtime_error("IPC client disconnected between frames") {}
+
 void validate_utf8(const std::span<const std::uint8_t> bytes) {
     std::size_t index = 0U;
     while (index < bytes.size()) {
@@ -238,7 +247,7 @@ std::string calculate_sha256(const std::span<const std::uint8_t> bytes) {
 
 ipc_frame read_frame(byte_transport& transport) {
     std::array<std::uint8_t, IPC_HEADER_BYTES> header_bytes{};
-    read_exact(transport, header_bytes);
+    read_exact(transport, header_bytes, true);
     frame_header header = decode_header(header_bytes);
     std::vector<std::uint8_t> json(header.json_length);
     std::vector<std::uint8_t> binary(static_cast<std::size_t>(header.binary_length));

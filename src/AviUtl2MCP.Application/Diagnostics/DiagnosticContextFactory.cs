@@ -134,6 +134,7 @@ public sealed class DiagnosticContextFactory
                     InstanceId = runContext.Instance.InstanceId,
                     TimeoutMs = runContext.TimeoutMs,
                     Sources = [source],
+                    Since = runContext.Instance.ProcessCreationTime,
                     Limit = maximumLines,
                 },
                 new LogReadContext(

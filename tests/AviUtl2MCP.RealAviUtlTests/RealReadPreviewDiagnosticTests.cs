@@ -130,6 +130,10 @@ public sealed class RealReadPreviewDiagnosticTests
                 ["timeoutMs"] = 60_000,
             },
             cancellationToken: timeout.Token));
+        Assert.AreEqual(
+            "healthy",
+            diagnostics.GetProperty("data").GetProperty("status").GetString());
+        AssertDiagnosticPassed(diagnostics, "known-logs");
         AssertDiagnosticPassed(diagnostics, "read-smoke");
         AssertDiagnosticPassed(diagnostics, "preview-smoke");
 

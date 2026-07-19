@@ -15,6 +15,7 @@
 #include "aviutl2_mcp/native_create_request_handler.h"
 #include "aviutl2_mcp/native_effect_edit_request_handler.h"
 #include "aviutl2_mcp/native_effect_request_handlers.h"
+#include "aviutl2_mcp/native_environment_probe.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
 #include "aviutl2_mcp/native_layer_view_request_handlers.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
@@ -1231,6 +1232,16 @@ void test_frame_fragmentation_and_hash() {
     require(decoded.json == json, "fragmented JSON read failed");
     require(decoded.binary == binary, "fragmented binary read failed");
     require(decoded.payload_hash == original.payload_hash, "fragmented frame hash changed");
+
+    memory_transport disconnected({}, 1U);
+    bool recognized_clean_disconnect = false;
+    try {
+        static_cast<void>(aviutl2_mcp::read_frame(disconnected));
+    } catch (const aviutl2_mcp::ipc_stream_closed&) {
+        recognized_clean_disconnect = true;
+    }
+    require(recognized_clean_disconnect,
+        "clean IPC disconnect was not distinguished from a truncated frame");
 }
 
 void test_invalid_utf8() {
@@ -2363,6 +2374,24 @@ void test_native_query_request_handlers() {
     require(status.at("result").at("selectedInstance") == identity.instance_id
             && status.at("result").at("instances").size() == 1U,
         "native status query omitted the selected instance");
+    const nlohmann::json& status_components = status.at("result").at("components");
+    const auto find_component = [&status_components](const std::string& name) -> const nlohmann::json& {
+        const auto match = std::ranges::find_if(
+            status_components,
+            [&name](const nlohmann::json& component) { return component.at("name") == name; });
+        if (match == status_components.end()) {
+            throw std::runtime_error("native status omitted an environment component");
+        }
+        return *match;
+    };
+    require(find_component("psdtoolkit.effect").at("status") == "incompatible"
+            && find_component("psdtoolkit.effect").at("version") == "2.0.0alpha10",
+        "native status did not report the probed PSDToolKit profile");
+    require(find_component("gcmzdrops.mutex").at("status").is_string()
+            && find_component("gcmzdrops.fmo").at("status").is_string()
+            && find_component("gcmzdrops.api.v3").at("status").is_string()
+            && find_component("gcmzdrops.hwnd-pid").at("status").is_string(),
+        "native status omitted a staged GCMZDrops probe result");
 
     const nlohmann::json capabilities = nlohmann::json::parse(get_json(dispatcher.dispatch(
         create_request_frame(
@@ -3819,6 +3848,39 @@ void test_gcmz_adapter_contract() {
     }, "relative GCMZDrops path was accepted");
 }
 
+void test_native_environment_component_mapping() {
+    aviutl2_mcp::native_environment_probe healthy{
+        .psdtoolkit_version = "2.0.0alpha10",
+        .psd_profile = {.is_match = true},
+        .psdtoolkit_config = {.ok = true},
+        .has_psd_alias = true,
+        .gcmz = {
+            .ok = true,
+            .api_version = 3,
+            .gcmz_version = 67'109'035U,
+        },
+    };
+    const std::vector<aviutl2_mcp::native_component_probe> components =
+        aviutl2_mcp::describe_native_environment(healthy);
+    require(components.size() == 6U
+            && std::ranges::all_of(components, [](const auto& component) {
+                return component.status == "ready";
+            }),
+        "healthy PSDToolKit and GCMZDrops probes did not map to ready components");
+    require(components[0].version == "2.0.0alpha10"
+            && components[2].version == "67109035",
+        "environment component versions did not preserve probe values");
+
+    healthy.gcmz = {.error_code = "gcmz_mapping_missing"};
+    const std::vector<aviutl2_mcp::native_component_probe> missing_mapping =
+        aviutl2_mcp::describe_native_environment(healthy);
+    require(missing_mapping[2].status == "ready"
+            && missing_mapping[3].status == "missing"
+            && missing_mapping[4].status == "unavailable"
+            && missing_mapping[5].status == "unavailable",
+        "GCMZDrops staged failure did not identify the missing FMO boundary");
+}
+
 void test_psd_value_and_alias_codecs() {
     require(aviutl2_mcp::validate_psd_character_id("結月ゆかり").ok,
         "valid UTF-8 character ID was rejected");
@@ -4711,6 +4773,7 @@ int main() {
         std::pair{"PSD profile detector", &test_psd_profile_detector},
         std::pair{"PSDToolKit config reader", &test_psdtoolkit_config_reader},
         std::pair{"GCMZDrops adapter contract", &test_gcmz_adapter_contract},
+        std::pair{"native environment component mapping", &test_native_environment_component_mapping},
         std::pair{"PSD value and alias codecs", &test_psd_value_and_alias_codecs},
         std::pair{"native PSD setup request handler", &test_native_psd_setup_request_handler},
         std::pair{"native PSD item request handlers", &test_native_psd_item_request_handlers},

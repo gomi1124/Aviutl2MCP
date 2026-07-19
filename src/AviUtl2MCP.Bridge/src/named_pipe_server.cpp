@@ -412,6 +412,12 @@ void named_pipe_server::run(HANDLE pipe) noexcept {
             if (connect_client(pipe)) {
                 serve_client(pipe);
             }
+        } catch (const ipc_stream_closed& exception) {
+            get_native_logger().write(
+                native_log_level::information,
+                "pipe",
+                "session.disconnected",
+                exception.what());
         } catch (const std::exception& exception) {
             get_native_logger().write(
                 native_log_level::error,

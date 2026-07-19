@@ -1,5 +1,6 @@
 #include "aviutl2_mcp/native_status_request_handler.h"
 
+#include "aviutl2_mcp/native_environment_probe.h"
 #include "aviutl2_mcp/native_operation_result.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
 
@@ -77,6 +78,7 @@ operation_result native_status_request_handler::execute(
             throw std::invalid_argument("Status query parameters must be an object");
         }
         const sdk_status_snapshot status = sdk_.query_status();
+        const native_environment_probe environment = probe_native_environment(sdk_, status);
         const char* sdk_component_status = !status.is_sdk_ready
             ? "unavailable"
             : status.has_query_error ? "faulted" : "ready";
@@ -87,13 +89,15 @@ operation_result native_status_request_handler::execute(
                 "sdk",
                 sdk_component_status,
                 status.is_sdk_ready ? nlohmann::json("2003300") : nlohmann::json(nullptr)),
-            create_component("psdtoolkit.effect", "missing", nullptr),
-            create_component("psdtoolkit.alias", "missing", nullptr),
-            create_component("gcmzdrops.mutex", "missing", nullptr),
-            create_component("gcmzdrops.fmo", "missing", nullptr),
-            create_component("gcmzdrops.api.v3", "unavailable", nullptr),
-            create_component("gcmzdrops.hwnd-pid", "unavailable", nullptr),
         });
+        for (const native_component_probe& component : describe_native_environment(environment)) {
+            components.push_back(create_component(
+                component.name.c_str(),
+                component.status.c_str(),
+                component.version.has_value()
+                    ? nlohmann::json(*component.version)
+                    : nlohmann::json(nullptr)));
+        }
         if (status.has_query_error) {
             components.push_back(create_component("sdk.query", "faulted", nullptr));
         }

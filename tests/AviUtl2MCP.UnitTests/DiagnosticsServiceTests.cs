@@ -284,6 +284,9 @@ public sealed class DiagnosticsServiceTests
         Assert.AreEqual(2, server.Query!.Limit);
         Assert.AreEqual(2, bridge.Query!.Limit);
         Assert.AreEqual(2, aviutl.Query!.Limit);
+        Assert.AreEqual(healthy.Instance.ProcessCreationTime, server.Query.Since);
+        Assert.AreEqual(healthy.Instance.ProcessCreationTime, bridge.Query.Since);
+        Assert.AreEqual(healthy.Instance.ProcessCreationTime, aviutl.Query.Since);
         Guid[] operationIds =
         [
             gateway.StatusCorrelationId,

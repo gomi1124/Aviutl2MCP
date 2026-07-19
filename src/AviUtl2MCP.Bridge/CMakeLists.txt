@@ -16,6 +16,7 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/native_create_request_handler.cpp
   src/native_effect_edit_request_handler.cpp
   src/native_effect_request_handlers.cpp
+  src/native_environment_probe.cpp
   src/native_ipc_frame_codec.cpp
   src/native_log_request_handler.cpp
   src/native_layer_view_request_handlers.cpp

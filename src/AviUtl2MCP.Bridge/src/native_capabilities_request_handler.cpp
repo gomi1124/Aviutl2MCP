@@ -1,6 +1,7 @@
 #include "aviutl2_mcp/native_capabilities_request_handler.h"
 
 #include "aviutl2_mcp/gcmz_adapter.h"
+#include "aviutl2_mcp/native_environment_probe.h"
 #include "aviutl2_mcp/native_operation_result.h"
 #include "aviutl2_mcp/psd_contract.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
@@ -62,13 +63,6 @@ constexpr std::array PSD_TOOLKIT_OPERATIONS{
     std::string_view("aviutl_psd_set_layer_state"),
 };
 
-struct psd_capability_probe final {
-    psd_profile_detection profile;
-    std::optional<std::string> version;
-    psdtoolkit_config_result config;
-    gcmz_probe_result gcmz;
-};
-
 void add_operations(
     nlohmann::json& operations,
     const auto& names,
@@ -105,143 +99,6 @@ void add_operations(
     return project_reason != nullptr ? project_reason
         : status.edit_state == sdk_edit_state::edit ? nullptr
         : "edit_not_available";
-}
-
-[[nodiscard]] std::optional<std::string> extract_psdtoolkit_version(
-    const std::vector<sdk_module_summary>& modules) {
-    for (const sdk_module_summary& module : modules) {
-        if (module.name.find("PSDToolKit") == std::string::npos
-            && module.information.find("PSDToolKit") == std::string::npos) {
-            continue;
-        }
-        const std::size_t version_start = module.information.find_first_of("0123456789");
-        if (version_start == std::string::npos) {
-            continue;
-        }
-        std::size_t version_end = version_start;
-        while (version_end < module.information.size()) {
-            const unsigned char character = static_cast<unsigned char>(module.information[version_end]);
-            if (std::isalnum(character) == 0 && character != '.') {
-                break;
-            }
-            ++version_end;
-        }
-        if (version_end > version_start) {
-            return module.information.substr(version_start, version_end - version_start);
-        }
-    }
-    return std::nullopt;
-}
-
-[[nodiscard]] std::optional<std::filesystem::path> get_psdtoolkit_module_path() {
-    const HMODULE module = GetModuleHandleW(L"PSDToolKit.aux2");
-    if (module == nullptr) {
-        return std::nullopt;
-    }
-    std::wstring buffer(512U, L'\0');
-    while (buffer.size() <= 32'768U) {
-        const DWORD copied = GetModuleFileNameW(
-            module,
-            buffer.data(),
-            static_cast<DWORD>(buffer.size()));
-        if (copied == 0U) {
-            return std::nullopt;
-        }
-        if (copied < buffer.size() - 1U) {
-            buffer.resize(copied);
-            return std::filesystem::path(buffer);
-        }
-        buffer.resize(buffer.size() * 2U);
-    }
-    return std::nullopt;
-}
-
-[[nodiscard]] std::optional<std::filesystem::path> utf8_to_path(
-    const std::optional<std::string>& value) {
-    if (!value.has_value() || value->empty()
-        || value->size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
-        return std::nullopt;
-    }
-    const int characters = MultiByteToWideChar(
-        CP_UTF8,
-        MB_ERR_INVALID_CHARS,
-        value->data(),
-        static_cast<int>(value->size()),
-        nullptr,
-        0);
-    if (characters <= 0) {
-        return std::nullopt;
-    }
-    std::wstring result(static_cast<std::size_t>(characters), L'\0');
-    if (MultiByteToWideChar(
-            CP_UTF8,
-            MB_ERR_INVALID_CHARS,
-            value->data(),
-            static_cast<int>(value->size()),
-            result.data(),
-            characters) != characters) {
-        return std::nullopt;
-    }
-    return std::filesystem::path(result);
-}
-
-[[nodiscard]] psd_profile_observation observe_psd_profile(
-    sdk_read_facade& sdk,
-    const sdk_effect_catalog_snapshot& catalog,
-    const std::optional<std::string>& version) {
-    psd_profile_observation observation{.version = version};
-    constexpr std::array effect_names{
-        std::string_view(PSD_SETUP_EFFECT),
-        std::string_view(PSD_FILE_EFFECT),
-        std::string_view(PSD_VOICE_EFFECT),
-    };
-    for (const std::string_view name : effect_names) {
-        const auto effect = std::ranges::find_if(
-            catalog.effects,
-            [name](const sdk_effect_definition& definition) { return definition.name == name; });
-        if (effect == catalog.effects.end()) {
-            continue;
-        }
-        psd_observed_effect observed{.name = effect->name};
-        const sdk_effect_items_query_result items = sdk.query_effect_items(effect->name, false);
-        if (items.ok) {
-            for (const sdk_effect_item_snapshot& item : items.items) {
-                observed.items.push_back({.name = item.name, .type = item.type});
-            }
-        }
-        observation.effects.push_back(std::move(observed));
-    }
-    return observation;
-}
-
-[[nodiscard]] psd_capability_probe probe_psd_capabilities(
-    sdk_read_facade& sdk,
-    const sdk_status_snapshot& status) {
-    psd_capability_probe probe;
-    const sdk_effect_catalog_query_result catalog = sdk.query_effects({
-        .offset = 0U,
-        .limit = 1'000U,
-    });
-    if (catalog.ok) {
-        probe.version = extract_psdtoolkit_version(catalog.catalog.modules);
-        probe.profile = detect_psd_profile(observe_psd_profile(
-            sdk,
-            catalog.catalog,
-            probe.version));
-    } else {
-        probe.profile.failures.emplace_back("sdk_query_failed");
-    }
-    const std::optional<std::filesystem::path> module_path = get_psdtoolkit_module_path();
-    probe.config = module_path.has_value()
-        ? read_psdtoolkit_config(*module_path)
-        : psdtoolkit_config_result{
-            .error_code = "module_missing",
-            .error_message = "PSDToolKit.aux2 is not loaded",
-        };
-    probe.gcmz = gcmz_adapter().probe(
-        GetCurrentProcessId(),
-        utf8_to_path(status.project_path));
-    return probe;
 }
 
 [[nodiscard]] const char* choose_reason(
@@ -300,11 +157,12 @@ operation_result native_capabilities_request_handler::execute(
         const char* sdk_reason = get_sdk_reason(status);
         const char* project_reason = get_project_reason(status);
         const char* edit_reason = get_edit_reason(status);
-        const psd_capability_probe psd = probe_psd_capabilities(sdk_, status);
-        const bool has_profile = psd.profile.is_match;
+        const native_environment_probe psd = probe_native_environment(sdk_, status);
+        const bool has_profile = psd.psd_profile.is_match;
         const bool has_gcmz = psd.gcmz.ok;
-        const bool has_voice_route = psd.config.ok
-            && psd.config.voice_route != psd_voice_route::unavailable;
+        const bool has_voice_route = psd.psdtoolkit_config.ok
+            && psd.psdtoolkit_config.voice_route != psd_voice_route::unavailable
+            && psd.has_psd_alias;
         nlohmann::json operations = nlohmann::json::array();
         add_operations(operations, ALWAYS_AVAILABLE_OPERATIONS, true, nullptr);
         add_operations(operations, SDK_OPERATIONS, sdk_reason == nullptr, sdk_reason);
@@ -348,8 +206,8 @@ operation_result native_capabilities_request_handler::execute(
                 {"bridge", "0.1.0"},
                 {"aviutl", host_version_},
                 {"sdk", status.is_sdk_ready ? nlohmann::json("2003300") : nlohmann::json(nullptr)},
-                {"psdToolKit", psd.version.has_value()
-                    ? nlohmann::json(*psd.version)
+                {"psdToolKit", psd.psdtoolkit_version.has_value()
+                    ? nlohmann::json(*psd.psdtoolkit_version)
                     : nlohmann::json(nullptr)},
                 {"gcmzDrops", psd.gcmz.ok
                     ? nlohmann::json(std::to_string(psd.gcmz.gcmz_version))

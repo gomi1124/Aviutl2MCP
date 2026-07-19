@@ -5,10 +5,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace aviutl2_mcp {
+
+class ipc_stream_closed final : public std::runtime_error {
+public:
+    ipc_stream_closed();
+};
 
 class byte_transport {
 public:
