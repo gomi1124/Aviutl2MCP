@@ -2082,7 +2082,11 @@ void test_native_query_request_handlers() {
     require(!find_operation("aviutl_psd_create").at("available").get<bool>()
             && find_operation("aviutl_psd_create").at("reason") == "gcmzdrops_not_available",
         "native capabilities claimed an unprobed GCMZDrops integration");
+    require(!find_operation("aviutl_psd_setup").at("available").get<bool>()
+            && find_operation("aviutl_psd_setup").at("reason") == "psdtoolkit_not_available",
+        "native capabilities enabled an incomplete PSDToolKit profile");
     require(capabilities.at("result").at("versions").at("sdk") == "2003300"
+            && capabilities.at("result").at("versions").at("psdToolKit") == "2.0.0alpha10"
             && capabilities.at("result").at("limits").at("pagingCursorTtlSeconds") == 300,
         "native capabilities returned incorrect versions or limits");
 
