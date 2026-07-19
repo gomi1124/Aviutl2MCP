@@ -335,12 +335,16 @@ struct fake_sdk_state final {
     bool has_duplicate_effect_name = false;
     bool has_psd_effects = false;
     bool has_psd_file_object = false;
+    bool has_psd_voice_object = false;
     std::string psd_effect_file = "C:\\Media\\character.psd";
     std::string psd_effect_safeguard = "1";
     std::string psd_effect_tag;
     std::string psd_effect_scene_id = "7";
     std::string psd_effect_character_id = "alice";
     std::string psd_effect_layer_state = "L.0";
+    std::string psd_voice_character_id = "inferred";
+    std::string psd_voice_text = "hello";
+    std::string psd_voice_audio = "C:\\Media\\voice.wav";
     bool is_read_active = false;
     bool should_reject_move = false;
     int read_section_count = 0;
@@ -645,6 +649,8 @@ void wait_fake_rendering_task() {
         : effect == &ACTIVE_FAKE_SDK->third_effect
             ? (ACTIVE_FAKE_SDK->has_psd_file_object
                 ? L"PSDファイル@PSDToolKit"
+                : ACTIVE_FAKE_SDK->has_psd_voice_object
+                    ? L"セリフ準備@PSDToolKit"
                 : L"Text")
         : nullptr;
 }
@@ -837,6 +843,17 @@ void enumerate_fake_palettes(void* parameter, void (*callback)(void*, LPCWSTR)) 
             return ACTIVE_FAKE_SDK->psd_effect_layer_state.c_str();
         }
     }
+    if (effect == &ACTIVE_FAKE_SDK->third_effect && ACTIVE_FAKE_SDK->has_psd_voice_object) {
+        if (name == L"キャラクターID") {
+            return ACTIVE_FAKE_SDK->psd_voice_character_id.c_str();
+        }
+        if (name == L"テキスト") {
+            return ACTIVE_FAKE_SDK->psd_voice_text.c_str();
+        }
+        if (name == L"音声ファイル") {
+            return ACTIVE_FAKE_SDK->psd_voice_audio.c_str();
+        }
+    }
     if (effect == &ACTIVE_FAKE_SDK->third_effect && name == L"Text") {
         return ACTIVE_FAKE_SDK->third_effect_text.c_str();
     }
@@ -869,6 +886,11 @@ void enumerate_fake_palettes(void* parameter, void (*callback)(void*, LPCWSTR)) 
                 : name == L"シーンID" ? &ACTIVE_FAKE_SDK->psd_effect_scene_id
                 : name == L"キャラクターID" ? &ACTIVE_FAKE_SDK->psd_effect_character_id
                 : name == L"レイヤー" ? &ACTIVE_FAKE_SDK->psd_effect_layer_state
+                : nullptr;
+        } else if (ACTIVE_FAKE_SDK->has_psd_voice_object) {
+            destination = name == L"キャラクターID" ? &ACTIVE_FAKE_SDK->psd_voice_character_id
+                : name == L"テキスト" ? &ACTIVE_FAKE_SDK->psd_voice_text
+                : name == L"音声ファイル" ? &ACTIVE_FAKE_SDK->psd_voice_audio
                 : nullptr;
         } else {
             destination = name == L"Text" ? &ACTIVE_FAKE_SDK->third_effect_text
@@ -4129,6 +4151,263 @@ void test_native_psd_create_request_handler() {
     ACTIVE_FAKE_SDK = nullptr;
 }
 
+void test_native_psd_voice_request_handler() {
+    const std::filesystem::path root = create_test_directory(
+        aviutl2_mcp::create_bridge_identity().instance_id);
+    directory_cleanup cleanup(root);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path module_path = root / L"PSDToolKit.aux2";
+    const std::filesystem::path config_path = root / L"PSDToolKit.json";
+    const std::filesystem::path subtitle_path = root / L"subtitle.object";
+    const std::filesystem::path audio_path = root / L"alice.wav";
+    const std::filesystem::path text_path = root / L"alice.txt";
+    const std::filesystem::path lab_path = root / L"alice.lab";
+    const std::filesystem::path other_text_path = root / L"other.txt";
+    const std::filesystem::path temporary_root = root / L"temp";
+    {
+        std::ofstream module(module_path, std::ios::binary);
+        module << "fixture";
+        std::ofstream subtitle(subtitle_path, std::ios::binary);
+        subtitle
+            << "[Object]\r\n"
+               "[Object.0]\r\n"
+               "effect.name=テキスト\r\n"
+               "テキスト=<?o={id=\"__AVIUTL2_MCP_CHARACTER_ID__\"}"
+               "require(\"PSDToolKit\").mes(o, obj)\\n?>\r\n";
+        std::array<char, 44> wav{};
+        std::ranges::copy(std::string_view("RIFF"), wav.begin());
+        std::ranges::copy(std::string_view("WAVE"), wav.begin() + 8);
+        std::ofstream audio(audio_path, std::ios::binary);
+        audio.write(wav.data(), static_cast<std::streamsize>(wav.size()));
+        std::ofstream text(text_path, std::ios::binary);
+        text << "hello\r\nworld";
+        std::ofstream lab(lab_path, std::ios::binary);
+        lab << "0 1000000 a\r\n";
+        std::ofstream other_text(other_text_path, std::ios::binary);
+        other_text << "other";
+    }
+    const auto write_config = [&config_path](const bool direct, const bool intermediate) {
+        std::ofstream config(config_path, std::ios::binary | std::ios::trunc);
+        config << nlohmann::json{
+            {"external_wav_txt_pair", direct},
+            {"external_object_audio_text", intermediate},
+        }.dump();
+    };
+    write_config(false, true);
+
+    fake_sdk_state fake;
+    fake.has_psd_effects = true;
+    configure_fake_sdk(fake);
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "PSD voice fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+    auto gcmz = std::make_shared<fake_gcmz_client>();
+    std::filesystem::path intermediate_path;
+    gcmz->on_send = [&fake, &audio_path, &intermediate_path](
+        const aviutl2_mcp::gcmz_drop_request& request) {
+        require(request.layer == 5 && request.files.size() == 1U
+                && request.frame_advance == 0 && request.margin == -1,
+            "PSD voice intermediate route sent an incorrect GCMZDrops request");
+        intermediate_path = request.files.front();
+        require(intermediate_path.extension() == L".object"
+                && std::filesystem::is_regular_file(intermediate_path),
+            "PSD voice intermediate artifact was missing during delivery");
+        std::ifstream input(intermediate_path, std::ios::binary);
+        const std::string object_text{
+            std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+        require(object_text.find("effect.name=音声ファイル") != std::string::npos
+                && object_text.find("effect.name=テキスト") != std::string::npos
+                && object_text.find("テキスト=hello\\nworld") != std::string::npos
+                && object_text.find("[2]") == std::string::npos,
+            "PSD voice intermediate artifact violated the PSDToolKit2 wav.lua contract");
+        fake.has_psd_voice_object = true;
+        fake.psd_voice_character_id = "inferred";
+        fake.psd_voice_text = "hello\\nworld";
+        fake.psd_voice_audio = audio_path.string();
+        fake.first_position = {.layer = 4, .start = 49, .end = 58};
+        fake.second_position = {.layer = 5, .start = 49, .end = 58};
+        fake.first_alias = "[Object]\r\neffect.name=Audio File\r\n";
+        fake.second_alias =
+            "[Object]\r\neffect.name=セリフ準備@PSDToolKit\r\n";
+    };
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_psd_voice_request_handler>(
+        identity,
+        facade,
+        gcmz,
+        aviutl2_mcp::native_psd_voice_options{
+            .psdtoolkit_module_path = module_path,
+            .subtitle_template_path = subtitle_path,
+            .temporary_root = temporary_root,
+        }));
+    const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string initial_revision = dispatcher.revisions().content_revision();
+    const std::string initial_view_revision = dispatcher.revisions().view_revision();
+    const nlohmann::json intermediate_parameters{
+        {"audioPath", audio_path.string()},
+        {"textPath", text_path.string()},
+        {"labPath", lab_path.string()},
+        {"characterId", "alice"},
+        {"placement", {
+            {"sceneId", 7},
+            {"layer", 5},
+            {"startFrame", 50},
+            {"durationFrames", 10},
+        }},
+    };
+
+    const nlohmann::json dry_run = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 135U),
+            "psd.createVoice",
+            correlation_id,
+            intermediate_parameters.dump(),
+            initial_revision,
+            true),
+        identity.instance_id).get()));
+    require(dry_run.at("ok").get<bool>()
+            && dry_run.at("result").at("voiceObjects").is_null()
+            && dry_run.at("result").at("subtitleObjects").is_null()
+            && dry_run.at("result").at("plannedChanges").size() == 3U
+            && dry_run.at("result").at("companionFiles").at("labPath")
+                == lab_path.string()
+            && dry_run.at("revision") == initial_revision
+            && dry_run.at("viewRevision") == initial_view_revision
+            && gcmz->probe_count == 1
+            && gcmz->send_count == 0
+            && !std::filesystem::exists(temporary_root),
+        "PSD voice dry-run mutated the project or created a temporary artifact");
+
+    const nlohmann::json created = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 136U),
+            "psd.createVoice",
+            correlation_id,
+            intermediate_parameters.dump(),
+            initial_revision),
+        identity.instance_id).get()));
+    require(created.at("ok").get<bool>()
+            && created.at("result").at("voiceObjects").size() == 2U
+            && created.at("result").at("subtitleObjects").size() == 1U
+            && created.at("result").at("appliedChanges").size() == 3U
+            && created.at("result").at("companionFiles").at("audioPath")
+                == audio_path.string()
+            && created.at("revision") != initial_revision
+            && created.at("viewRevision") != initial_view_revision
+            && fake.psd_voice_character_id == "alice"
+            && gcmz->probe_count == 2
+            && gcmz->send_count == 1
+            && !intermediate_path.empty()
+            && !std::filesystem::exists(intermediate_path)
+            && !std::filesystem::exists(intermediate_path.parent_path()),
+        "PSD voice intermediate route did not verify or clean up its result");
+
+    const nlohmann::json stale = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 137U),
+            "psd.createVoice",
+            correlation_id,
+            intermediate_parameters.dump(),
+            initial_revision),
+        identity.instance_id).get()));
+    require(!stale.at("ok").get<bool>()
+            && stale.at("error").at("code") == "revision_conflict"
+            && gcmz->send_count == 1,
+        "PSD voice accepted a stale revision or duplicated its GCMZDrops request");
+
+    const std::string intermediate_revision = dispatcher.revisions().content_revision();
+    write_config(true, false);
+    gcmz->on_send = [&fake, &audio_path, &text_path](
+        const aviutl2_mcp::gcmz_drop_request& request) {
+        require(request.layer == 8 && request.files.size() == 2U
+                && request.files[0] == audio_path && request.files[1] == text_path,
+            "PSD voice direct route did not send the same-basename WAV/TXT pair");
+        fake.has_psd_voice_object = true;
+        fake.psd_voice_character_id = "inferred";
+        fake.psd_voice_text = "hello\\nworld";
+        fake.psd_voice_audio = audio_path.string();
+        fake.first_position = {.layer = 7, .start = 79, .end = 88};
+        fake.second_position = {.layer = 8, .start = 79, .end = 88};
+    };
+    nlohmann::json direct_parameters = intermediate_parameters;
+    direct_parameters["characterId"] = "bob";
+    direct_parameters["placement"] = {
+        {"sceneId", 7},
+        {"layer", 8},
+        {"startFrame", 80},
+        {"endFrame", 89},
+    };
+    const nlohmann::json direct = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 138U),
+            "psd.createVoice",
+            aviutl2_mcp::create_bridge_identity().instance_id,
+            direct_parameters.dump(),
+            intermediate_revision),
+        identity.instance_id).get()));
+    require(direct.at("ok").get<bool>()
+            && direct.at("result").at("voiceObjects").size() == 2U
+            && direct.at("result").at("subtitleObjects").size() == 1U
+            && fake.psd_voice_character_id == "bob"
+            && gcmz->send_count == 2,
+        "PSD voice direct WAV/TXT route did not complete its postconditions");
+
+    const std::string direct_revision = dispatcher.revisions().content_revision();
+    nlohmann::json invalid_parameters = intermediate_parameters;
+    invalid_parameters["textPath"] = other_text_path.string();
+    const nlohmann::json invalid = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 139U),
+            "psd.createVoice",
+            aviutl2_mcp::create_bridge_identity().instance_id,
+            invalid_parameters.dump(),
+            direct_revision),
+        identity.instance_id).get()));
+    require(!invalid.at("ok").get<bool>()
+            && invalid.at("error").at("code") == "invalid_media_file"
+            && gcmz->send_count == 2,
+        "PSD voice accepted mismatched WAV/TXT basenames");
+
+    write_config(false, true);
+    std::filesystem::path partial_artifact;
+    gcmz->on_send = [&partial_artifact](const aviutl2_mcp::gcmz_drop_request& request) {
+        partial_artifact = request.files.front();
+    };
+    nlohmann::json partial_parameters = intermediate_parameters;
+    partial_parameters["placement"] = {
+        {"sceneId", 7},
+        {"layer", 5},
+        {"startFrame", 120},
+        {"durationFrames", 10},
+    };
+    const nlohmann::json partial = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 140U),
+            "psd.createVoice",
+            aviutl2_mcp::create_bridge_identity().instance_id,
+            partial_parameters.dump(),
+            direct_revision,
+            false,
+            20U),
+        identity.instance_id).get()));
+    require(!partial.at("ok").get<bool>()
+            && partial.at("error").at("code") == "partial_operation"
+            && partial.at("error").at("outcome") == "partial"
+            && partial.at("error").at("undoRecommended").get<bool>()
+            && partial.at("result").at("appliedChanges").size() == 1U
+            && !partial_artifact.empty()
+            && !std::filesystem::exists(partial_artifact)
+            && gcmz->send_count == 3,
+        "PSD voice did not report and clean up an unverifiable delivery as partial");
+
+    dispatcher.stop();
+    facade.detach();
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -4166,6 +4445,7 @@ int main() {
         std::pair{"native PSD setup request handler", &test_native_psd_setup_request_handler},
         std::pair{"native PSD item request handlers", &test_native_psd_item_request_handlers},
         std::pair{"native PSD create request handler", &test_native_psd_create_request_handler},
+        std::pair{"native PSD voice request handler", &test_native_psd_voice_request_handler},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

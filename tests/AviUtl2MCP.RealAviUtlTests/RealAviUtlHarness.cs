@@ -120,6 +120,17 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
                 bridgePath,
                 Path.Combine(bridgeDirectory, "AviUtl2MCP.Bridge.aux2"),
                 overwrite: false);
+            string bridgeAssetsDirectory = Path.Combine(
+                Path.GetDirectoryName(bridgePath)!,
+                "assets");
+            if (!Directory.Exists(bridgeAssetsDirectory))
+            {
+                throw new DirectoryNotFoundException(
+                    "The native Bridge PSDToolKit2 assets directory was not produced.");
+            }
+            CopyDirectory(
+                bridgeAssetsDirectory,
+                Path.Combine(bridgeDirectory, "assets"));
             PrepareModuleTrust(dataPath, portableDataDirectory);
             CreateFixtureProject(sourceProjectPath, fixtureProjectPath);
 

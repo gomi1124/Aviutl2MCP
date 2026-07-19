@@ -179,7 +179,7 @@ std::string create_intermediate_voice_object(
     if (has_forbidden_line_character(audio_path)) {
         throw std::invalid_argument("audio path contains a forbidden character");
     }
-    const std::string escaped_text = escape_voice_text(text);
+    const std::string escaped_text = normalize_psd_voice_text(text);
     return "[0]\r\n"
         "frame=0,0\r\n"
         "[0.0]\r\n"
@@ -190,6 +190,10 @@ std::string create_intermediate_voice_object(
         "[1.0]\r\n"
         "effect.name=テキスト\r\n"
         "テキスト=" + escaped_text + "\r\n";
+}
+
+std::string normalize_psd_voice_text(const std::string_view text) {
+    return escape_voice_text(text);
 }
 
 std::string create_psd_subtitle_alias(

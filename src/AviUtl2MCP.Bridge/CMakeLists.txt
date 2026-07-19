@@ -71,6 +71,13 @@ set_target_properties(AviUtl2MCP.Bridge PROPERTIES
   SUFFIX ".aux2"
 )
 
+add_custom_command(TARGET AviUtl2MCP.Bridge POST_BUILD
+  COMMAND "${CMAKE_COMMAND}" -E copy_directory
+    "${PROJECT_SOURCE_DIR}/assets"
+    "$<TARGET_FILE_DIR:AviUtl2MCP.Bridge>/assets"
+  VERBATIM
+)
+
 foreach(target AviUtl2MCP.Bridge.Core AviUtl2MCP.Bridge)
   if(MSVC)
     target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8 /EHsc)

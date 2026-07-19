@@ -3,7 +3,9 @@
 #include "aviutl2_mcp/bridge_identity.h"
 #include "aviutl2_mcp/request_dispatcher.h"
 
+#include <filesystem>
 #include <memory>
+#include <optional>
 
 namespace aviutl2_mcp {
 
@@ -81,6 +83,33 @@ private:
     bridge_identity identity_;
     sdk_read_facade& sdk_;
     std::shared_ptr<gcmz_client> gcmz_;
+};
+
+struct native_psd_voice_options final {
+    std::optional<std::filesystem::path> psdtoolkit_module_path;
+    std::optional<std::filesystem::path> subtitle_template_path;
+    std::optional<std::filesystem::path> temporary_root;
+};
+
+class native_psd_voice_request_handler final : public operation_handler {
+public:
+    native_psd_voice_request_handler(
+        bridge_identity identity,
+        sdk_read_facade& sdk,
+        std::shared_ptr<gcmz_client> gcmz,
+        native_psd_voice_options options = {});
+
+    [[nodiscard]] std::string operation() const override;
+    [[nodiscard]] bool is_mutating() const noexcept override;
+    [[nodiscard]] operation_result execute(
+        const operation_request& request,
+        operation_execution_context& context) override;
+
+private:
+    bridge_identity identity_;
+    sdk_read_facade& sdk_;
+    std::shared_ptr<gcmz_client> gcmz_;
+    native_psd_voice_options options_;
 };
 
 }  // namespace aviutl2_mcp

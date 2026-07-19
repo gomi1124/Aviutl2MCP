@@ -16,6 +16,8 @@ struct psd_value_validation final {
 
 [[nodiscard]] psd_value_validation validate_psd_layer_state(std::string_view value);
 
+[[nodiscard]] std::string normalize_psd_voice_text(std::string_view text);
+
 [[nodiscard]] std::string create_intermediate_voice_object(
     const std::filesystem::path& normalized_audio_path,
     std::string_view text);

@@ -300,6 +300,8 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
         identity_, get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_psd_create_request_handler>(
         identity_, get_sdk_read_facade(), std::make_shared<gcmz_adapter>()));
+    dispatcher_.register_handler(std::make_unique<native_psd_voice_request_handler>(
+        identity_, get_sdk_read_facade(), std::make_shared<gcmz_adapter>()));
     project_load_callback_state_ = std::make_shared<project_load_callback_state>();
     project_load_callback_state_->revisions = &dispatcher_.revisions();
     const std::weak_ptr<project_load_callback_state> callback_state(project_load_callback_state_);

@@ -3,11 +3,14 @@
 #include "aviutl2_mcp/gcmz_adapter.h"
 #include "aviutl2_mcp/locator_resolver.h"
 #include "aviutl2_mcp/native_operation_result.h"
+#include "aviutl2_mcp/native_ring_logger.h"
+#include "aviutl2_mcp/pipe_security.h"
 #include "aviutl2_mcp/psd_codecs.h"
 #include "aviutl2_mcp/psd_contract.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
 
 #include <Windows.h>
+#include <ShlObj.h>
 
 #include <nlohmann/json.hpp>
 
@@ -18,6 +21,8 @@
 #include <cstdint>
 #include <cwctype>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <ranges>
@@ -633,6 +638,588 @@ struct psd_create_parameters final {
         .retryable = false,
         .undo_recommended = true,
     };
+}
+
+constexpr std::size_t MAXIMUM_VOICE_TEXT_BYTES = 64U * 1024U;
+
+class invalid_media_file_error final : public std::invalid_argument {
+public:
+    using std::invalid_argument::invalid_argument;
+};
+
+[[nodiscard]] std::string filesystem_path_to_utf8(const std::filesystem::path& path) {
+    const std::wstring value = path.lexically_normal().native();
+    if (value.empty() || value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+        throw std::invalid_argument("file path is empty or too long");
+    }
+    const int required = WideCharToMultiByte(
+        CP_UTF8,
+        WC_ERR_INVALID_CHARS,
+        value.data(),
+        static_cast<int>(value.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+    if (required <= 0) {
+        throw std::invalid_argument("file path is not valid UTF-16");
+    }
+    std::string result(static_cast<std::size_t>(required), '\0');
+    if (WideCharToMultiByte(
+            CP_UTF8,
+            WC_ERR_INVALID_CHARS,
+            value.data(),
+            static_cast<int>(value.size()),
+            result.data(),
+            required,
+            nullptr,
+            nullptr) != required) {
+        throw std::runtime_error("file path UTF-8 conversion failed");
+    }
+    return result;
+}
+
+[[nodiscard]] std::wstring lower_path_component(std::wstring value) {
+    std::ranges::transform(value, value.begin(), [](const wchar_t character) {
+        return static_cast<wchar_t>(std::towlower(character));
+    });
+    return value;
+}
+
+[[nodiscard]] std::filesystem::path normalize_existing_voice_file(
+    const std::string& raw_path,
+    const std::wstring_view extension,
+    const char* parameter_name) {
+    const std::filesystem::path input = utf8_to_filesystem_path(raw_path);
+    if (!input.is_absolute()
+        || lower_path_component(input.extension().wstring()) != extension) {
+        throw invalid_media_file_error(
+            std::string(parameter_name)
+                + " must be an absolute file path with the required extension");
+    }
+    std::error_code error;
+    const std::filesystem::path normalized = std::filesystem::canonical(input, error);
+    if (error || !std::filesystem::is_regular_file(normalized, error) || error) {
+        throw invalid_media_file_error(
+            std::string(parameter_name) + " must identify an existing regular file");
+    }
+    return normalized;
+}
+
+[[nodiscard]] bool have_same_voice_basename(
+    const std::filesystem::path& left,
+    const std::filesystem::path& right) noexcept {
+    std::error_code error;
+    const bool same_parent = std::filesystem::equivalent(
+        left.parent_path(), right.parent_path(), error);
+    return !error && same_parent
+        && lower_path_component(left.stem().wstring())
+            == lower_path_component(right.stem().wstring());
+}
+
+void validate_wav_file(const std::filesystem::path& path) {
+    std::error_code error;
+    const std::uintmax_t size = std::filesystem::file_size(path, error);
+    if (error || size < 12U) {
+        throw invalid_media_file_error("audioPath is not a readable WAV file");
+    }
+    std::array<char, 12> header{};
+    std::ifstream input(path, std::ios::binary);
+    input.read(header.data(), static_cast<std::streamsize>(header.size()));
+    const bool has_riff = std::string_view(header.data(), 4U) == "RIFF"
+        || std::string_view(header.data(), 4U) == "RF64";
+    if (!input || !has_riff || std::string_view(header.data() + 8, 4U) != "WAVE") {
+        throw invalid_media_file_error("audioPath is not a supported RIFF/RF64 WAV file");
+    }
+}
+
+[[nodiscard]] std::string read_voice_text(const std::filesystem::path& path) {
+    std::error_code error;
+    const std::uintmax_t size = std::filesystem::file_size(path, error);
+    if (error || size > MAXIMUM_VOICE_TEXT_BYTES) {
+        throw invalid_media_file_error("textPath exceeds the 64 KiB UTF-8 limit");
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw invalid_media_file_error("textPath could not be opened");
+    }
+    std::string text{
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()};
+    if (text.size() >= 3U
+        && static_cast<unsigned char>(text[0]) == 0xefU
+        && static_cast<unsigned char>(text[1]) == 0xbbU
+        && static_cast<unsigned char>(text[2]) == 0xbfU) {
+        text.erase(0U, 3U);
+    }
+    try {
+        static_cast<void>(normalize_psd_voice_text(text));
+    } catch (const std::invalid_argument& exception) {
+        throw invalid_media_file_error(exception.what());
+    }
+    return text;
+}
+
+[[nodiscard]] std::string read_subtitle_template(const std::filesystem::path& path) {
+    std::error_code error;
+    const std::uintmax_t size = std::filesystem::file_size(path, error);
+    if (error || size == 0U || size > MAXIMUM_VOICE_TEXT_BYTES) {
+        throw std::invalid_argument("subtitle template is missing or exceeds 64 KiB");
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::invalid_argument("subtitle template could not be opened");
+    }
+    return {
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()};
+}
+
+[[nodiscard]] std::optional<std::filesystem::path> get_loaded_module_path(
+    const wchar_t* module_name) {
+    const HMODULE module = GetModuleHandleW(module_name);
+    if (module == nullptr) {
+        return std::nullopt;
+    }
+    std::wstring buffer(512U, L'\0');
+    while (buffer.size() <= 32'768U) {
+        const DWORD copied = GetModuleFileNameW(
+            module,
+            buffer.data(),
+            static_cast<DWORD>(buffer.size()));
+        if (copied == 0U) {
+            return std::nullopt;
+        }
+        if (copied < buffer.size() - 1U) {
+            buffer.resize(copied);
+            return std::filesystem::path(buffer);
+        }
+        buffer.resize(buffer.size() * 2U);
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::filesystem::path get_local_app_data_path() {
+    PWSTR raw_path = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(
+        FOLDERID_LocalAppData,
+        KF_FLAG_DEFAULT,
+        nullptr,
+        &raw_path);
+    if (FAILED(result) || raw_path == nullptr) {
+        if (raw_path != nullptr) {
+            CoTaskMemFree(raw_path);
+        }
+        throw std::runtime_error("LOCALAPPDATA could not be resolved");
+    }
+    const std::filesystem::path path(raw_path);
+    CoTaskMemFree(raw_path);
+    return path;
+}
+
+[[nodiscard]] std::filesystem::path resolve_psdtoolkit_module_path(
+    const native_psd_voice_options& options) {
+    const std::optional<std::filesystem::path> path = options.psdtoolkit_module_path.has_value()
+        ? options.psdtoolkit_module_path
+        : get_loaded_module_path(L"PSDToolKit.aux2");
+    if (!path.has_value()) {
+        throw std::invalid_argument("PSDToolKit.aux2 is not loaded");
+    }
+    return path->lexically_normal();
+}
+
+[[nodiscard]] std::filesystem::path resolve_subtitle_template_path(
+    const native_psd_voice_options& options) {
+    if (options.subtitle_template_path.has_value()) {
+        return options.subtitle_template_path->lexically_normal();
+    }
+    const std::optional<std::filesystem::path> bridge =
+        get_loaded_module_path(L"AviUtl2MCP.Bridge.aux2");
+    if (!bridge.has_value()) {
+        throw std::invalid_argument("AviUtl2MCP Bridge module path could not be resolved");
+    }
+    return bridge->parent_path() / L"assets" / L"psdtoolkit2" / L"v1"
+        / L"subtitle.object";
+}
+
+[[nodiscard]] std::filesystem::path resolve_voice_temporary_root(
+    const native_psd_voice_options& options) {
+    if (options.temporary_root.has_value()) {
+        return *options.temporary_root;
+    }
+    return get_local_app_data_path() / L"AviUtl2MCP" / L"v1" / L"temp";
+}
+
+class voice_temporary_artifact final {
+public:
+    voice_temporary_artifact(
+        std::filesystem::path root,
+        std::string correlation_id)
+        : correlation_id_(std::move(correlation_id)) {
+        if (!is_nonzero_uuid(correlation_id_)) {
+            throw std::invalid_argument("voice correlation ID is invalid");
+        }
+        ensure_user_only_directory(root);
+        std::error_code error;
+        root_ = std::filesystem::weakly_canonical(root, error);
+        if (error) {
+            throw std::system_error(error, "voice temporary root could not be resolved");
+        }
+        directory_ = root_ / utf8_to_filesystem_path(correlation_id_);
+        if (directory_.parent_path() != root_
+            || filesystem_path_to_utf8(directory_.filename()) != correlation_id_) {
+            throw std::invalid_argument("voice temporary directory escaped its root");
+        }
+        if (std::filesystem::exists(directory_, error) || error) {
+            throw std::invalid_argument("voice temporary directory already exists");
+        }
+        ensure_user_only_directory(directory_);
+        file_ = directory_ / L"voice.object";
+    }
+
+    ~voice_temporary_artifact() {
+        std::error_code error;
+        try {
+            if (directory_.empty() || directory_.parent_path() != root_
+                || !is_nonzero_uuid(correlation_id_)) {
+                return;
+            }
+            static_cast<void>(std::filesystem::remove_all(directory_, error));
+        } catch (...) {
+            error = std::make_error_code(std::errc::io_error);
+        }
+        if (error) {
+            get_native_logger().write(
+                native_log_level::warning,
+                "psd",
+                "psd.voice_temp_cleanup_failed",
+                "Voice temporary artifact cleanup failed",
+                native_log_context{
+                    .correlation_id = correlation_id_,
+                    .operation = "psd.createVoice",
+                    .result_code = "cleanup_failed",
+                });
+        }
+    }
+
+    voice_temporary_artifact(const voice_temporary_artifact&) = delete;
+    voice_temporary_artifact& operator=(const voice_temporary_artifact&) = delete;
+
+    [[nodiscard]] const std::filesystem::path& file() const noexcept {
+        return file_;
+    }
+
+    void write(const std::string& content) const {
+        std::ofstream output(file_, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            throw std::runtime_error("voice temporary object could not be created");
+        }
+        output.write(content.data(), static_cast<std::streamsize>(content.size()));
+        output.close();
+        if (!output) {
+            throw std::runtime_error("voice temporary object could not be written");
+        }
+    }
+
+private:
+    std::filesystem::path root_;
+    std::filesystem::path directory_;
+    std::filesystem::path file_;
+    std::string correlation_id_;
+};
+
+struct psd_voice_parameters final {
+    std::filesystem::path audio_path;
+    std::filesystem::path text_path;
+    std::optional<std::filesystem::path> lab_path;
+    std::string text;
+    std::string normalized_text;
+    std::string character_id;
+    std::optional<object_locator> psd_locator;
+    int scene_id;
+    int layer;
+    int start_frame;
+    int end_frame;
+    int length;
+};
+
+[[nodiscard]] psd_voice_parameters parse_psd_voice_parameters(
+    const nlohmann::json& params) {
+    const std::string audio_raw = parse_required_string(params, "audioPath");
+    const std::filesystem::path audio = normalize_existing_voice_file(
+        audio_raw, L".wav", "audioPath");
+    validate_wav_file(audio);
+
+    std::filesystem::path text;
+    const auto text_value = params.find("textPath");
+    if (text_value == params.end() || text_value->is_null()) {
+        text = audio;
+        text.replace_extension(L".txt");
+        text = normalize_existing_voice_file(
+            filesystem_path_to_utf8(text), L".txt", "textPath");
+    } else {
+        text = normalize_existing_voice_file(
+            parse_required_string(params, "textPath"), L".txt", "textPath");
+    }
+    if (!have_same_voice_basename(audio, text)) {
+        throw invalid_media_file_error("audioPath and textPath must have the same basename");
+    }
+    const std::string text_content = read_voice_text(text);
+
+    std::optional<std::filesystem::path> lab;
+    const auto lab_value = params.find("labPath");
+    if (lab_value != params.end() && !lab_value->is_null()) {
+        lab = normalize_existing_voice_file(
+            parse_required_string(params, "labPath"), L".lab", "labPath");
+        if (!have_same_voice_basename(audio, *lab)) {
+            throw invalid_media_file_error("audioPath and labPath must have the same basename");
+        }
+    } else {
+        std::filesystem::path companion = audio;
+        companion.replace_extension(L".lab");
+        std::error_code error;
+        if (std::filesystem::is_regular_file(companion, error) && !error) {
+            lab = std::filesystem::canonical(companion, error);
+            if (error) {
+                lab.reset();
+            }
+        }
+    }
+
+    const std::string character_id = parse_required_string(params, "characterId");
+    const psd_value_validation character_validation =
+        validate_psd_character_id(character_id);
+    if (!character_validation.ok) {
+        throw std::invalid_argument(character_validation.error_message);
+    }
+
+    std::optional<object_locator> psd_locator;
+    const auto psd_locator_value = params.find("psdLocator");
+    if (psd_locator_value != params.end() && !psd_locator_value->is_null()) {
+        if (!psd_locator_value->is_object()) {
+            throw std::invalid_argument("psdLocator must be an object");
+        }
+        psd_locator = parse_locator(nlohmann::json{{"locator", *psd_locator_value}});
+    }
+
+    const auto placement_value = params.find("placement");
+    if (placement_value == params.end() || !placement_value->is_object()) {
+        throw std::invalid_argument("placement must be an object");
+    }
+    const nlohmann::json& placement = *placement_value;
+    const int scene_id = parse_required_integer(placement, "sceneId", 0);
+    const int layer = parse_required_integer(placement, "layer", 1);
+    if (layer > (std::numeric_limits<int>::max)() - 2) {
+        throw std::invalid_argument("placement layer is outside the supported range");
+    }
+    const int start_frame = parse_required_integer(placement, "startFrame", 1);
+    const bool has_end = placement.contains("endFrame")
+        && !placement.at("endFrame").is_null();
+    const bool has_duration = placement.contains("durationFrames")
+        && !placement.at("durationFrames").is_null();
+    if (has_end == has_duration) {
+        throw std::invalid_argument(
+            "placement must contain exactly one of endFrame or durationFrames");
+    }
+    int end_frame = 0;
+    int length = 0;
+    if (has_end) {
+        end_frame = parse_required_integer(placement, "endFrame", start_frame);
+        const std::int64_t calculated = static_cast<std::int64_t>(end_frame)
+            - start_frame + 1;
+        if (calculated > (std::numeric_limits<int>::max)()) {
+            throw std::invalid_argument("placement duration is outside the supported range");
+        }
+        length = static_cast<int>(calculated);
+    } else {
+        length = parse_required_integer(placement, "durationFrames", 1);
+        const std::int64_t calculated = static_cast<std::int64_t>(start_frame)
+            + length - 1;
+        if (calculated > (std::numeric_limits<int>::max)()) {
+            throw std::invalid_argument("placement duration is outside the supported range");
+        }
+        end_frame = static_cast<int>(calculated);
+    }
+    return {
+        .audio_path = audio,
+        .text_path = text,
+        .lab_path = lab,
+        .text = text_content,
+        .normalized_text = normalize_psd_voice_text(text_content),
+        .character_id = character_id,
+        .psd_locator = std::move(psd_locator),
+        .scene_id = scene_id,
+        .layer = layer,
+        .start_frame = start_frame,
+        .end_frame = end_frame,
+        .length = length,
+    };
+}
+
+[[nodiscard]] nlohmann::json serialize_voice_companion_files(
+    const psd_voice_parameters& parameters) {
+    return {
+        {"audioPath", filesystem_path_to_utf8(parameters.audio_path)},
+        {"textPath", filesystem_path_to_utf8(parameters.text_path)},
+        {"labPath", parameters.lab_path.has_value()
+            ? nlohmann::json(filesystem_path_to_utf8(*parameters.lab_path))
+            : nlohmann::json(nullptr)},
+    };
+}
+
+[[nodiscard]] nlohmann::json create_psd_voice_changes(
+    const psd_voice_parameters& parameters) {
+    return nlohmann::json::array({
+        nlohmann::json{
+            {"kind", "createPsdVoice"},
+            {"target", "scene:" + std::to_string(parameters.scene_id)
+                + "/layers:" + std::to_string(parameters.layer) + "-"
+                + std::to_string(parameters.layer + 1)
+                + "/frame:" + std::to_string(parameters.start_frame)},
+        },
+        nlohmann::json{
+            {"kind", "setPsdVoiceCharacter"},
+            {"target", "effect:" + std::string(PSD_VOICE_EFFECT)
+                + ":0/キャラクターID"},
+            {"after", parameters.character_id},
+        },
+        nlohmann::json{
+            {"kind", "createPsdSubtitle"},
+            {"target", "scene:" + std::to_string(parameters.scene_id)
+                + "/layer:" + std::to_string(parameters.layer + 2)
+                + "/frames:" + std::to_string(parameters.start_frame) + "-"
+                + std::to_string(parameters.end_frame)},
+        },
+    });
+}
+
+struct created_voice_result final {
+    sdk_object_detail_snapshot detail;
+    std::vector<sdk_object_snapshot> objects;
+};
+
+[[nodiscard]] std::optional<created_voice_result> find_created_voice(
+    sdk_read_facade& sdk,
+    const bridge_identity& identity,
+    const std::string& project_generation,
+    const psd_voice_parameters& parameters,
+    const std::optional<std::string_view> expected_character = std::nullopt) {
+    const sdk_timeline_query_result timeline = sdk.query_timeline({
+        .scene_id = parameters.scene_id,
+        .layer_start = parameters.layer,
+        .layer_end = parameters.layer + 1,
+        .start_frame = parameters.start_frame,
+        .end_frame = parameters.start_frame,
+        .offset = 0U,
+        .limit = 100U,
+        .include_effects = true,
+        .use_display_defaults = false,
+    });
+    if (!timeline.ok || timeline.timeline.is_truncated) {
+        return std::nullopt;
+    }
+    std::vector<sdk_object_snapshot> objects;
+    std::optional<sdk_object_detail_snapshot> voice;
+    for (const sdk_object_snapshot& object : timeline.timeline.objects) {
+        if (object.candidate.start_frame != parameters.start_frame
+            || object.candidate.layer < parameters.layer
+            || object.candidate.layer > parameters.layer + 1) {
+            continue;
+        }
+        objects.push_back(object);
+        if (!has_effect(object, PSD_VOICE_EFFECT)) {
+            continue;
+        }
+        const object_locator locator = create_object_locator(
+            identity.instance_id,
+            project_generation,
+            object.candidate);
+        const sdk_object_query_result detail = sdk.query_object(
+            locator,
+            identity.instance_id,
+            project_generation,
+            false,
+            true);
+        const std::optional<psd_object_contract> contract = detail.ok
+            ? validate_psd_object_contract(
+                detail.detail,
+                native_psd_item_operation::character)
+            : std::nullopt;
+        if (!contract.has_value()
+            || contract->group->effect.name != PSD_VOICE_EFFECT) {
+            return std::nullopt;
+        }
+        const std::optional<std::string> audio = get_string_value(find_unique_item(
+            *contract->group, "音声ファイル", "file"));
+        const std::optional<std::string> text = get_string_value(find_unique_item(
+            *contract->group, "テキスト", "text"));
+        const std::optional<std::string> character = get_string_value(
+            contract->target_item);
+        if (!audio.has_value() || !text.has_value() || !character.has_value()
+            || !paths_identify_same_file(
+                utf8_to_filesystem_path(*audio), parameters.audio_path)
+            || *text != parameters.normalized_text
+            || (expected_character.has_value()
+                && *character != *expected_character)) {
+            return std::nullopt;
+        }
+        if (voice.has_value()) {
+            return std::nullopt;
+        }
+        voice = detail.detail;
+    }
+    if (!voice.has_value() || objects.size() != 2U) {
+        return std::nullopt;
+    }
+    return created_voice_result{
+        .detail = std::move(*voice),
+        .objects = std::move(objects),
+    };
+}
+
+[[nodiscard]] std::optional<sdk_object_snapshot> find_created_subtitle(
+    sdk_read_facade& sdk,
+    const bridge_identity& identity,
+    const std::string& project_generation,
+    const psd_voice_parameters& parameters,
+    const std::string& expected_alias) {
+    const sdk_timeline_query_result timeline = sdk.query_timeline({
+        .scene_id = parameters.scene_id,
+        .layer_start = parameters.layer + 2,
+        .layer_end = parameters.layer + 2,
+        .start_frame = parameters.start_frame,
+        .end_frame = parameters.end_frame,
+        .offset = 0U,
+        .limit = 100U,
+        .include_effects = true,
+        .use_display_defaults = false,
+    });
+    if (!timeline.ok || timeline.timeline.is_truncated) {
+        return std::nullopt;
+    }
+    std::optional<sdk_object_snapshot> match;
+    for (const sdk_object_snapshot& object : timeline.timeline.objects) {
+        if (object.candidate.layer != parameters.layer + 2
+            || object.candidate.start_frame != parameters.start_frame
+            || object.candidate.end_frame != parameters.end_frame) {
+            continue;
+        }
+        const object_locator locator = create_object_locator(
+            identity.instance_id,
+            project_generation,
+            object.candidate);
+        const sdk_object_query_result detail = sdk.query_object(
+            locator,
+            identity.instance_id,
+            project_generation,
+            true,
+            false);
+        if (!detail.ok || detail.detail.alias != expected_alias || match.has_value()) {
+            return std::nullopt;
+        }
+        match = object;
+    }
+    return match;
 }
 
 [[nodiscard]] std::optional<sdk_object_snapshot> find_updated_object(
@@ -1670,6 +2257,438 @@ operation_result native_psd_create_request_handler::execute(
     } catch (const nlohmann::json::exception&) {
         return create_native_failure(
             "invalid_argument", "PSD create request JSON is invalid", context);
+    } catch (const std::invalid_argument& exception) {
+        return create_native_failure("invalid_argument", exception.what(), context);
+    } catch (const std::exception& exception) {
+        return create_native_failure("sdk_query_failed", exception.what(), context, true);
+    }
+}
+
+native_psd_voice_request_handler::native_psd_voice_request_handler(
+    bridge_identity identity,
+    sdk_read_facade& sdk,
+    std::shared_ptr<gcmz_client> gcmz,
+    native_psd_voice_options options)
+    : identity_(std::move(identity)),
+      sdk_(sdk),
+      gcmz_(std::move(gcmz)),
+      options_(std::move(options)) {
+    if (gcmz_ == nullptr) {
+        throw std::invalid_argument("PSD voice creation requires a GCMZDrops client");
+    }
+}
+
+std::string native_psd_voice_request_handler::operation() const {
+    return "psd.createVoice";
+}
+
+bool native_psd_voice_request_handler::is_mutating() const noexcept {
+    return true;
+}
+
+operation_result native_psd_voice_request_handler::execute(
+    const operation_request& request,
+    operation_execution_context& context) {
+    try {
+        if (!request.expected_revision.has_value()
+            || !context.revisions().matches_content(*request.expected_revision)) {
+            return create_native_failure(
+                "revision_conflict",
+                "The expected content revision does not match the current revision",
+                context);
+        }
+        const nlohmann::json params = nlohmann::json::parse(request.params_json);
+        if (!params.is_object()) {
+            throw std::invalid_argument("PSD voice parameters must be an object");
+        }
+        const psd_voice_parameters parameters = parse_psd_voice_parameters(params);
+        const psd_profile_detection profile = detect_runtime_psd_profile(sdk_);
+        if (!profile.is_match) {
+            return create_native_failure(
+                "capability_not_available",
+                "The active PSDToolKit2 effect and item profile is not supported: "
+                    + summarize_profile_failures(profile),
+                context);
+        }
+
+        std::filesystem::path psdtoolkit_module;
+        try {
+            psdtoolkit_module = resolve_psdtoolkit_module_path(options_);
+        } catch (const std::invalid_argument& exception) {
+            return create_native_failure(
+                "capability_not_available",
+                exception.what(),
+                context);
+        }
+        const psdtoolkit_config_result config = read_psdtoolkit_config(psdtoolkit_module);
+        if (!config.ok || config.voice_route == psd_voice_route::unavailable) {
+            return create_native_failure(
+                "capability_not_available",
+                config.ok
+                    ? "PSDToolKit2 has no enabled external voice route"
+                    : config.error_message,
+                context);
+        }
+
+        const sdk_status_snapshot status = sdk_.query_status();
+        if (!status.is_sdk_ready || status.has_query_error
+            || (status.project_state != sdk_project_state::saved
+                && status.project_state != sdk_project_state::unsaved)
+            || status.edit_state != sdk_edit_state::edit) {
+            return create_native_failure(
+                status.has_query_error ? "sdk_query_failed" : "edit_not_available",
+                status.has_query_error
+                    ? status.query_error
+                    : "AviUtl2 is not ready for a PSD voice operation",
+                context,
+                status.has_query_error);
+        }
+        const sdk_project_query_result project = sdk_.query_project(false);
+        if (!project.ok) {
+            return create_native_failure(
+                project.error_code,
+                project.error_message,
+                context,
+                project.error_code == "sdk_query_failed");
+        }
+        if (parameters.scene_id != project.project.current_scene_id) {
+            return create_native_failure(
+                "invalid_argument",
+                "PSD voice creation can only target the active SDK scene",
+                context);
+        }
+
+        const std::string project_generation = context.revisions().project_generation();
+        if (parameters.psd_locator.has_value()) {
+            const sdk_object_query_result target = sdk_.query_object(
+                *parameters.psd_locator,
+                identity_.instance_id,
+                project_generation,
+                false,
+                true);
+            const std::optional<psd_object_contract> contract = target.ok
+                ? validate_psd_object_contract(
+                    target.detail,
+                    native_psd_item_operation::character)
+                : std::nullopt;
+            const std::optional<std::string> target_character = contract.has_value()
+                ? get_string_value(contract->target_item)
+                : std::nullopt;
+            if (!target.ok || !contract.has_value()
+                || contract->group->effect.name != PSD_FILE_EFFECT
+                || target_character != parameters.character_id) {
+                return create_native_failure(
+                    target.ok ? "invalid_argument" : target.error_code,
+                    target.ok
+                        ? "psdLocator must identify a matching PSD character object"
+                        : target.error_message,
+                    context,
+                    !target.ok && target.error_code == "sdk_query_failed");
+            }
+        }
+
+        const sdk_timeline_query_result occupied = sdk_.query_timeline({
+            .scene_id = parameters.scene_id,
+            .layer_start = parameters.layer,
+            .layer_end = parameters.layer + 2,
+            .start_frame = parameters.start_frame,
+            .end_frame = parameters.end_frame,
+            .offset = 0U,
+            .limit = 100U,
+            .include_effects = false,
+            .use_display_defaults = false,
+        });
+        if (!occupied.ok || occupied.timeline.is_truncated) {
+            return create_native_failure(
+                occupied.ok ? "sdk_query_failed" : occupied.error_code,
+                occupied.ok
+                    ? "PSD voice placement collision scan was ambiguous"
+                    : occupied.error_message,
+                context,
+                true);
+        }
+        if (!occupied.timeline.objects.empty()) {
+            return create_native_failure(
+                "object_collision",
+                "PSD voice, prep, or subtitle placement overlaps an existing object",
+                context);
+        }
+
+        std::string subtitle_alias;
+        try {
+            subtitle_alias = create_psd_subtitle_alias(
+                read_subtitle_template(resolve_subtitle_template_path(options_)),
+                parameters.character_id);
+        } catch (const std::invalid_argument& exception) {
+            return create_native_failure(
+                "capability_not_available",
+                exception.what(),
+                context);
+        }
+        const sdk_create_request subtitle_request{
+            .kind = sdk_create_kind::alias,
+            .source = subtitle_alias,
+            .scene_id = parameters.scene_id,
+            .layer = parameters.layer + 2,
+            .start_frame = parameters.start_frame,
+            .length = parameters.length,
+        };
+        const sdk_create_result subtitle_preflight = sdk_.create_objects(
+            subtitle_request,
+            true);
+        if (!subtitle_preflight.ok) {
+            return create_native_failure(
+                subtitle_preflight.error_code,
+                subtitle_preflight.error_message,
+                context,
+                subtitle_preflight.error_code == "sdk_query_failed"
+                    || subtitle_preflight.error_code == "read_not_available");
+        }
+
+        const std::optional<std::filesystem::path> project_path = get_project_path(status);
+        const std::uint32_t process_id = GetCurrentProcessId();
+        const gcmz_probe_result probe = gcmz_->probe(
+            process_id,
+            project_path,
+            (std::min)(request.timeout_ms, 2'000U));
+        if (!probe.ok) {
+            return create_native_failure(
+                probe.error_code,
+                probe.error_message,
+                context,
+                probe.error_code == "gcmz_timeout");
+        }
+
+        const nlohmann::json planned_changes = create_psd_voice_changes(parameters);
+        const nlohmann::json companion_files =
+            serialize_voice_companion_files(parameters);
+        if (request.dry_run) {
+            return create_native_success(nlohmann::json{
+                {"voiceObjects", nullptr},
+                {"subtitleObjects", nullptr},
+                {"companionFiles", companion_files},
+                {"plannedChanges", planned_changes},
+            }.dump(), context);
+        }
+
+        std::unique_ptr<voice_temporary_artifact> temporary_artifact;
+        std::vector<std::filesystem::path> drop_files;
+        if (config.voice_route == psd_voice_route::direct_wav_txt) {
+            drop_files = {parameters.audio_path, parameters.text_path};
+        } else {
+            temporary_artifact = std::make_unique<voice_temporary_artifact>(
+                resolve_voice_temporary_root(options_),
+                request.correlation_id);
+            temporary_artifact->write(create_intermediate_voice_object(
+                parameters.audio_path,
+                parameters.text));
+            drop_files = {temporary_artifact->file()};
+        }
+
+        if (!context.reach_commit_point()) {
+            return create_native_failure(
+                "operation_cancelled",
+                "PSD voice creation was cancelled before cursor positioning",
+                context);
+        }
+        const sdk_view_edit_result cursor = sdk_.edit_view({
+            .scene_id = parameters.scene_id,
+            .frame = parameters.start_frame,
+        }, false);
+        if (!cursor.ok) {
+            return create_native_failure(
+                cursor.error_code,
+                cursor.error_message,
+                context,
+                cursor.error_code == "sdk_query_failed");
+        }
+        if (cursor.has_changed) {
+            static_cast<void>(context.revisions().commit_view_change());
+        }
+        const sdk_project_query_result positioned = sdk_.query_project(false);
+        if (!positioned.ok
+            || positioned.project.current_scene_id != parameters.scene_id
+            || positioned.project.current_frame != parameters.start_frame) {
+            return create_native_failure(
+                "view_changed",
+                "The AviUtl2 cursor changed before the PSD voice delivery",
+                context);
+        }
+
+        const gcmz_send_result sent = gcmz_->send_files(
+            gcmz_drop_request{
+                .layer = parameters.layer,
+                .frame_advance = 0,
+                .margin = -1,
+                .files = std::move(drop_files),
+            },
+            process_id,
+            project_path,
+            (std::min)(request.timeout_ms, 10'000U));
+        if (!sent.ok && !sent.target.ok) {
+            return create_native_failure(
+                sent.error_code,
+                sent.error_message,
+                context,
+                sent.error_code == "gcmz_timeout");
+        }
+
+        nlohmann::json applied_changes = nlohmann::json::array();
+        applied_changes.push_back(planned_changes.at(0));
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds((std::min)(request.timeout_ms, 10'000U));
+        std::optional<created_voice_result> created_voice;
+        do {
+            created_voice = find_created_voice(
+                sdk_, identity_, project_generation, parameters);
+            if (created_voice.has_value()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        } while (std::chrono::steady_clock::now() < deadline);
+        if (!created_voice.has_value()) {
+            static_cast<void>(context.revisions().commit_content_change());
+            return create_external_partial_failure(
+                "The PSD voice delivery could not be verified as audio plus voice prep",
+                nlohmann::json{
+                    {"voiceObjects", nullptr},
+                    {"subtitleObjects", nullptr},
+                    {"companionFiles", companion_files},
+                    {"appliedChanges", applied_changes},
+                },
+                context);
+        }
+
+        const std::optional<psd_object_contract> voice_contract =
+            validate_psd_object_contract(
+                created_voice->detail,
+                native_psd_item_operation::character);
+        if (!voice_contract.has_value()
+            || voice_contract->group->effect.name != PSD_VOICE_EFFECT) {
+            static_cast<void>(context.revisions().commit_content_change());
+            return create_external_partial_failure(
+                "The created voice prep does not match the supported PSDToolKit2 profile",
+                nlohmann::json{
+                    {"voiceObjects", serialize_objects(
+                        created_voice->objects, identity_, project_generation)},
+                    {"subtitleObjects", nullptr},
+                    {"companionFiles", companion_files},
+                    {"appliedChanges", applied_changes},
+                },
+                context);
+        }
+        const object_locator voice_locator = create_object_locator(
+            identity_.instance_id,
+            project_generation,
+            created_voice->detail.object.candidate);
+        const sdk_effect_edit_request character_request{
+            .kind = sdk_effect_edit_kind::set_item,
+            .locator = voice_locator,
+            .effect_name = PSD_VOICE_EFFECT,
+            .effect_occurrence = 0,
+            .item_name = voice_contract->target_item->name,
+            .item_value = parameters.character_id,
+        };
+        const sdk_effect_edit_result character_preflight = sdk_.edit_effect(
+            character_request,
+            identity_.instance_id,
+            project_generation,
+            true);
+        const sdk_effect_edit_result character_edit = character_preflight.ok
+            ? sdk_.edit_effect(
+                character_request,
+                identity_.instance_id,
+                project_generation,
+                false)
+            : character_preflight;
+        if (!character_preflight.ok || !character_edit.ok) {
+            static_cast<void>(context.revisions().commit_content_change());
+            return create_external_partial_failure(
+                "The voice prep was created but its character ID could not be set",
+                nlohmann::json{
+                    {"voiceObjects", serialize_objects(
+                        created_voice->objects, identity_, project_generation)},
+                    {"subtitleObjects", nullptr},
+                    {"companionFiles", companion_files},
+                    {"appliedChanges", applied_changes},
+                },
+                context);
+        }
+        applied_changes.push_back(planned_changes.at(1));
+        const std::optional<created_voice_result> verified_voice = find_created_voice(
+            sdk_,
+            identity_,
+            project_generation,
+            parameters,
+            parameters.character_id);
+        if (!verified_voice.has_value()) {
+            static_cast<void>(context.revisions().commit_content_change());
+            return create_external_partial_failure(
+                "The voice prep character ID round-trip verification failed",
+                nlohmann::json{
+                    {"voiceObjects", serialize_objects(
+                        created_voice->objects, identity_, project_generation)},
+                    {"subtitleObjects", nullptr},
+                    {"companionFiles", companion_files},
+                    {"appliedChanges", applied_changes},
+                },
+                context);
+        }
+
+        const sdk_create_result subtitle_created = sdk_.create_objects(
+            subtitle_request,
+            false);
+        if (!subtitle_created.ok) {
+            static_cast<void>(context.revisions().commit_content_change());
+            return create_external_partial_failure(
+                "The voice was created but the subtitle alias could not be created",
+                nlohmann::json{
+                    {"voiceObjects", serialize_objects(
+                        verified_voice->objects, identity_, project_generation)},
+                    {"subtitleObjects", nullptr},
+                    {"companionFiles", companion_files},
+                    {"appliedChanges", applied_changes},
+                },
+                context);
+        }
+        applied_changes.push_back(planned_changes.at(2));
+        const std::optional<sdk_object_snapshot> verified_subtitle = find_created_subtitle(
+            sdk_,
+            identity_,
+            project_generation,
+            parameters,
+            subtitle_alias);
+        if (!verified_subtitle.has_value()) {
+            static_cast<void>(context.revisions().commit_content_change());
+            return create_external_partial_failure(
+                "The subtitle alias was created but its postcondition could not be verified",
+                nlohmann::json{
+                    {"voiceObjects", serialize_objects(
+                        verified_voice->objects, identity_, project_generation)},
+                    {"subtitleObjects", serialize_objects(
+                        subtitle_created.objects, identity_, project_generation)},
+                    {"companionFiles", companion_files},
+                    {"appliedChanges", applied_changes},
+                },
+                context);
+        }
+
+        static_cast<void>(context.revisions().commit_content_change());
+        return create_native_success(nlohmann::json{
+            {"voiceObjects", serialize_objects(
+                verified_voice->objects, identity_, project_generation)},
+            {"subtitleObjects", serialize_objects(
+                std::vector<sdk_object_snapshot>{*verified_subtitle},
+                identity_,
+                project_generation)},
+            {"companionFiles", companion_files},
+            {"appliedChanges", applied_changes},
+        }.dump(), context);
+    } catch (const nlohmann::json::exception&) {
+        return create_native_failure(
+            "invalid_argument", "PSD voice request JSON is invalid", context);
+    } catch (const invalid_media_file_error& exception) {
+        return create_native_failure("invalid_media_file", exception.what(), context);
     } catch (const std::invalid_argument& exception) {
         return create_native_failure("invalid_argument", exception.what(), context);
     } catch (const std::exception& exception) {
