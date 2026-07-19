@@ -287,7 +287,7 @@ Phase 1の共通エラーに加えて、設計で確定した次を使う。
 
 - 入力DTOはDataAnnotationsとApplicationの実行時検証を併用する。
 - JSON deserializationは未知propertyを拒否し、整数overflow、無効enum、非有限numberを拒否する。
-- Phase 4でDTOから生成した28 input/output schemasを `schemas/mcp/v1/catalog.json` の参照解決済みschemaと比較する。
+- DTOから生成した28 input/output schemasを `schemas/mcp/v1/catalog.json` の参照解決済みschemaと比較する。
 - `tools/list`のname、description、inputSchema、outputSchema、annotationsをcatalogに対してsnapshot testする。
 - schemaの破壊的変更はprotocol/schema major変更なしに行わない。
 - 各toolの正常、入力不正、未接続、能力不足、timeoutをMCP contract testで確認する。

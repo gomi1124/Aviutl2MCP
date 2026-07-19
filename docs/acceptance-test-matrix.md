@@ -2,15 +2,15 @@
 
 ## 1. 運用
 
-各Phase 1受け入れ基準を、Phase 4で実装する自動・実機テストへ一対一で対応付ける。`Test ID`はテスト名またはCI job名に含め、完了時に`Evidence`へworkflow URLまたは実機レポートを記録する。
+各Phase 1受け入れ基準を、実装済みの自動・実機テストへ一対一で対応付ける。`Test ID`はテスト名またはCI job名に含め、`Evidence`へworkflow URLまたは実機レポートを記録する。
 
-2026-07-19時点では33件中30件が合格済み。残る3件は、既存のユーザー所有AviUtl2がGCMZDropsのglobal targetである間は、隔離AviUtl2への誤送信をBridgeが拒否するため保留している。拒否時も失敗レポートを生成し、元fixtureと既存processが不変であることを確認済み。
+2026-07-19時点で33件すべてが合格済み。実機証跡はcommit `53459b3` のクリーンな作業ツリーで生成し、元fixtureのSHA-256不変とharness所有processだけのcleanupを確認した。
 
 | AC ID | Test ID | 層・環境 | 合格条件 | Evidence |
 |---|---|---|---|---|
 | AC-BLD-001 | `build.clean-windows` | Windows CI | locked restoreからServer/Bridgeを警告エラーなしでbuild | [CI] `managed` / `native` / `contract` / `integration` |
 | AC-BLD-002 | `ci.required-jobs` | GitHub Actions | managed/native/contract/integration jobが全成功 | [CI] 全required job成功 |
-| AC-BLD-003 | `real.package-install` | 専用AviUtl2実機 | `.au2pkg.zip`導入後にbridge versionをstatusで取得 | `artifacts/real-e2e/019f7a05-6bd9-76e4-8294-83623bb51a44/debug-report.json` |
+| AC-BLD-003 | `real.package-install` | 専用AviUtl2実機 | `.au2pkg.zip`導入後にbridge versionをstatusで取得 | `artifacts/real-e2e/019f7a33-8fef-7a2d-8b2b-e162fedfebec/debug-report.json` |
 | AC-MCP-001 | `stdio.offline-initialize` | stdio black-box | AviUtl2なしでinitializeと28 tools listが成功 | [CI] `contract` |
 | AC-MCP-002 | `pipe.late-connect` | fake bridge統合 | Server維持中にbridge起動しReadyへ遷移 | [CI] `integration` |
 | AC-MCP-003 | `mcp.catalog-snapshot` | MCP contract | 28 tools、5 resources、4 promptsとSchema catalogが一致 | [CI] `contract` |
@@ -24,13 +24,13 @@
 | AC-EDT-006 | `real.batch-single-undo` | 専用AviUtl2実機 | batch全変更が1回のUndoでgolden snapshotへ戻る | `artifacts/real-e2e/019f79ef-7a3a-785f-ad59-2c4c7c30369e/debug-report.json` |
 | AC-EDT-007 | `app.stable-edit-errors` | Application単体 | not-found/collision/play/saveを別codeで返す | [CI] `native` |
 | AC-EDT-008 | `bridge.batch-partial` | native fake＋実機 | N件目失敗で適用ID/状態/Undo推奨、1 Undo復旧 | [CI] `native` / `integration` + `real-e2e/019f79ef-7a3a-785f-ad59-2c4c7c30369e` |
-| AC-PSD-001 | `real.psd-create` | 専用PSD実機 | PSD投入後にprofile一致objectをSDK再検索 | **保留** target不一致を安全拒否: `real-e2e/019f79f1-0d5e-7d45-a10f-45fd39f7583c` |
+| AC-PSD-001 | `real.psd-create` | 専用PSD実機 | PSD投入後にprofile一致objectをSDK再検索 | `artifacts/real-e2e/019f7a32-2164-75ca-abfb-6d4455c25855/debug-report.json` |
 | AC-PSD-002 | `real.psd-setup` | 専用PSD実機 | 不足/誤配置を検出し、安全候補へsetupを作成 | `artifacts/real-e2e/019f79ef-ce94-7340-8803-bf6ea373c2d7/debug-report.json` |
 | AC-PSD-003 | `real.psd-character-layer` | 専用PSD実機 | character IDとcanonical layerStateがround-trip一致 | `artifacts/real-e2e/019f79ef-ff8e-775b-858a-f5667a48cb81/debug-report.json` |
-| AC-PSD-004 | `real.psd-voice-subtitle` | 専用PSD実機（中間object）＋2設定contract fixture | 両経路の契約と、必須ID付きvoice prep・字幕の実機再検索 | **保留** target不一致を安全拒否: `real-e2e/019f79f1-188e-703a-ad20-d457bc69fcdd` |
-| AC-PSD-005 | `real.psd-lipsync-lab` | 専用PSD実機 | 同basename LABとLipSyncLab構成を検証 | **保留** target不一致を安全拒否: `real-e2e/019f79f1-188e-703a-ad20-d457bc69fcdd` |
+| AC-PSD-004 | `real.psd-voice-subtitle` | 専用PSD実機（中間object）＋2設定contract fixture | 両経路の契約と、必須ID付きvoice prep・字幕の実機再検索 | `artifacts/real-e2e/019f7a32-7ea3-7d8e-9e9b-501eccb70c5b/debug-report.json` |
+| AC-PSD-005 | `real.psd-lipsync-lab` | 専用PSD実機 | 同basename LABとLipSyncLab構成を検証 | `artifacts/real-e2e/019f7a32-7ea3-7d8e-9e9b-501eccb70c5b/debug-report.json` |
 | AC-PSD-006 | `app.psd-capability-isolation` | fake profile/GCMZ | GCMZ無効でも基本tool成功、voiceだけ能力エラー | [CI] `managed` / `integration` |
-| AC-PSD-007 | `bridge.gcmz-partial` | fake GCMZ＋実機 | timeout/一部/誤配置で検出物付きpartialを返す | [CI] `native` / `integration` + `real-e2e/019f79f1-0d5e-7d45-a10f-45fd39f7583c` |
+| AC-PSD-007 | `bridge.gcmz-partial` | fake GCMZ＋実機 | timeout/一部/誤配置で検出物付きpartialを返す | [CI] `native` / `integration` + `artifacts/real-e2e/019f7a18-4b10-72c3-9ae8-30f5d887deb6/debug-report.json` |
 | AC-DIA-001 | `real.preview-image` | 専用AviUtl2実機 | PNG signature、寸法、非空pixel、MCP image content | `artifacts/real-e2e/019f79ef-b444-7aaf-bce5-d279ca45a700/debug-report.json` |
 | AC-DIA-002 | `smoke.before-after-diff` | Application＋実機 | 既知変更のrevisionまたはpixel差を検出 | `artifacts/real-e2e/019f79ef-7a3a-785f-ad59-2c4c7c30369e/debug-report.json` |
 | AC-DIA-003 | `diagnostics.known-log-rules` | Diagnostics単体 | 3 fixtureを根拠行/影響/推奨対処へ分類 | [CI] `managed` |

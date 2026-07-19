@@ -4,7 +4,7 @@
 
 - 作成フェーズ: Phase 3
 - 対象フェーズ: Phase 4 実装・テスト・自動デバッグ
-- 状態: Phase 4実装中（2026-07-19 M1 Buildable skeleton完了）
+- 状態: Phase 4完了（2026-07-19、33 AC合格・配布package生成・GitHub CI成功）
 - 設計入力: [Phase 2設計書](design.md)、[Phase 3クラス図](class-diagram.md)
 - 完了証拠: [受け入れテスト対応表](acceptance-test-matrix.md)の33 AC
 - M1証拠: locked restore、C# 8 project build、native `.aux2` build、28 tool schema conformance、C#/C++ 40-byte header golden vector
@@ -324,9 +324,11 @@ flowchart LR
 | debug不能 | stdout/stderr/bridge logが混ざる危険 | source別収集とcorrelation reportを先行実装 |
 | 依存更新 | floating packageで再現性を失う危険 | central version、lock file、locked restoreをM1条件化 |
 
-レビュー後、循環依存はなく、各末端taskに成果物と検証条件がある。Phase 4ではM1から順に実装し、各milestoneを論理単位でコミットする。
+レビュー後、循環依存なく各末端taskを実装し、milestoneごとの検証と論理単位のコミットを完了した。
 
 ## 11. Phase 4完了条件
+
+以下は2026-07-19にすべて達成済み。個別の自動・実機証跡は[受け入れテスト対応表](acceptance-test-matrix.md)に記録する。
 
 - Windows x64でC# serverとnative `.aux2`がclean buildできる。
 - 28 tools、5 resources、4 promptsがmachine catalogと一致する。
