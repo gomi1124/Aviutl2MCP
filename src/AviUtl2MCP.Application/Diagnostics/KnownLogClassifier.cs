@@ -5,6 +5,7 @@ namespace AviUtl2MCP.Application.Diagnostics;
 public static class KnownLogClassifier
 {
     private const int MAXIMUM_EVIDENCE_PER_RULE = 3;
+    private const int MAXIMUM_EVIDENCE_CHARACTERS = 1024;
 
     private static readonly IReadOnlyList<KnownLogRule> RULES =
     [
@@ -100,8 +101,13 @@ public static class KnownLogClassifier
             : "multiple";
     }
 
-    private static string FormatEvidence(LogEntry entry) =>
-        $"{entry.Timestamp:O} [{entry.Source}] {entry.Message}";
+    private static string FormatEvidence(LogEntry entry)
+    {
+        string evidence = $"{entry.Timestamp:O} [{entry.Source}] {entry.Message}";
+        return evidence.Length <= MAXIMUM_EVIDENCE_CHARACTERS
+            ? evidence
+            : string.Concat(evidence.AsSpan(0, MAXIMUM_EVIDENCE_CHARACTERS - 3), "...");
+    }
 
     private sealed record KnownLogRule(
         string RuleId,

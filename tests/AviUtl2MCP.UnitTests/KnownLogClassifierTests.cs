@@ -75,6 +75,22 @@ public sealed class KnownLogClassifierTests
         Assert.HasCount(2, matches);
     }
 
+    [TestMethod]
+    public void ClassifyBoundsEvidenceLineLength()
+    {
+        // Arrange
+        LogEntry entry = CreateEntry(
+            "aviutl",
+            $"can not open file [{new string('a', 4096)}.ptkcache]");
+
+        // Act
+        KnownLogMatch match = KnownLogClassifier.Classify([entry]).Single();
+
+        // Assert
+        Assert.AreEqual(1024, match.Evidence.Single().Length);
+        StringAssert.EndsWith(match.Evidence.Single(), "...");
+    }
+
     private static LogEntry CreateEntry(string source, string message) =>
         new(TIMESTAMP, "error", source, "fixture", null, message);
 }
