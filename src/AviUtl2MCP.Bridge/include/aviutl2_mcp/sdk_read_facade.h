@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 struct EDIT_HANDLE;
@@ -121,6 +122,35 @@ struct sdk_timeline_query_result final {
     std::string error_message;
 };
 
+using sdk_effect_item_value = std::variant<bool, std::int64_t, double, std::string>;
+
+struct sdk_effect_item_snapshot final {
+    std::string name;
+    std::string type;
+    std::string codec;
+    bool is_writable;
+    std::optional<sdk_effect_item_value> value;
+    std::vector<std::string> choices;
+};
+
+struct sdk_effect_items_group final {
+    sdk_effect_summary effect;
+    std::vector<sdk_effect_item_snapshot> items;
+};
+
+struct sdk_object_detail_snapshot final {
+    sdk_object_snapshot object;
+    std::optional<std::string> alias;
+    std::vector<sdk_effect_items_group> effect_items;
+};
+
+struct sdk_object_query_result final {
+    bool ok = false;
+    sdk_object_detail_snapshot detail{};
+    std::string error_code;
+    std::string error_message;
+};
+
 class sdk_read_facade final {
 public:
     sdk_read_facade() = default;
@@ -135,6 +165,12 @@ public:
     [[nodiscard]] sdk_status_snapshot query_status() const noexcept;
     [[nodiscard]] sdk_project_query_result query_project(bool include_scenes) const noexcept;
     [[nodiscard]] sdk_timeline_query_result query_timeline(const sdk_timeline_query& query) const noexcept;
+    [[nodiscard]] sdk_object_query_result query_object(
+        const object_locator& locator,
+        const std::string& current_instance_id,
+        const std::string& current_project_generation,
+        bool include_alias,
+        bool include_effect_items) const noexcept;
 
     void capture_project(PROJECT_FILE* project, bool is_load = true) noexcept;
     void set_project_loaded_callback(std::function<void()> callback);

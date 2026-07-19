@@ -1,5 +1,6 @@
 #include "aviutl2_mcp/sdk_read_facade.h"
 
+#include "aviutl2_mcp/bridge_identity.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
 
 #include <Windows.h>
@@ -8,6 +9,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
+#include <cmath>
 #include <exception>
 #include <limits>
 #include <span>
@@ -22,6 +25,9 @@ constexpr int MAXIMUM_EFFECTS_PER_OBJECT = 1'024;
 constexpr std::size_t MAXIMUM_TIMELINE_ITEMS = 1'000U;
 constexpr std::size_t MAXIMUM_TIMELINE_OFFSET = 1'000'000U;
 constexpr std::size_t MAXIMUM_TIMELINE_SCAN = 1'000'000U;
+constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
+constexpr std::size_t MAXIMUM_EFFECT_ITEMS = 1'000U;
+constexpr std::size_t MAXIMUM_EFFECT_ITEM_VALUE_BYTES = 64U * 1024U;
 std::atomic<sdk_read_facade*> REGISTERED_FACADE = nullptr;
 
 [[nodiscard]] std::string to_utf8(const LPCWSTR value) {
@@ -168,7 +174,8 @@ void copy_effect_item(void* raw_context, const LPCWSTR name, const int type) noe
     EDIT_HANDLE& edit_handle,
     EDIT_SECTION& edit,
     const OBJECT_HANDLE object,
-    std::vector<effect_fingerprint>& fingerprints) {
+    std::vector<effect_fingerprint>& fingerprints,
+    std::vector<EFFECT_HANDLE>* copied_handles = nullptr) {
     if (edit.get_effect_list == nullptr || edit.get_effect_name == nullptr) {
         throw std::runtime_error("SDK effect enumeration functions are unavailable");
     }
@@ -184,6 +191,9 @@ void copy_effect_item(void* raw_context, const LPCWSTR name, const int type) noe
         throw std::runtime_error("SDK copied an invalid effect handle count");
     }
     handles.resize(static_cast<std::size_t>(copied_count));
+    if (copied_handles != nullptr) {
+        *copied_handles = handles;
+    }
 
     std::vector<sdk_effect_summary> summaries;
     summaries.reserve(handles.size());
@@ -223,6 +233,288 @@ void copy_effect_item(void* raw_context, const LPCWSTR name, const int type) noe
         });
     }
     return summaries;
+}
+
+[[nodiscard]] sdk_object_snapshot copy_object_snapshot(
+    EDIT_HANDLE& edit_handle,
+    EDIT_SECTION& edit,
+    const EDIT_INFO& info,
+    const OBJECT_HANDLE object,
+    const OBJECT_LAYER_FRAME& position,
+    const std::vector<OBJECT_HANDLE>& selected_objects,
+    const bool include_effects,
+    std::vector<EFFECT_HANDLE>* copied_effect_handles = nullptr) {
+    const std::string alias = copy_utf8(edit.get_object_alias(object));
+    if (alias.size() > MAXIMUM_ALIAS_BYTES) {
+        throw std::runtime_error("SDK object alias exceeded the supported limit");
+    }
+    const LPCWSTR raw_name = edit.get_object_name == nullptr ? nullptr : edit.get_object_name(object);
+    std::vector<effect_fingerprint> fingerprints;
+    std::vector<sdk_effect_summary> effects = copy_effects(
+        edit_handle,
+        edit,
+        object,
+        fingerprints,
+        copied_effect_handles);
+    if (!include_effects) {
+        effects.clear();
+    }
+    return sdk_object_snapshot{
+        .candidate = object_candidate{
+            .scene_id = info.scene_id,
+            .layer = position.layer + 1,
+            .start_frame = position.start + 1,
+            .end_frame = position.end + 1,
+            .name = to_utf8(raw_name),
+            .alias = {alias.begin(), alias.end()},
+            .effects = std::move(fingerprints),
+        },
+        .is_selected = is_selected_object(object, selected_objects),
+        .media_path = find_media_path(alias),
+        .effects = std::move(effects),
+    };
+}
+
+struct effect_item_codec final {
+    const char* type;
+    const char* codec;
+    bool is_writable;
+};
+
+[[nodiscard]] effect_item_codec get_effect_item_codec(const int type) noexcept {
+    switch (type) {
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_INTEGER:
+            return {"integer", "integer", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER:
+            return {"number", "number", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_CHECK:
+            return {"check", "check01", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_TEXT:
+            return {"text", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_STRING:
+            return {"string", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE:
+            return {"file", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_COLOR:
+            return {"color", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_SELECT:
+            return {"select", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_SCENE:
+            return {"scene", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_RANGE:
+            return {"range", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_COMBO:
+            return {"combo", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_MASK:
+            return {"mask", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_FONT:
+            return {"font", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_FIGURE:
+            return {"figure", "aliasString", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_DATA:
+            return {"data", "unsupported", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_FOLDER:
+            return {"folder", "unsupported", false};
+        default:
+            return {"unknown", "unsupported", false};
+    }
+}
+
+[[nodiscard]] std::optional<sdk_effect_item_value> decode_effect_item_value(
+    const effect_item_codec& codec,
+    const std::string& raw_value,
+    bool& is_writable) {
+    if (raw_value.size() > MAXIMUM_EFFECT_ITEM_VALUE_BYTES) {
+        throw std::runtime_error("SDK effect item value exceeded the supported limit");
+    }
+    if (std::string_view(codec.codec) == "integer") {
+        std::int64_t value = 0;
+        const auto [position, error] = std::from_chars(
+            raw_value.data(),
+            raw_value.data() + raw_value.size(),
+            value);
+        if (error != std::errc{} || position != raw_value.data() + raw_value.size()) {
+            is_writable = false;
+            return std::nullopt;
+        }
+        return value;
+    }
+    if (std::string_view(codec.codec) == "number") {
+        double value = 0.0;
+        const auto [position, error] = std::from_chars(
+            raw_value.data(),
+            raw_value.data() + raw_value.size(),
+            value,
+            std::chars_format::general);
+        if (error != std::errc{} || position != raw_value.data() + raw_value.size()
+            || !std::isfinite(value)) {
+            is_writable = false;
+            return std::nullopt;
+        }
+        return value;
+    }
+    if (std::string_view(codec.codec) == "check01") {
+        if (raw_value == "0") {
+            return false;
+        }
+        if (raw_value == "1") {
+            return true;
+        }
+        is_writable = false;
+        return std::nullopt;
+    }
+    if (std::string_view(codec.codec) == "aliasString") {
+        return raw_value;
+    }
+    return std::nullopt;
+}
+
+struct effect_item_value_context final {
+    EDIT_SECTION* edit;
+    EFFECT_HANDLE effect;
+    std::vector<sdk_effect_item_snapshot>* items;
+    std::string error;
+};
+
+void copy_effect_item_value(void* raw_context, const LPCWSTR raw_name, const int type) noexcept {
+    auto* context = static_cast<effect_item_value_context*>(raw_context);
+    if (!context->error.empty()) {
+        return;
+    }
+    try {
+        if (context->items->size() >= MAXIMUM_EFFECT_ITEMS) {
+            throw std::runtime_error("SDK effect item count exceeded the supported limit");
+        }
+        const std::wstring name(raw_name == nullptr ? L"" : raw_name);
+        const effect_item_codec codec = get_effect_item_codec(type);
+        const LPCSTR raw_value = context->edit->get_effect_item_value == nullptr
+            ? nullptr
+            : context->edit->get_effect_item_value(context->effect, name.c_str());
+        bool is_writable = codec.is_writable;
+        std::optional<sdk_effect_item_value> value;
+        if (raw_value != nullptr && std::string_view(codec.codec) != "unsupported") {
+            value = decode_effect_item_value(codec, copy_utf8(raw_value), is_writable);
+        }
+        context->items->push_back(sdk_effect_item_snapshot{
+            .name = to_utf8(name.c_str()),
+            .type = codec.type,
+            .codec = codec.codec,
+            .is_writable = is_writable,
+            .value = std::move(value),
+            .choices = {},
+        });
+    } catch (const std::exception& exception) {
+        context->error = exception.what();
+    } catch (...) {
+        context->error = "SDK effect item value callback failed with an unknown exception";
+    }
+}
+
+[[nodiscard]] std::vector<sdk_effect_items_group> copy_object_effect_items(
+    EDIT_HANDLE& edit_handle,
+    EDIT_SECTION& edit,
+    const std::vector<EFFECT_HANDLE>& effect_handles,
+    const std::vector<sdk_effect_summary>& effect_summaries) {
+    if (effect_handles.size() != effect_summaries.size()) {
+        throw std::runtime_error("SDK effect handle and summary counts differed");
+    }
+    std::vector<sdk_effect_items_group> groups;
+    groups.reserve(effect_handles.size());
+    for (std::size_t index = 0U; index < effect_handles.size(); ++index) {
+        sdk_effect_items_group group{
+            .effect = effect_summaries[index],
+            .items = {},
+        };
+        if (edit_handle.enum_effect_item != nullptr) {
+            std::wstring wide_name;
+            const LPCWSTR raw_name = edit.get_effect_name(effect_handles[index]);
+            if (raw_name == nullptr) {
+                throw std::runtime_error("SDK effect name was unavailable while copying items");
+            }
+            wide_name = raw_name;
+            effect_item_value_context item_context{
+                .edit = &edit,
+                .effect = effect_handles[index],
+                .items = &group.items,
+            };
+            const bool was_enumerated = edit_handle.enum_effect_item(
+                wide_name.c_str(),
+                &item_context,
+                &copy_effect_item_value);
+            if (!item_context.error.empty()) {
+                throw std::runtime_error(item_context.error);
+            }
+            if (!was_enumerated) {
+                group.items.clear();
+            }
+        }
+        groups.push_back(std::move(group));
+    }
+    return groups;
+}
+
+struct object_read_context final {
+    EDIT_HANDLE* edit_handle;
+    const object_locator* locator;
+    bool include_alias;
+    bool include_effect_items;
+    sdk_object_detail_snapshot* detail;
+    bool was_called = false;
+    bool found_candidate = false;
+    std::string error;
+};
+
+void copy_object_detail(void* raw_context, EDIT_SECTION* edit) noexcept {
+    auto* context = static_cast<object_read_context*>(raw_context);
+    context->was_called = true;
+    try {
+        if (edit == nullptr || edit->info == nullptr
+            || edit->find_object == nullptr || edit->get_object_layer_frame == nullptr
+            || edit->get_object_alias == nullptr) {
+            throw std::runtime_error("SDK object detail functions are unavailable");
+        }
+        const EDIT_INFO& info = *edit->info;
+        if (info.scene_id != context->locator->scene_id) {
+            return;
+        }
+        const int sdk_layer = context->locator->layer - 1;
+        const int sdk_frame = context->locator->start_frame - 1;
+        OBJECT_HANDLE object = edit->find_object(sdk_layer, sdk_frame);
+        if (object == nullptr) {
+            return;
+        }
+        const OBJECT_LAYER_FRAME position = edit->get_object_layer_frame(object);
+        if (position.layer != sdk_layer || position.start != sdk_frame) {
+            return;
+        }
+        const std::vector<OBJECT_HANDLE> selected_objects = copy_selected_objects(*edit);
+        std::vector<EFFECT_HANDLE> effect_handles;
+        context->detail->object = copy_object_snapshot(
+            *context->edit_handle,
+            *edit,
+            info,
+            object,
+            position,
+            selected_objects,
+            true,
+            &effect_handles);
+        if (context->include_alias) {
+            const std::vector<std::uint8_t>& alias = context->detail->object.candidate.alias;
+            context->detail->alias = std::string(alias.begin(), alias.end());
+        }
+        if (context->include_effect_items) {
+            context->detail->effect_items = copy_object_effect_items(
+                *context->edit_handle,
+                *edit,
+                effect_handles,
+                context->detail->object.effects);
+        }
+        context->found_candidate = true;
+    } catch (const std::exception& exception) {
+        context->error = exception.what();
+    } catch (...) {
+        context->error = "SDK object detail callback failed with an unknown exception";
+    }
 }
 
 [[nodiscard]] bool matches_object_query(
@@ -350,36 +642,19 @@ void copy_timeline(void* raw_context, EDIT_SECTION* edit) noexcept {
                     continue;
                 }
 
-                const std::string alias = copy_utf8(edit->get_object_alias(object));
-                const LPCWSTR raw_name = edit->get_object_name == nullptr ? nullptr : edit->get_object_name(object);
-                std::vector<effect_fingerprint> fingerprints;
-                std::vector<sdk_effect_summary> effects = copy_effects(
+                sdk_object_snapshot snapshot = copy_object_snapshot(
                     *context->edit_handle,
                     *edit,
+                    info,
                     object,
-                    fingerprints);
-                sdk_object_snapshot snapshot{
-                    .candidate = object_candidate{
-                        .scene_id = info.scene_id,
-                        .layer = layer + 1,
-                        .start_frame = position.start + 1,
-                        .end_frame = position.end + 1,
-                        .name = to_utf8(raw_name),
-                        .alias = {alias.begin(), alias.end()},
-                        .effects = std::move(fingerprints),
-                    },
-                    .is_selected = is_selected_object(object, selected_objects),
-                    .media_path = find_media_path(alias),
-                    .effects = std::move(effects),
-                };
+                    position,
+                    selected_objects,
+                    query.include_effects);
                 if (!matches_object_query(snapshot, query)) {
                     continue;
                 }
                 if (matching_count++ < query.offset) {
                     continue;
-                }
-                if (!query.include_effects) {
-                    snapshot.effects.clear();
                 }
                 context->timeline->objects.push_back(std::move(snapshot));
                 if (context->timeline->objects.size() > query.limit) {
@@ -746,6 +1021,132 @@ sdk_timeline_query_result sdk_read_facade::query_timeline(const sdk_timeline_que
             .ok = false,
             .error_code = "sdk_query_failed",
             .error_message = "SDK timeline query failed with an unknown exception",
+        };
+    }
+}
+
+sdk_object_query_result sdk_read_facade::query_object(
+    const object_locator& locator,
+    const std::string& current_instance_id,
+    const std::string& current_project_generation,
+    const bool include_alias,
+    const bool include_effect_items) const noexcept {
+    if (!uuid_equals(locator.instance_id, current_instance_id)
+        || !uuid_equals(locator.project_generation, current_project_generation)
+        || locator.scene_id < 0 || locator.layer < 1 || locator.start_frame < 1
+        || locator.end_frame < locator.start_frame) {
+        return {
+            .ok = false,
+            .error_code = "invalid_argument",
+            .error_message = "Object locator identity or coordinates are invalid",
+        };
+    }
+    const sdk_status_snapshot status = query_status();
+    if (!status.is_sdk_ready) {
+        return {
+            .ok = false,
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available",
+        };
+    }
+    if (status.has_query_error) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = status.query_error,
+        };
+    }
+    if (status.project_state != sdk_project_state::saved
+        && status.project_state != sdk_project_state::unsaved) {
+        return {
+            .ok = false,
+            .error_code = "project_not_open",
+            .error_message = "No AviUtl2 project is open",
+        };
+    }
+
+    EDIT_HANDLE* edit_handle = nullptr;
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle = edit_handle_;
+    }
+    if (edit_handle == nullptr || edit_handle->call_read_section_param == nullptr) {
+        return {
+            .ok = false,
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available",
+        };
+    }
+    sdk_object_detail_snapshot detail;
+    object_read_context callback_context{
+        .edit_handle = edit_handle,
+        .locator = &locator,
+        .include_alias = include_alias,
+        .include_effect_items = include_effect_items,
+        .detail = &detail,
+    };
+    try {
+        const bool was_scheduled = edit_handle->call_read_section_param(&callback_context, &copy_object_detail);
+        if (!was_scheduled) {
+            return {
+                .ok = false,
+                .error_code = "read_not_available",
+                .error_message = "AviUtl2 rejected the object read section",
+            };
+        }
+        if (!callback_context.was_called) {
+            return {
+                .ok = false,
+                .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 did not invoke the object callback",
+            };
+        }
+        if (!callback_context.error.empty()) {
+            return {
+                .ok = false,
+                .error_code = "sdk_query_failed",
+                .error_message = callback_context.error,
+            };
+        }
+        if (!callback_context.found_candidate) {
+            return {
+                .ok = false,
+                .error_code = "object_not_found",
+                .error_message = "The object locator could not be resolved",
+            };
+        }
+        const object_candidate& candidate = detail.object.candidate;
+        const locator_resolution resolution = resolve_object_locator(
+            locator,
+            current_instance_id,
+            current_project_generation,
+            std::span<const object_candidate>(&candidate, 1U));
+        if (resolution.status != locator_resolution_status::resolved) {
+            return {
+                .ok = false,
+                .error_code = resolution.status == locator_resolution_status::ambiguous
+                    ? "object_ambiguous"
+                    : "object_not_found",
+                .error_message = resolution.status == locator_resolution_status::ambiguous
+                    ? "The object locator matched multiple candidates"
+                    : "The object locator no longer matches the object",
+            };
+        }
+        return {
+            .ok = true,
+            .detail = std::move(detail),
+        };
+    } catch (const std::exception& exception) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = exception.what(),
+        };
+    } catch (...) {
+        return {
+            .ok = false,
+            .error_code = "sdk_query_failed",
+            .error_message = "SDK object query failed with an unknown exception",
         };
     }
 }

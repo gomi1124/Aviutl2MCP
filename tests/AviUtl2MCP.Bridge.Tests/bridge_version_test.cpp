@@ -12,6 +12,7 @@
 #include "aviutl2_mcp/native_capabilities_request_handler.h"
 #include "aviutl2_mcp/native_ipc_frame_codec.h"
 #include "aviutl2_mcp/native_log_request_handler.h"
+#include "aviutl2_mcp/native_object_request_handler.h"
 #include "aviutl2_mcp/native_project_request_handler.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/native_status_request_handler.h"
@@ -422,10 +423,45 @@ void get_fake_edit_info(EDIT_INFO* info, const int info_size) {
     }
     if (std::wstring_view(effect) == L"Audio File") {
         callback(parameter, L"File", EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE);
+        callback(parameter, L"Volume", EDIT_HANDLE::EFFECT_ITEM_TYPE_INTEGER);
+        callback(parameter, L"Gain", EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER);
+        callback(parameter, L"Enabled", EDIT_HANDLE::EFFECT_ITEM_TYPE_CHECK);
+        callback(parameter, L"Blob", EDIT_HANDLE::EFFECT_ITEM_TYPE_DATA);
     } else if (std::wstring_view(effect) == L"Text") {
         callback(parameter, L"Text", EDIT_HANDLE::EFFECT_ITEM_TYPE_TEXT);
     }
     return true;
+}
+
+[[nodiscard]] LPCSTR get_fake_effect_item_value(
+    const EFFECT_HANDLE effect,
+    const LPCWSTR item) {
+    require(ACTIVE_FAKE_SDK->is_read_active, "fake effect item value was read outside a read callback");
+    if (item == nullptr) {
+        return nullptr;
+    }
+    const std::wstring_view name(item);
+    if (effect == &ACTIVE_FAKE_SDK->first_effect) {
+        if (name == L"File") {
+            return "C:\\Media\\Voice.wav";
+        }
+        if (name == L"Volume") {
+            return "42";
+        }
+        if (name == L"Gain") {
+            return "1.5";
+        }
+        if (name == L"Enabled") {
+            return "1";
+        }
+        if (name == L"Blob") {
+            return "opaque";
+        }
+    }
+    if (effect == &ACTIVE_FAKE_SDK->third_effect && name == L"Text") {
+        return "hello";
+    }
+    return nullptr;
 }
 
 [[nodiscard]] LPCWSTR get_fake_layer_name(const int layer) {
@@ -485,6 +521,7 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_section.get_effect_name = &get_fake_effect_name;
     state.edit_section.get_effect_enable = &get_fake_effect_enable;
     state.edit_section.get_effect_lock = &get_fake_effect_lock;
+    state.edit_section.get_effect_item_value = &get_fake_effect_item_value;
     state.project_file.get_project_file_path = &get_fake_project_path;
     state.host.create_edit_handle = &create_fake_edit_handle;
     state.host.register_project_load_handler = &register_fake_project_load_handler;
@@ -1357,7 +1394,7 @@ void test_sdk_read_facade() {
             && voice.effects[1].is_locked,
         "SDK facade did not copy ordered effect state");
     require(voice.candidate.effects.size() == 2U
-            && voice.candidate.effects[0].items.size() == 1U,
+            && voice.candidate.effects[0].items.size() == 5U,
         "SDK facade did not copy effect fingerprints inside the callback");
 
     timeline_query.offset = first_page.timeline.next_offset;
@@ -1382,6 +1419,67 @@ void test_sdk_read_facade() {
     require(found.ok && found.timeline.objects.size() == 1U
             && found.timeline.objects[0].candidate.name == "Voice",
         "SDK facade did not apply object search filters");
+
+    const std::string object_instance_id = aviutl2_mcp::create_bridge_identity().instance_id;
+    const std::string object_project_generation = aviutl2_mcp::create_bridge_identity().instance_id;
+    const aviutl2_mcp::object_locator object_locator = aviutl2_mcp::create_object_locator(
+        object_instance_id,
+        object_project_generation,
+        voice.candidate);
+    const aviutl2_mcp::sdk_object_query_result object_detail = facade.query_object(
+        object_locator,
+        object_instance_id,
+        object_project_generation,
+        true,
+        true);
+    require(object_detail.ok && object_detail.detail.alias == fake.first_alias,
+        "SDK facade did not return a resolved object alias");
+    require(object_detail.detail.effect_items.size() == 2U
+            && object_detail.detail.effect_items[0].items.size() == 5U,
+        "SDK facade did not group object effect items");
+    const auto& audio_items = object_detail.detail.effect_items[0].items;
+    require(audio_items[0].type == "file" && audio_items[0].codec == "aliasString"
+            && std::get<std::string>(*audio_items[0].value) == "C:\\Media\\Voice.wav"
+            && !audio_items[0].is_writable,
+        "SDK facade did not decode an alias string effect item");
+    require(std::get<std::int64_t>(*audio_items[1].value) == 42
+            && std::get<double>(*audio_items[2].value) == 1.5
+            && std::get<bool>(*audio_items[3].value)
+            && !audio_items[1].is_writable
+            && !audio_items[2].is_writable
+            && !audio_items[3].is_writable,
+        "SDK facade did not decode integer, number, and check codecs");
+    require(audio_items[4].type == "data" && audio_items[4].codec == "unsupported"
+            && !audio_items[4].is_writable && !audio_items[4].value.has_value(),
+        "SDK facade exposed an unsupported data item as writable");
+
+    const aviutl2_mcp::sdk_object_query_result compact_object_detail = facade.query_object(
+        object_locator,
+        object_instance_id,
+        object_project_generation,
+        false,
+        false);
+    require(compact_object_detail.ok
+            && !compact_object_detail.detail.alias.has_value()
+            && compact_object_detail.detail.effect_items.empty(),
+        "SDK facade ignored object detail inclusion flags");
+
+    aviutl2_mcp::object_locator stale_locator = object_locator;
+    stale_locator.name = "stale";
+    require(facade.query_object(
+                stale_locator,
+                object_instance_id,
+                object_project_generation,
+                false,
+                false).error_code == "object_not_found",
+        "SDK facade accepted a stale object fingerprint");
+    require(facade.query_object(
+                object_locator,
+                object_instance_id,
+                aviutl2_mcp::create_bridge_identity().instance_id,
+                false,
+                false).error_code == "invalid_argument",
+        "SDK facade accepted a locator from another project generation");
 
     fake.project_path.clear();
     fake.project_save_handler(&fake.project_file);
@@ -1427,6 +1525,9 @@ void test_native_query_request_handlers() {
         identity,
         facade));
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_find_objects_request_handler>(
+        identity,
+        facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_object_request_handler>(
         identity,
         facade));
     const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
@@ -1515,6 +1616,43 @@ void test_native_query_request_handlers() {
             && first_object.at("locator").at("aliasSha256").get<std::string>().size() == 64U
             && first_object.at("effects").size() == 2U,
         "native timeline handler returned an invalid locator or effect summary");
+
+    const std::string object_params = nlohmann::json{
+        {"locator", first_object.at("locator")},
+        {"includeAlias", true},
+        {"includeEffectItems", true},
+    }.dump();
+    const nlohmann::json object = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 59U),
+            "object.get",
+            correlation_id,
+            object_params),
+        identity.instance_id).get()));
+    require(object.at("ok").get<bool>()
+            && object.at("result").at("alias") == fake.first_alias
+            && object.at("result").at("effectItems").size() == 2U,
+        "native object handler did not return alias and grouped effect items");
+    const nlohmann::json& item_values = object.at("result").at("effectItems")[0].at("items");
+    require(item_values[1].at("value") == 42
+            && item_values[2].at("value") == 1.5
+            && item_values[3].at("value").get<bool>()
+            && !item_values[4].contains("value")
+            && !item_values[4].at("isWritable").get<bool>(),
+        "native object handler did not serialize effect item codecs");
+
+    nlohmann::json stale_object_params = nlohmann::json::parse(object_params);
+    stale_object_params["locator"]["name"] = "stale";
+    const nlohmann::json stale_object = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 60U),
+            "object.get",
+            correlation_id,
+            stale_object_params.dump()),
+        identity.instance_id).get()));
+    require(!stale_object.at("ok").get<bool>()
+            && stale_object.at("error").at("code") == "object_not_found",
+        "native object handler accepted a stale locator");
 
     const nlohmann::json second_timeline_page = nlohmann::json::parse(get_json(dispatcher.dispatch(
         create_request_frame(
