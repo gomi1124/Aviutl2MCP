@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <string>
 
 namespace aviutl2_mcp {
 
@@ -88,6 +89,7 @@ private:
 struct native_psd_voice_options final {
     std::optional<std::filesystem::path> psdtoolkit_module_path;
     std::optional<std::filesystem::path> subtitle_template_path;
+    std::optional<std::string> subtitle_template_sha256;
     std::optional<std::filesystem::path> temporary_root;
 };
 

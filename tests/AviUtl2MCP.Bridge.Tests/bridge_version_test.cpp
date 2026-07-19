@@ -4164,16 +4164,17 @@ void test_native_psd_voice_request_handler() {
     const std::filesystem::path lab_path = root / L"alice.lab";
     const std::filesystem::path other_text_path = root / L"other.txt";
     const std::filesystem::path temporary_root = root / L"temp";
+    const std::string subtitle_template =
+        "[Object]\r\n"
+        "[Object.0]\r\n"
+        "effect.name=テキスト\r\n"
+        "テキスト=<?o={id=\"__AVIUTL2_MCP_CHARACTER_ID__\"}"
+        "require(\"PSDToolKit\").mes(o, obj)\\n?>\r\n";
     {
         std::ofstream module(module_path, std::ios::binary);
         module << "fixture";
         std::ofstream subtitle(subtitle_path, std::ios::binary);
-        subtitle
-            << "[Object]\r\n"
-               "[Object.0]\r\n"
-               "effect.name=テキスト\r\n"
-               "テキスト=<?o={id=\"__AVIUTL2_MCP_CHARACTER_ID__\"}"
-               "require(\"PSDToolKit\").mes(o, obj)\\n?>\r\n";
+        subtitle << subtitle_template;
         std::array<char, 44> wav{};
         std::ranges::copy(std::string_view("RIFF"), wav.begin());
         std::ranges::copy(std::string_view("WAVE"), wav.begin() + 8);
@@ -4241,6 +4242,9 @@ void test_native_psd_voice_request_handler() {
         aviutl2_mcp::native_psd_voice_options{
             .psdtoolkit_module_path = module_path,
             .subtitle_template_path = subtitle_path,
+            .subtitle_template_sha256 = aviutl2_mcp::calculate_sha256(std::span(
+                reinterpret_cast<const std::uint8_t*>(subtitle_template.data()),
+                subtitle_template.size())),
             .temporary_root = temporary_root,
         }));
     const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
@@ -4280,6 +4284,29 @@ void test_native_psd_voice_request_handler() {
             && gcmz->send_count == 0
             && !std::filesystem::exists(temporary_root),
         "PSD voice dry-run mutated the project or created a temporary artifact");
+
+    {
+        std::ofstream subtitle(subtitle_path, std::ios::binary | std::ios::trunc);
+        subtitle << subtitle_template << '#';
+    }
+    const nlohmann::json tampered = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 141U),
+            "psd.createVoice",
+            correlation_id,
+            intermediate_parameters.dump(),
+            initial_revision,
+            true),
+        identity.instance_id).get()));
+    require(!tampered.at("ok").get<bool>()
+            && tampered.at("error").at("code") == "capability_not_available"
+            && gcmz->probe_count == 1
+            && gcmz->send_count == 0,
+        "PSD voice accepted a subtitle template with a mismatched manifest hash");
+    {
+        std::ofstream subtitle(subtitle_path, std::ios::binary | std::ios::trunc);
+        subtitle << subtitle_template;
+    }
 
     const nlohmann::json created = nlohmann::json::parse(get_json(dispatcher.dispatch(
         create_request_frame(

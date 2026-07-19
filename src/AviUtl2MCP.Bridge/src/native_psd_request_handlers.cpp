@@ -2,6 +2,7 @@
 
 #include "aviutl2_mcp/gcmz_adapter.h"
 #include "aviutl2_mcp/locator_resolver.h"
+#include "aviutl2_mcp/native_ipc_frame_codec.h"
 #include "aviutl2_mcp/native_operation_result.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/pipe_security.h"
@@ -36,6 +37,9 @@
 
 namespace aviutl2_mcp {
 namespace {
+
+constexpr std::string_view SUBTITLE_TEMPLATE_SHA256 =
+    "f8063841c273854ba5b2f150ba29958bec0da1256653b4ba3bccd84c95d87fdc";
 
 [[nodiscard]] std::optional<int> parse_optional_integer(
     const nlohmann::json& params,
@@ -760,7 +764,9 @@ void validate_wav_file(const std::filesystem::path& path) {
     return text;
 }
 
-[[nodiscard]] std::string read_subtitle_template(const std::filesystem::path& path) {
+[[nodiscard]] std::string read_subtitle_template(
+    const std::filesystem::path& path,
+    const std::string_view expected_sha256) {
     std::error_code error;
     const std::uintmax_t size = std::filesystem::file_size(path, error);
     if (error || size == 0U || size > MAXIMUM_VOICE_TEXT_BYTES) {
@@ -770,9 +776,15 @@ void validate_wav_file(const std::filesystem::path& path) {
     if (!input) {
         throw std::invalid_argument("subtitle template could not be opened");
     }
-    return {
+    std::string content{
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>()};
+    const auto* data = reinterpret_cast<const std::uint8_t*>(content.data());
+    if (expected_sha256.size() != 64U
+        || calculate_sha256(std::span(data, content.size())) != expected_sha256) {
+        throw std::invalid_argument("subtitle template SHA-256 does not match the V1 manifest");
+    }
+    return content;
 }
 
 [[nodiscard]] std::optional<std::filesystem::path> get_loaded_module_path(
@@ -2416,8 +2428,14 @@ operation_result native_psd_voice_request_handler::execute(
 
         std::string subtitle_alias;
         try {
+            const std::string_view expected_subtitle_sha256 =
+                options_.subtitle_template_sha256.has_value()
+                ? std::string_view(*options_.subtitle_template_sha256)
+                : SUBTITLE_TEMPLATE_SHA256;
             subtitle_alias = create_psd_subtitle_alias(
-                read_subtitle_template(resolve_subtitle_template_path(options_)),
+                read_subtitle_template(
+                    resolve_subtitle_template_path(options_),
+                    expected_subtitle_sha256),
                 parameters.character_id);
         } catch (const std::invalid_argument& exception) {
             return create_native_failure(
