@@ -4272,18 +4272,27 @@ void test_native_psd_voice_request_handler() {
             initial_revision,
             true),
         identity.instance_id).get()));
-    require(dry_run.at("ok").get<bool>()
-            && dry_run.at("result").at("voiceObjects").is_null()
-            && dry_run.at("result").at("subtitleObjects").is_null()
-            && dry_run.at("result").at("plannedChanges").size() == 3U
-            && dry_run.at("result").at("companionFiles").at("labPath")
-                == lab_path.string()
-            && dry_run.at("revision") == initial_revision
-            && dry_run.at("viewRevision") == initial_view_revision
-            && gcmz->probe_count == 1
-            && gcmz->send_count == 0
-            && !std::filesystem::exists(temporary_root),
-        "PSD voice dry-run mutated the project or created a temporary artifact");
+    require(dry_run.at("ok").get<bool>(),
+        "PSD voice dry-run returned an error");
+    require(dry_run.at("result").at("voiceObjects").is_null(),
+        "PSD voice dry-run returned voice objects");
+    require(dry_run.at("result").at("subtitleObjects").is_null(),
+        "PSD voice dry-run returned subtitle objects");
+    require(dry_run.at("result").at("plannedChanges").size() == 3U,
+        "PSD voice dry-run returned an unexpected change plan");
+    require(dry_run.at("result").at("companionFiles").at("labPath")
+            == lab_path.string(),
+        "PSD voice dry-run changed the LAB companion path");
+    require(dry_run.at("revision") == initial_revision,
+        "PSD voice dry-run changed the content revision");
+    require(dry_run.at("viewRevision") == initial_view_revision,
+        "PSD voice dry-run changed the view revision");
+    require(gcmz->probe_count == 1,
+        "PSD voice dry-run used an unexpected GCMZDrops probe count");
+    require(gcmz->send_count == 0,
+        "PSD voice dry-run sent a GCMZDrops request");
+    require(!std::filesystem::exists(temporary_root),
+        "PSD voice dry-run created a temporary artifact");
 
     {
         std::ofstream subtitle(subtitle_path, std::ios::binary | std::ios::trunc);
