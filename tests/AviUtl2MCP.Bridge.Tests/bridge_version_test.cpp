@@ -1250,6 +1250,112 @@ void test_user_only_security() {
     require(information.AceCount == 2U, "user-only DACL did not contain exactly logon SID and SYSTEM");
 }
 
+void test_cross_logon_pipe_denied() {
+    HANDLE process_token = nullptr;
+    require(
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_QUERY | TOKEN_DUPLICATE,
+            &process_token)
+            != FALSE,
+        "cross-logon fixture could not open the process token");
+    DWORD groups_bytes = 0U;
+    const BOOL size_result = GetTokenInformation(
+        process_token,
+        TokenGroups,
+        nullptr,
+        0U,
+        &groups_bytes);
+    if (size_result != FALSE || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+        CloseHandle(process_token);
+        throw std::runtime_error("cross-logon fixture could not size token groups");
+    }
+    std::vector<std::byte> groups_buffer(groups_bytes);
+    if (GetTokenInformation(
+            process_token,
+            TokenGroups,
+            groups_buffer.data(),
+            groups_bytes,
+            &groups_bytes)
+        == FALSE) {
+        CloseHandle(process_token);
+        throw std::runtime_error("cross-logon fixture could not read token groups");
+    }
+    const auto* groups = reinterpret_cast<const TOKEN_GROUPS*>(groups_buffer.data());
+    PSID logon_sid = nullptr;
+    for (DWORD index = 0U; index < groups->GroupCount; ++index) {
+        const SID_AND_ATTRIBUTES& group = groups->Groups[index];
+        if ((group.Attributes & SE_GROUP_LOGON_ID) == SE_GROUP_LOGON_ID) {
+            logon_sid = group.Sid;
+            break;
+        }
+    }
+    if (logon_sid == nullptr) {
+        CloseHandle(process_token);
+        throw std::runtime_error("cross-logon fixture did not find the current logon SID");
+    }
+    SID_AND_ATTRIBUTES disabled_logon{
+        .Sid = logon_sid,
+        .Attributes = 0U,
+    };
+    HANDLE restricted_token = nullptr;
+    const BOOL restricted = CreateRestrictedToken(
+        process_token,
+        DISABLE_MAX_PRIVILEGE,
+        1U,
+        &disabled_logon,
+        0U,
+        nullptr,
+        0U,
+        nullptr,
+        &restricted_token);
+    CloseHandle(process_token);
+    require(restricted != FALSE, "cross-logon fixture could not restrict the logon SID");
+
+    HANDLE impersonation_token = nullptr;
+    const BOOL duplicated = DuplicateTokenEx(
+        restricted_token,
+        TOKEN_QUERY | TOKEN_IMPERSONATE,
+        nullptr,
+        SecurityImpersonation,
+        TokenImpersonation,
+        &impersonation_token);
+    CloseHandle(restricted_token);
+    require(duplicated != FALSE, "cross-logon fixture could not create an impersonation token");
+
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::named_pipe_server server(identity, "2003300");
+    server.start();
+    const std::wstring path = L"\\\\.\\pipe\\"
+        + std::wstring(identity.pipe_name.begin(), identity.pipe_name.end());
+    const BOOL impersonated = SetThreadToken(nullptr, impersonation_token);
+    if (impersonated == FALSE) {
+        server.stop();
+        CloseHandle(impersonation_token);
+        throw std::runtime_error("cross-logon fixture could not impersonate the restricted token");
+    }
+    const HANDLE denied_pipe = CreateFileW(
+        path.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        0U,
+        nullptr,
+        OPEN_EXISTING,
+        0U,
+        nullptr);
+    const DWORD open_error = GetLastError();
+    const BOOL reverted = RevertToSelf();
+    if (denied_pipe != INVALID_HANDLE_VALUE) {
+        CloseHandle(denied_pipe);
+    }
+    CloseHandle(impersonation_token);
+    server.stop();
+    require(reverted != FALSE, "cross-logon fixture could not revert impersonation");
+    require(denied_pipe == INVALID_HANDLE_VALUE,
+        "a token without the current logon SID opened the secured pipe");
+    require(open_error == ERROR_ACCESS_DENIED,
+        "the secured pipe did not reject a foreign logon token with access denied");
+}
+
 void test_descriptor_publish_remove() {
     const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
     const std::filesystem::path directory = create_test_directory(identity.instance_id);
@@ -4494,6 +4600,7 @@ int main() {
         std::pair{"frame fragmentation and hash", &test_frame_fragmentation_and_hash},
         std::pair{"strict UTF-8", &test_invalid_utf8},
         std::pair{"user-only security", &test_user_only_security},
+        std::pair{"pipe cross-logon denied", &test_cross_logon_pipe_denied},
         std::pair{"descriptor publish/remove", &test_descriptor_publish_remove},
         std::pair{"handshake negotiation", &test_handshake_negotiation},
         std::pair{"named pipe handshake", &test_named_pipe_handshake},
