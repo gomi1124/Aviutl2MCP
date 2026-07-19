@@ -407,8 +407,29 @@ public:
     void clear_project_loaded_callback() noexcept;
 
 private:
+    template<typename TResult, typename TOperation>
+    [[nodiscard]] std::optional<TResult> dispatch_sdk_call(
+        TOperation&& operation,
+        TResult dispatch_failure) const noexcept {
+        if (is_sdk_thread()) {
+            return std::nullopt;
+        }
+        TResult result = std::move(dispatch_failure);
+        static_cast<void>(invoke_on_sdk_thread([&operation, &result]() {
+            result = operation();
+        }));
+        return result;
+    }
+
+    [[nodiscard]] bool is_sdk_thread() const noexcept;
+    [[nodiscard]] bool invoke_on_sdk_thread(const std::function<void()>& operation) const noexcept;
+    [[nodiscard]] bool initialize_sdk_dispatcher(EDIT_HANDLE* edit_handle) noexcept;
+    void release_sdk_dispatcher() noexcept;
+
     mutable std::mutex mutex_;
     EDIT_HANDLE* edit_handle_ = nullptr;
+    void* sdk_dispatch_window_ = nullptr;
+    std::uint32_t sdk_thread_id_ = 0U;
     sdk_project_state project_state_ = sdk_project_state::unknown;
     std::optional<std::string> project_path_;
     std::string project_cache_error_;

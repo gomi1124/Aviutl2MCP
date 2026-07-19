@@ -258,9 +258,11 @@ $componentVersions = Read-ComponentVersions -Value $ComponentVersionsPath
 $beforePreview = Get-FileDescriptor -Value $BeforePreviewPath
 $afterPreview = Get-FileDescriptor -Value $AfterPreviewPath
 $artifactValues = [Collections.Generic.List[object]]::new()
-$uniqueArtifactPaths = @($ArtifactPath + $BeforePreviewPath + $AfterPreviewPath) |
-    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-    Select-Object -Unique
+$uniqueArtifactPaths = @(
+    @($ArtifactPath + $BeforePreviewPath + $AfterPreviewPath) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+)
 if ($uniqueArtifactPaths.Count -gt 64) {
     throw "Artifact path count exceeds 64."
 }

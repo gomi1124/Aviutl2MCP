@@ -24,6 +24,95 @@
 namespace aviutl2_mcp {
 namespace {
 
+constexpr wchar_t SDK_DISPATCH_WINDOW_CLASS[] = L"AviUtl2MCP.SdkDispatchWindow";
+constexpr UINT SDK_DISPATCH_MESSAGE = WM_APP + 0x4D43U;
+
+struct sdk_dispatch_request final {
+    const std::function<void()>* operation = nullptr;
+    bool was_completed = false;
+};
+
+LRESULT CALLBACK sdk_dispatch_window_proc(
+    const HWND window,
+    const UINT message,
+    const WPARAM wparam,
+    const LPARAM lparam) noexcept {
+    if (message == SDK_DISPATCH_MESSAGE) {
+        auto* request = reinterpret_cast<sdk_dispatch_request*>(lparam);
+        if (request == nullptr || request->operation == nullptr) {
+            return 0;
+        }
+        try {
+            (*request->operation)();
+            request->was_completed = true;
+        } catch (...) {
+            request->was_completed = false;
+        }
+        return request->was_completed ? 1 : 0;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+HINSTANCE get_bridge_module_instance() noexcept {
+    HMODULE module = nullptr;
+    if (GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            SDK_DISPATCH_WINDOW_CLASS,
+            &module) == FALSE) {
+        return nullptr;
+    }
+    return module;
+}
+
+bool register_sdk_dispatch_window_class(const HINSTANCE instance) noexcept {
+    WNDCLASSEXW window_class{};
+    window_class.cbSize = sizeof(window_class);
+    window_class.hInstance = instance;
+    window_class.lpfnWndProc = &sdk_dispatch_window_proc;
+    window_class.lpszClassName = SDK_DISPATCH_WINDOW_CLASS;
+    if (RegisterClassExW(&window_class) != 0) {
+        return true;
+    }
+    return GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
+struct read_section_adapter_context final {
+    void* callback_context = nullptr;
+    void (*callback)(void* context, EDIT_SECTION* edit) = nullptr;
+    EDIT_INFO edit_info{};
+};
+
+void invoke_read_section_with_info(void* raw_context, EDIT_SECTION* edit) noexcept {
+    auto* context = static_cast<read_section_adapter_context*>(raw_context);
+    if (context == nullptr || context->callback == nullptr) {
+        return;
+    }
+    if (edit == nullptr) {
+        context->callback(context->callback_context, nullptr);
+        return;
+    }
+    EDIT_SECTION adapted = *edit;
+    adapted.info = &context->edit_info;
+    context->callback(context->callback_context, &adapted);
+}
+
+bool call_read_section_with_info(
+    EDIT_HANDLE* edit_handle,
+    void* callback_context,
+    void (*callback)(void* context, EDIT_SECTION* edit)) {
+    if (edit_handle == nullptr || edit_handle->get_edit_info == nullptr
+        || edit_handle->call_read_section_param == nullptr || callback == nullptr) {
+        return false;
+    }
+    read_section_adapter_context adapter{
+        .callback_context = callback_context,
+        .callback = callback,
+    };
+    edit_handle->get_edit_info(&adapter.edit_info, sizeof(adapter.edit_info));
+    return edit_handle->call_read_section_param(&adapter, &invoke_read_section_with_info);
+}
+
 constexpr int MAXIMUM_SELECTED_OBJECTS = 100'000;
 constexpr int MAXIMUM_EFFECTS_PER_OBJECT = 1'024;
 constexpr std::size_t MAXIMUM_TIMELINE_ITEMS = 1'000U;
@@ -2561,6 +2650,9 @@ bool sdk_read_facade::register_host(HOST_APP_TABLE* host) noexcept {
             || edit_handle->call_read_section_param == nullptr) {
             return false;
         }
+        if (!initialize_sdk_dispatcher(edit_handle)) {
+            return false;
+        }
         {
             std::scoped_lock lock(mutex_);
             edit_handle_ = edit_handle;
@@ -2581,14 +2673,25 @@ bool sdk_read_facade::register_host(HOST_APP_TABLE* host) noexcept {
 void sdk_read_facade::detach() noexcept {
     sdk_read_facade* expected = this;
     static_cast<void>(REGISTERED_FACADE.compare_exchange_strong(expected, nullptr));
-    std::scoped_lock lock(mutex_);
-    edit_handle_ = nullptr;
-    project_state_ = sdk_project_state::unknown;
-    project_path_.reset();
-    project_cache_error_.clear();
+    {
+        std::scoped_lock lock(mutex_);
+        edit_handle_ = nullptr;
+        project_state_ = sdk_project_state::unknown;
+        project_path_.reset();
+        project_cache_error_.clear();
+    }
+    release_sdk_dispatcher();
 }
 
 sdk_status_snapshot sdk_read_facade::query_status() const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this]() { return query_status(); },
+            sdk_status_snapshot{
+                .has_query_error = true,
+                .query_error = "SDK main-thread dispatch failed",
+            })) {
+        return std::move(*dispatched);
+    }
     sdk_status_snapshot result;
     EDIT_HANDLE* edit_handle = nullptr;
     {
@@ -2622,7 +2725,114 @@ sdk_status_snapshot sdk_read_facade::query_status() const noexcept {
     return result;
 }
 
+bool sdk_read_facade::is_sdk_thread() const noexcept {
+    std::uint32_t sdk_thread_id = 0U;
+    {
+        std::scoped_lock lock(mutex_);
+        sdk_thread_id = sdk_thread_id_;
+    }
+    return sdk_thread_id == 0U || sdk_thread_id == GetCurrentThreadId();
+}
+
+bool sdk_read_facade::invoke_on_sdk_thread(
+    const std::function<void()>& operation) const noexcept {
+    if (!operation) {
+        return false;
+    }
+    HWND dispatch_window = nullptr;
+    std::uint32_t sdk_thread_id = 0U;
+    {
+        std::scoped_lock lock(mutex_);
+        dispatch_window = static_cast<HWND>(sdk_dispatch_window_);
+        sdk_thread_id = sdk_thread_id_;
+    }
+    if (sdk_thread_id == 0U || sdk_thread_id == GetCurrentThreadId()) {
+        try {
+            operation();
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+    if (dispatch_window == nullptr || IsWindow(dispatch_window) == FALSE) {
+        return false;
+    }
+    sdk_dispatch_request request{.operation = &operation};
+    static_cast<void>(SendMessageW(
+        dispatch_window,
+        SDK_DISPATCH_MESSAGE,
+        0,
+        reinterpret_cast<LPARAM>(&request)));
+    return request.was_completed;
+}
+
+bool sdk_read_facade::initialize_sdk_dispatcher(EDIT_HANDLE* edit_handle) noexcept {
+    if (edit_handle == nullptr || edit_handle->get_host_app_window == nullptr) {
+        return true;
+    }
+    const HWND host_window = edit_handle->get_host_app_window();
+    if (host_window == nullptr || IsWindow(host_window) == FALSE) {
+        return true;
+    }
+    DWORD process_id = 0U;
+    const DWORD thread_id = GetWindowThreadProcessId(host_window, &process_id);
+    if (thread_id == 0U || process_id != GetCurrentProcessId()
+        || thread_id != GetCurrentThreadId()) {
+        return false;
+    }
+    const HINSTANCE instance = get_bridge_module_instance();
+    if (instance == nullptr || !register_sdk_dispatch_window_class(instance)) {
+        return false;
+    }
+    const HWND dispatch_window = CreateWindowExW(
+        0,
+        SDK_DISPATCH_WINDOW_CLASS,
+        L"",
+        0,
+        0,
+        0,
+        0,
+        0,
+        HWND_MESSAGE,
+        nullptr,
+        instance,
+        nullptr);
+    if (dispatch_window == nullptr) {
+        return false;
+    }
+    std::scoped_lock lock(mutex_);
+    sdk_dispatch_window_ = dispatch_window;
+    sdk_thread_id_ = thread_id;
+    return true;
+}
+
+void sdk_read_facade::release_sdk_dispatcher() noexcept {
+    HWND dispatch_window = nullptr;
+    std::uint32_t sdk_thread_id = 0U;
+    {
+        std::scoped_lock lock(mutex_);
+        dispatch_window = static_cast<HWND>(sdk_dispatch_window_);
+        sdk_thread_id = sdk_thread_id_;
+        sdk_dispatch_window_ = nullptr;
+        sdk_thread_id_ = 0U;
+    }
+    if (dispatch_window == nullptr || IsWindow(dispatch_window) == FALSE) {
+        return;
+    }
+    if (sdk_thread_id == GetCurrentThreadId()) {
+        static_cast<void>(DestroyWindow(dispatch_window));
+        return;
+    }
+    static_cast<void>(SendMessageW(dispatch_window, WM_CLOSE, 0, 0));
+}
+
 sdk_project_query_result sdk_read_facade::query_project(const bool include_scenes) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, include_scenes]() { return query_project(include_scenes); },
+            sdk_project_query_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     const sdk_status_snapshot status = query_status();
     if (!status.is_sdk_ready) {
         return {
@@ -2661,7 +2871,8 @@ sdk_project_query_result sdk_read_facade::query_project(const bool include_scene
         .include_scenes = include_scenes,
     };
     try {
-        const bool was_scheduled = edit_handle->call_read_section_param(&callback_context, &copy_project);
+        const bool was_scheduled = call_read_section_with_info(
+            edit_handle, &callback_context, &copy_project);
         if (!was_scheduled) {
             return {
                 .ok = false,
@@ -2703,6 +2914,12 @@ sdk_project_query_result sdk_read_facade::query_project(const bool include_scene
 }
 
 sdk_timeline_query_result sdk_read_facade::query_timeline(const sdk_timeline_query& query) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, &query]() { return query_timeline(query); },
+            sdk_timeline_query_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     if (query.limit == 0U || query.limit > MAXIMUM_TIMELINE_ITEMS
         || query.offset > MAXIMUM_TIMELINE_OFFSET
         || (query.layer_start.has_value() && query.layer_end.has_value()
@@ -2749,7 +2966,8 @@ sdk_timeline_query_result sdk_read_facade::query_timeline(const sdk_timeline_que
         .timeline = &timeline,
     };
     try {
-        const bool was_scheduled = edit_handle->call_read_section_param(&callback_context, &copy_timeline);
+        const bool was_scheduled = call_read_section_with_info(
+            edit_handle, &callback_context, &copy_timeline);
         if (!was_scheduled) {
             return {
                 .ok = false,
@@ -2796,6 +3014,24 @@ sdk_object_query_result sdk_read_facade::query_object(
     const std::string& current_project_generation,
     const bool include_alias,
     const bool include_effect_items) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this,
+                &locator,
+                &current_instance_id,
+                &current_project_generation,
+                include_alias,
+                include_effect_items]() {
+                return query_object(
+                    locator,
+                    current_instance_id,
+                    current_project_generation,
+                    include_alias,
+                    include_effect_items);
+            },
+            sdk_object_query_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     if (!uuid_equals(locator.instance_id, current_instance_id)
         || !uuid_equals(locator.project_generation, current_project_generation)
         || locator.scene_id < 0 || locator.layer < 1 || locator.start_frame < 1
@@ -2851,7 +3087,8 @@ sdk_object_query_result sdk_read_facade::query_object(
         .detail = &detail,
     };
     try {
-        const bool was_scheduled = edit_handle->call_read_section_param(&callback_context, &copy_object_detail);
+        const bool was_scheduled = call_read_section_with_info(
+            edit_handle, &callback_context, &copy_object_detail);
         if (!was_scheduled) {
             return {
                 .ok = false,
@@ -2918,6 +3155,12 @@ sdk_object_query_result sdk_read_facade::query_object(
 
 sdk_effect_catalog_query_result sdk_read_facade::query_effects(
     const sdk_effect_catalog_query& query) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, &query]() { return query_effects(query); },
+            sdk_effect_catalog_query_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     const bool has_valid_category = !query.category.has_value()
         || *query.category == "filter"
         || *query.category == "input"
@@ -3043,6 +3286,14 @@ sdk_effect_catalog_query_result sdk_read_facade::query_effects(
 sdk_effect_items_query_result sdk_read_facade::query_effect_items(
     const std::string& effect_name,
     const bool include_choices) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, &effect_name, include_choices]() {
+                return query_effect_items(effect_name, include_choices);
+            },
+            sdk_effect_items_query_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     std::size_t character_count = 0U;
     for (const unsigned char byte : effect_name) {
         if ((byte & 0xc0U) != 0x80U) {
@@ -3184,6 +3435,12 @@ sdk_effect_items_query_result sdk_read_facade::query_effect_items(
 sdk_create_result sdk_read_facade::create_objects(
     const sdk_create_request& request,
     const bool dry_run) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, &request, dry_run]() { return create_objects(request, dry_run); },
+            sdk_create_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     const std::int64_t sdk_end = static_cast<std::int64_t>(request.start_frame)
         + static_cast<std::int64_t>(request.length) - 1;
     if (request.source.empty() || request.source.find('\0') != std::string::npos
@@ -3287,7 +3544,7 @@ sdk_create_result sdk_read_facade::create_objects(
     };
     try {
         const bool was_scheduled = dry_run
-            ? edit_handle->call_read_section_param(&callback_context, &create_sdk_objects)
+            ? call_read_section_with_info(edit_handle, &callback_context, &create_sdk_objects)
             : edit_handle->call_edit_section_param(&callback_context, &create_sdk_objects);
         if (!was_scheduled) {
             return {
@@ -3330,6 +3587,22 @@ sdk_object_edit_result sdk_read_facade::edit_object(
     const std::string& current_instance_id,
     const std::string& current_project_generation,
     const bool dry_run) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this,
+                &request,
+                &current_instance_id,
+                &current_project_generation,
+                dry_run]() {
+                return edit_object(
+                    request,
+                    current_instance_id,
+                    current_project_generation,
+                    dry_run);
+            },
+            sdk_object_edit_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     if (!uuid_equals(request.locator.instance_id, current_instance_id)
         || !uuid_equals(request.locator.project_generation, current_project_generation)
         || request.locator.scene_id < 0 || request.locator.layer < 1
@@ -3406,7 +3679,7 @@ sdk_object_edit_result sdk_read_facade::edit_object(
     };
     try {
         const bool was_scheduled = dry_run
-            ? edit_handle->call_read_section_param(&callback_context, &edit_sdk_object)
+            ? call_read_section_with_info(edit_handle, &callback_context, &edit_sdk_object)
             : edit_handle->call_edit_section_param(&callback_context, &edit_sdk_object);
         if (!was_scheduled) {
             return {
@@ -3449,6 +3722,22 @@ sdk_effect_edit_result sdk_read_facade::edit_effect(
     const std::string& current_instance_id,
     const std::string& current_project_generation,
     const bool dry_run) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this,
+                &request,
+                &current_instance_id,
+                &current_project_generation,
+                dry_run]() {
+                return edit_effect(
+                    request,
+                    current_instance_id,
+                    current_project_generation,
+                    dry_run);
+            },
+            sdk_effect_edit_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     if (!uuid_equals(request.locator.instance_id, current_instance_id)
         || !uuid_equals(request.locator.project_generation, current_project_generation)
         || request.locator.scene_id < 0 || request.locator.layer < 1
@@ -3505,7 +3794,7 @@ sdk_effect_edit_result sdk_read_facade::edit_effect(
     };
     try {
         const bool was_scheduled = dry_run
-            ? edit_handle->call_read_section_param(&callback_context, &edit_sdk_effect)
+            ? call_read_section_with_info(edit_handle, &callback_context, &edit_sdk_effect)
             : edit_handle->call_edit_section_param(&callback_context, &edit_sdk_effect);
         if (!was_scheduled) {
             return {.ok = false, .error_code = dry_run ? "read_not_available" : "edit_not_available",
@@ -3531,6 +3820,12 @@ sdk_effect_edit_result sdk_read_facade::edit_effect(
 sdk_layer_edit_result sdk_read_facade::edit_layer(
     const sdk_layer_edit_request& request,
     const bool dry_run) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, &request, dry_run]() { return edit_layer(request, dry_run); },
+            sdk_layer_edit_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     if (request.layer < 1
         || (request.scene_id.has_value() && *request.scene_id < 0)
         || (!request.name.has_value() && !request.is_visible.has_value()
@@ -3574,7 +3869,7 @@ sdk_layer_edit_result sdk_read_facade::edit_layer(
     };
     try {
         const bool was_scheduled = dry_run
-            ? edit_handle->call_read_section_param(&callback_context, &edit_sdk_layer)
+            ? call_read_section_with_info(edit_handle, &callback_context, &edit_sdk_layer)
             : edit_handle->call_edit_section_param(&callback_context, &edit_sdk_layer);
         if (!was_scheduled) {
             return {.ok = false, .error_code = dry_run ? "read_not_available" : "edit_not_available",
@@ -3600,6 +3895,12 @@ sdk_layer_edit_result sdk_read_facade::edit_layer(
 sdk_view_edit_result sdk_read_facade::edit_view(
     const sdk_view_edit_request& request,
     const bool dry_run) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, &request, dry_run]() { return edit_view(request, dry_run); },
+            sdk_view_edit_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     if ((request.scene_id.has_value() && *request.scene_id < 0)
         || (request.frame.has_value() && *request.frame < 1)
         || (request.display_frame.has_value() && *request.display_frame < 1)
@@ -3646,7 +3947,7 @@ sdk_view_edit_result sdk_read_facade::edit_view(
     };
     try {
         const bool was_scheduled = dry_run
-            ? edit_handle->call_read_section_param(&callback_context, &edit_sdk_view)
+            ? call_read_section_with_info(edit_handle, &callback_context, &edit_sdk_view)
             : edit_handle->call_edit_section_param(&callback_context, &edit_sdk_view);
         if (!was_scheduled) {
             return {.ok = false, .error_code = dry_run ? "read_not_available" : "edit_not_available",
@@ -3674,6 +3975,22 @@ sdk_batch_edit_result sdk_read_facade::edit_batch(
     const std::string& current_instance_id,
     const std::string& current_project_generation,
     const bool dry_run) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this,
+                &operations,
+                &current_instance_id,
+                &current_project_generation,
+                dry_run]() {
+                return edit_batch(
+                    operations,
+                    current_instance_id,
+                    current_project_generation,
+                    dry_run);
+            },
+            sdk_batch_edit_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     if (operations.empty() || operations.size() > 100U
         || !is_nonzero_uuid(current_instance_id)
         || !is_nonzero_uuid(current_project_generation)) {
@@ -3813,7 +4130,7 @@ sdk_batch_edit_result sdk_read_facade::edit_batch(
     };
     try {
         const bool was_scheduled = dry_run
-            ? edit_handle->call_read_section_param(&callback, &edit_sdk_batch)
+            ? call_read_section_with_info(edit_handle, &callback, &edit_sdk_batch)
             : edit_handle->call_edit_section_param(&callback, &edit_sdk_batch);
         if (!was_scheduled) {
             return {.ok = false,
@@ -3841,6 +4158,12 @@ sdk_batch_edit_result sdk_read_facade::edit_batch(
 sdk_preview_render_result sdk_read_facade::render_preview(
     const int frame,
     const std::uint32_t timeout_ms) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, frame, timeout_ms]() { return render_preview(frame, timeout_ms); },
+            sdk_preview_render_result{.ok = false, .error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     if (frame < 1 || timeout_ms < 1U || timeout_ms > 120'000U) {
         return {.ok = false, .error_code = "invalid_argument",
             .error_message = "Preview frame or timeout is invalid"};

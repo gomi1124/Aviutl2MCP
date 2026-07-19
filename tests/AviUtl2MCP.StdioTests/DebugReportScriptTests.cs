@@ -122,6 +122,46 @@ public sealed class DebugReportScriptTests
     }
 
     [TestMethod]
+    public async Task GenerateReportAcceptsSingleArtifact()
+    {
+        // Arrange
+        const string correlationId = "019beabc-49b0-7000-8000-000000000011";
+        string repositoryRoot = FindRepositoryRoot();
+        string temporaryDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "AviUtl2MCP.Tests",
+            Guid.NewGuid().ToString("N"));
+        string outputDirectory = Path.Combine(temporaryDirectory, "reports");
+        string artifactPath = Path.Combine(temporaryDirectory, "single.bin");
+        Directory.CreateDirectory(temporaryDirectory);
+        File.WriteAllBytes(artifactPath, [0x01]);
+
+        try
+        {
+            // Act
+            ProcessResult result = await RunScriptAsync(repositoryRoot, [
+                "-CorrelationId", correlationId,
+                "-OutputDirectory", outputDirectory,
+                "-ArtifactPath", artifactPath,
+                "-RepositoryRoot", repositoryRoot,
+            ]);
+
+            // Assert
+            Assert.AreEqual(0, result.ExitCode, result.StandardError);
+            string reportPath = Path.Combine(outputDirectory, correlationId, "debug-report.json");
+            using JsonDocument document = JsonDocument.Parse(await File.ReadAllTextAsync(reportPath));
+            Assert.AreEqual(1, document.RootElement.GetProperty("artifacts").GetArrayLength());
+        }
+        finally
+        {
+            if (Directory.Exists(temporaryDirectory))
+            {
+                Directory.Delete(temporaryDirectory, recursive: true);
+            }
+        }
+    }
+
+    [TestMethod]
     public async Task RejectNonVersionSevenCorrelationBeforeCreatingArtifacts()
     {
         // Arrange

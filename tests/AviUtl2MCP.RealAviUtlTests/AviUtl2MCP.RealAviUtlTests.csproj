@@ -8,5 +8,6 @@
     <PackageReference Include="MSTest" />
     <ProjectReference Include="../../src/AviUtl2MCP.Application/AviUtl2MCP.Application.csproj" />
     <ProjectReference Include="../../src/AviUtl2MCP.BridgeClient/AviUtl2MCP.BridgeClient.csproj" />
+    <ProjectReference Include="../../src/AviUtl2MCP.Server/AviUtl2MCP.Server.csproj" />
   </ItemGroup>
 </Project>
