@@ -49,7 +49,17 @@ public sealed class BridgeLogSource(IBridgeDiagnosticsGateway diagnosticsGateway
                     input),
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is IOException or TimeoutException)
+        catch (KeyNotFoundException exception)
+        {
+            throw new LogSourceReadException(
+                "aviutl_not_running",
+                "The selected AviUtl2 instance is no longer available.",
+                canRetry: true,
+                exception);
+        }
+        catch (Exception exception) when (exception is IOException
+            or TimeoutException
+            or ObjectDisposedException)
         {
             throw new LogSourceReadException(
                 "bridge_unavailable",

@@ -28,6 +28,7 @@ public sealed class RequestContextFactory
             Guid.CreateVersion7(now),
             requestedInstanceId,
             now.AddMilliseconds(effectiveTimeoutMs),
+            effectiveTimeoutMs,
             cancellationSource);
     }
 }

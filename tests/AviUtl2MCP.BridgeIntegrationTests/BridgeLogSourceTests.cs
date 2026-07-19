@@ -130,6 +130,31 @@ public sealed class BridgeLogSourceTests
         Assert.IsTrue(exception.CanRetry);
     }
 
+    [TestMethod]
+    public async Task ReadAsyncMapsStaleDescriptorToNotRunning()
+    {
+        // Arrange
+        BridgeLogSource source = new(new ThrowingDiagnosticsGateway());
+        LogSourceQuery query = new(
+            null,
+            null,
+            null,
+            10,
+            null,
+            Guid.NewGuid(),
+            Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow.AddSeconds(30),
+            30_000);
+
+        // Act
+        LogSourceReadException exception = await Assert.ThrowsAsync<LogSourceReadException>(async () =>
+            await source.ReadAsync(query, CancellationToken.None));
+
+        // Assert
+        Assert.AreEqual("aviutl_not_running", exception.Code);
+        Assert.IsTrue(exception.CanRetry);
+    }
+
     private static GatewayResponse<LogsData> CreateUnusedResponse() =>
         new(
             true,
@@ -155,6 +180,29 @@ public sealed class BridgeLogSourceTests
             Request = request;
             return ValueTask.FromResult(response);
         }
+
+        public ValueTask<GatewayResponse<StatusData>> GetStatusAsync(
+            GatewayRequest<GetStatusInput> request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public ValueTask<GatewayResponse<CapabilitiesData>> GetCapabilitiesAsync(
+            GatewayRequest<GetCapabilitiesInput> request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public ValueTask<GatewayResponse<DiagnoseData>> DiagnoseAsync(
+            GatewayRequest<DiagnoseInput> request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingDiagnosticsGateway : IBridgeDiagnosticsGateway
+    {
+        public ValueTask<GatewayResponse<LogsData>> GetLogsAsync(
+            GatewayRequest<GetLogsInput> request,
+            CancellationToken cancellationToken) =>
+            throw new KeyNotFoundException("fixture");
 
         public ValueTask<GatewayResponse<StatusData>> GetStatusAsync(
             GatewayRequest<GetStatusInput> request,

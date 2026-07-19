@@ -189,6 +189,32 @@ public sealed class LogQueryServiceTests
         Assert.AreEqual("cursor_invalid", changed.Error!.Code);
     }
 
+    [TestMethod]
+    public async Task ReadAsyncRejectsServiceCursorAfterFiveMinutes()
+    {
+        // Arrange
+        DateTimeOffset now = TestTime.CreateReferenceUtc();
+        FakeLogSource server = new(LogSource.Server, "generation", CreateEntries("server", 3, now));
+        GetLogsInput input = new() { Sources = [LogSource.Server], Limit = 1 };
+        LogReadContext context = CreateContext(now);
+        LogQueryService issuingService = CreateService(now, server);
+        ApplicationResult<LogsData> first = await issuingService.ReadAsync(
+            input,
+            context,
+            CancellationToken.None);
+        LogQueryService resumedService = CreateService(now.AddMinutes(5), server);
+
+        // Act
+        ApplicationResult<LogsData> resumed = await resumedService.ReadAsync(
+            input with { Cursor = first.Value!.NextCursor },
+            context,
+            CancellationToken.None);
+
+        // Assert
+        Assert.IsFalse(resumed.IsSuccess);
+        Assert.AreEqual("cursor_invalid", resumed.Error!.Code);
+    }
+
     private static LogQueryService CreateService(DateTimeOffset now, params ILogSource[] sources) =>
         new(
             sources,

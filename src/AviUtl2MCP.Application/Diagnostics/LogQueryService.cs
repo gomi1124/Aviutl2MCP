@@ -23,7 +23,7 @@ public sealed class LogQueryService
         LogSource.Bridge,
         LogSource.Aviutl,
     ];
-    private static readonly TimeSpan CURSOR_LIFETIME = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan CURSOR_LIFETIME = TimeSpan.FromMinutes(5);
     private readonly Dictionary<LogSource, ILogSource> _sources;
     private readonly LogCursorCodec _cursorCodec;
     private readonly TimeProvider _timeProvider;

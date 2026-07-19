@@ -8,11 +8,13 @@ public sealed class RequestContext : IDisposable
         Guid correlationId,
         Guid? requestedInstanceId,
         DateTimeOffset deadline,
+        int timeoutMs,
         CancellationTokenSource cancellationSource)
     {
         CorrelationId = correlationId;
         RequestedInstanceId = requestedInstanceId;
         Deadline = deadline;
+        TimeoutMs = timeoutMs;
         this.cancellationSource = cancellationSource;
     }
 
@@ -21,6 +23,8 @@ public sealed class RequestContext : IDisposable
     public Guid? RequestedInstanceId { get; }
 
     public DateTimeOffset Deadline { get; }
+
+    public int TimeoutMs { get; }
 
     public CancellationToken CancellationToken => cancellationSource.Token;
 

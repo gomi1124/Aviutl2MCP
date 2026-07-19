@@ -1,17 +1,62 @@
+using AviUtl2MCP.Application.Diagnostics;
+using AviUtl2MCP.Application.Gateways;
+using AviUtl2MCP.Application.Instances;
+using AviUtl2MCP.Application.Requests;
+using AviUtl2MCP.Application.Serialization;
+using AviUtl2MCP.BridgeClient.Connections;
+using AviUtl2MCP.BridgeClient.Discovery;
+using AviUtl2MCP.BridgeClient.Gateways;
 using AviUtl2MCP.Server;
+using AviUtl2MCP.Server.Diagnostics;
 using AviUtl2MCP.Server.Logging;
+using AviUtl2MCP.Server.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using ModelContextProtocol.Server;
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.SetMinimumLevel(LogLevel.Trace);
 builder.Logging.AddProvider(JsonLineLoggerProvider.CreateDefault());
+
+ServerRuntimeIdentity runtimeIdentity = new();
+builder.Services.AddSingleton(runtimeIdentity);
+builder.Services.AddSingleton<RequestContextFactory>();
+builder.Services.AddSingleton<IInstanceSelector, InstanceSelector>();
+builder.Services.AddSingleton(_ => new InstanceDescriptorWatcher(
+    ServerPathResolver.GetInstanceDescriptorDirectory()));
+builder.Services.AddSingleton<IBridgeConnectionFactory>(services =>
+    new BridgeConnectionFactory(
+        services.GetRequiredService<ServerRuntimeIdentity>().ClientInstanceId,
+        services.GetRequiredService<ServerRuntimeIdentity>().ServerVersion));
+builder.Services.AddSingleton<BridgeConnectionRegistry>();
+builder.Services.AddSingleton<ServerInstanceResolver>();
+builder.Services.AddSingleton<IBridgeDiagnosticsGateway, BridgeDiagnosticsGateway>();
+
+builder.Services.AddSingleton(_ => new ServerJsonLogSource(
+    JsonLineLoggerProvider.GetDefaultLogFilePath()));
+builder.Services.AddSingleton(_ => new AviUtlLogSource(
+    ServerPathResolver.GetAviUtlLogDirectory()));
+builder.Services.AddSingleton<BridgeLogSource>();
+builder.Services.AddSingleton<ILogSource>(services =>
+    services.GetRequiredService<ServerJsonLogSource>());
+builder.Services.AddSingleton<ILogSource>(services =>
+    services.GetRequiredService<BridgeLogSource>());
+builder.Services.AddSingleton<ILogSource>(services =>
+    services.GetRequiredService<AviUtlLogSource>());
+builder.Services.AddSingleton(services => new LogCursorCodec(
+    services.GetRequiredService<ServerRuntimeIdentity>().CursorSigningKey.Span));
+builder.Services.AddSingleton<LogQueryService>();
+builder.Services.AddSingleton<IDiagnosticSmokeProbe>(UnavailableDiagnosticSmokeProbe.Instance);
+builder.Services.AddSingleton<DiagnosticContextFactory>();
+builder.Services.AddSingleton(services => new DiagnosticsService(
+    services.GetRequiredService<DiagnosticContextFactory>(),
+    DiagnosticsService.CreateDefaultRules()));
+
 builder.Services
     .AddMcpServer()
-    .WithStdioServerTransport();
+    .WithStdioServerTransport()
+    .WithTools<DiagnosticsToolSet>(ContractJsonSerializer.CreateSerializerOptions());
 
 await builder.Build().RunAsync().ConfigureAwait(false);
 

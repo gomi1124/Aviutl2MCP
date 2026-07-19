@@ -35,6 +35,9 @@ public static class ContractJsonSerializer
             ?? throw new JsonException($"JSON did not contain a {returnType.Name} value.");
     }
 
+    public static JsonSerializerOptions CreateSerializerOptions() =>
+        new(SERIALIZER_OPTIONS);
+
     private static JsonSerializerOptions CreateOptions()
     {
         JsonSerializerOptions options = new(JsonSerializerDefaults.Web)

@@ -43,6 +43,7 @@ public sealed class ApplicationFoundationTests
         // Assert
         Assert.AreEqual(7, context.CorrelationId.Version);
         Assert.AreEqual(now.AddMilliseconds(1500), context.Deadline);
+        Assert.AreEqual(1500, context.TimeoutMs);
         Assert.IsFalse(context.CancellationToken.IsCancellationRequested);
     }
 }

@@ -19,6 +19,11 @@ public sealed class JsonLineLoggerProvider : ILoggerProvider, ISupportExternalSc
 
     public static JsonLineLoggerProvider CreateDefault()
     {
+        return new JsonLineLoggerProvider(GetDefaultLogFilePath(), Console.Error);
+    }
+
+    public static string GetDefaultLogFilePath()
+    {
         string? configuredDirectory = Environment.GetEnvironmentVariable("AVIUTL2_MCP_LOG_DIRECTORY");
         string logDirectory = string.IsNullOrWhiteSpace(configuredDirectory)
             ? Path.Combine(
@@ -26,10 +31,7 @@ public sealed class JsonLineLoggerProvider : ILoggerProvider, ISupportExternalSc
                 "AviUtl2MCP",
                 "logs")
             : Path.GetFullPath(configuredDirectory);
-
-        return new JsonLineLoggerProvider(
-            Path.Combine(logDirectory, $"server-{Environment.ProcessId}.jsonl"),
-            Console.Error);
+        return Path.Combine(logDirectory, $"server-{Environment.ProcessId}.jsonl");
     }
 
     public ILogger CreateLogger(string categoryName)

@@ -1,0 +1,130 @@
+using System.Text.Json;
+using AviUtl2MCP.Server;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+
+namespace AviUtl2MCP.StdioTests;
+
+[TestClass]
+public sealed class DiagnosticsToolStdioTests
+{
+    private static readonly string[] SERVER_SOURCE = ["server"];
+
+    [TestMethod]
+    public async Task StdioListsAndCallsReadOnlyDiagnosticTools()
+    {
+        // Arrange
+        string correlationDirectory = CreateCorrelationDirectory();
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
+        try
+        {
+            StdioClientTransport transport = new(new StdioClientTransportOptions
+            {
+                Name = "AviUtl2MCP stdio test",
+                Command = "dotnet",
+                Arguments = [typeof(ServerMarker).Assembly.Location],
+                WorkingDirectory = Path.GetDirectoryName(typeof(ServerMarker).Assembly.Location),
+                EnvironmentVariables = new Dictionary<string, string?>
+                {
+                    ["AVIUTL2_MCP_LOG_DIRECTORY"] = Path.Combine(correlationDirectory, "server-logs"),
+                    ["AVIUTL2_LOG_DIRECTORY"] = Path.Combine(correlationDirectory, "aviutl-logs"),
+                    ["AVIUTL2_MCP_INSTANCE_DIRECTORY"] = Path.Combine(correlationDirectory, "instances"),
+                },
+            });
+            await using McpClient client = await McpClient.CreateAsync(
+                transport,
+                cancellationToken: timeout.Token);
+
+            // Act
+            IList<McpClientTool> tools = await client.ListToolsAsync(
+                cancellationToken: timeout.Token);
+            McpClientTool logsTool = tools.Single(tool => tool.Name == "aviutl_get_logs");
+            McpClientTool diagnoseTool = tools.Single(tool => tool.Name == "aviutl_diagnose");
+            CallToolResult logsResult = await client.CallToolAsync(
+                logsTool.Name,
+                new Dictionary<string, object?>
+                {
+                    ["sources"] = SERVER_SOURCE,
+                    ["limit"] = 10,
+                },
+                cancellationToken: timeout.Token);
+            CallToolResult diagnoseResult = await client.CallToolAsync(
+                diagnoseTool.Name,
+                new Dictionary<string, object?>(),
+                cancellationToken: timeout.Token);
+            CallToolResult invalidResult = await client.CallToolAsync(
+                logsTool.Name,
+                new Dictionary<string, object?> { ["timeoutMs"] = 99 },
+                cancellationToken: timeout.Token);
+
+            // Assert
+            Assert.IsTrue(tools.Count >= 2);
+            AssertToolMetadata(logsTool, "sources", "limit");
+            AssertToolMetadata(diagnoseTool, "includeReadSmoke", "includePreviewSmoke", "maxLogLines");
+            Assert.AreEqual(false, logsResult.IsError);
+            JsonElement logsEnvelope = logsResult.StructuredContent!.Value;
+            Assert.IsTrue(logsEnvelope.GetProperty("ok").GetBoolean());
+            Assert.AreEqual(7, logsEnvelope.GetProperty("correlationId").GetGuid().Version);
+            Assert.IsTrue(logsEnvelope.GetProperty("data").TryGetProperty("entries", out _));
+            Assert.IsInstanceOfType<TextContentBlock>(logsResult.Content.Single());
+
+            Assert.AreEqual(true, diagnoseResult.IsError);
+            JsonElement diagnoseEnvelope = diagnoseResult.StructuredContent!.Value;
+            Assert.IsFalse(diagnoseEnvelope.GetProperty("ok").GetBoolean());
+            Assert.AreEqual(
+                "aviutl_not_running",
+                diagnoseEnvelope.GetProperty("error").GetProperty("code").GetString());
+
+            Assert.AreEqual(true, invalidResult.IsError);
+            JsonElement invalidEnvelope = invalidResult.StructuredContent!.Value;
+            Assert.AreEqual(
+                "invalid_argument",
+                invalidEnvelope.GetProperty("error").GetProperty("code").GetString());
+            Assert.AreEqual(7, invalidEnvelope.GetProperty("correlationId").GetGuid().Version);
+        }
+        finally
+        {
+            DeleteOwnedCorrelationDirectory(correlationDirectory);
+        }
+    }
+
+    private static void AssertToolMetadata(
+        McpClientTool tool,
+        params string[] expectedProperties)
+    {
+        Assert.AreEqual(true, tool.ProtocolTool.Annotations!.ReadOnlyHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.DestructiveHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.OpenWorldHint);
+        Assert.IsTrue(tool.ProtocolTool.OutputSchema.HasValue);
+        JsonElement properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        foreach (string property in expectedProperties)
+        {
+            Assert.IsTrue(properties.TryGetProperty(property, out _), $"Missing input property {property}.");
+        }
+        Assert.IsFalse(properties.TryGetProperty("input", out _));
+    }
+
+    private static string CreateCorrelationDirectory()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "AviUtl2MCP-tests");
+        string directory = Path.Combine(root, Guid.CreateVersion7().ToString("D"));
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
+
+    private static void DeleteOwnedCorrelationDirectory(string directory)
+    {
+        string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "AviUtl2MCP-tests"))
+            .TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        string target = Path.GetFullPath(directory);
+        if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Refusing to delete a directory outside the owned test root.");
+        }
+        if (Directory.Exists(target))
+        {
+            Directory.Delete(target, recursive: true);
+        }
+    }
+}
