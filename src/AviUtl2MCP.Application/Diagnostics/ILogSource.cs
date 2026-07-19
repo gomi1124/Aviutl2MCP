@@ -7,11 +7,15 @@ public sealed record LogSourceQuery(
     DateTimeOffset? Since,
     Guid? CorrelationId,
     int Limit,
-    long Offset = 0);
+    string? Cursor,
+    Guid? InstanceId,
+    Guid RequestCorrelationId,
+    DateTimeOffset Deadline,
+    int TimeoutMs);
 
 public sealed record LogSourcePage(
     IReadOnlyList<LogEntry> Entries,
-    long? NextOffset,
+    string? NextCursor,
     bool IsTruncated,
     string Generation);
 
@@ -22,4 +26,15 @@ public interface ILogSource
     ValueTask<LogSourcePage> ReadAsync(
         LogSourceQuery query,
         CancellationToken cancellationToken);
+}
+
+public sealed class LogSourceReadException(
+    string code,
+    string message,
+    bool canRetry = false,
+    Exception? innerException = null) : Exception(message, innerException)
+{
+    public string Code { get; } = code;
+
+    public bool CanRetry { get; } = canRetry;
 }

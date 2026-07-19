@@ -15,7 +15,7 @@ internal static class LogSourceFilter
         ArgumentException.ThrowIfNullOrWhiteSpace(generation);
         ArgumentOutOfRangeException.ThrowIfLessThan(query.Limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(query.Limit, 2000);
-        ArgumentOutOfRangeException.ThrowIfNegative(query.Offset);
+        long offset = ParseOffset(query.Cursor);
 
         IEnumerable<LogEntry> filtered = entries;
         if (query.Levels is { Count: > 0 })
@@ -37,22 +37,40 @@ internal static class LogSourceFilter
         LogEntry[] materialized = filtered
             .OrderBy(entry => entry.Timestamp)
             .ToArray();
-        if (query.Offset >= materialized.LongLength)
+        if (offset >= materialized.LongLength)
         {
             return new LogSourcePage([], null, false, generation);
         }
 
-        int offset = checked((int)query.Offset);
+        int pageOffset = checked((int)offset);
         LogEntry[] pageEntries = materialized
-            .Skip(offset)
+            .Skip(pageOffset)
             .Take(query.Limit)
             .ToArray();
-        long nextOffset = query.Offset + pageEntries.LongLength;
+        long nextOffset = offset + pageEntries.LongLength;
         bool isTruncated = nextOffset < materialized.LongLength;
         return new LogSourcePage(
             pageEntries,
-            isTruncated ? nextOffset : null,
+            isTruncated ? nextOffset.ToString(System.Globalization.CultureInfo.InvariantCulture) : null,
             isTruncated,
             generation);
+    }
+
+    private static long ParseOffset(string? cursor)
+    {
+        if (cursor is null)
+        {
+            return 0;
+        }
+        if (!long.TryParse(
+                cursor,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out long offset)
+            || offset < 0)
+        {
+            throw new LogSourceReadException("cursor_invalid", "The file log cursor is invalid.");
+        }
+        return offset;
     }
 }

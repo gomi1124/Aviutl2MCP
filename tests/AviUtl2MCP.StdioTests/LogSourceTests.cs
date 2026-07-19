@@ -30,24 +30,29 @@ public sealed class LogSourceTests
             [ContractLogLevel.Error],
             DateTimeOffset.Parse("2026-07-19T00:00:00Z", CultureInfo.InvariantCulture),
             correlationId,
-            Limit: 1);
+            Limit: 1,
+            Cursor: null,
+            InstanceId: null,
+            RequestCorrelationId: Guid.CreateVersion7(),
+            Deadline: DateTimeOffset.UtcNow.AddSeconds(10),
+            TimeoutMs: 10_000);
 
         // Act
         LogSourcePage first = await source.ReadAsync(firstQuery, CancellationToken.None);
         LogSourcePage second = await source.ReadAsync(
-            firstQuery with { Offset = first.NextOffset!.Value },
+            firstQuery with { Cursor = first.NextCursor },
             CancellationToken.None);
 
         // Assert
         Assert.AreEqual(LogSource.Server, source.Source);
         Assert.HasCount(1, first.Entries);
         Assert.IsTrue(first.IsTruncated);
-        Assert.AreEqual(1L, first.NextOffset);
+        Assert.AreEqual("1", first.NextCursor);
         Assert.AreEqual("failed", first.Entries[0].EventId);
         Assert.IsFalse(first.Entries[0].Message.Contains("secret", StringComparison.Ordinal));
         Assert.HasCount(1, second.Entries);
         Assert.IsFalse(second.IsTruncated);
-        Assert.IsNull(second.NextOffset);
+        Assert.IsNull(second.NextCursor);
         Assert.AreEqual("21", second.Entries[0].EventId);
         Assert.AreEqual(first.Generation, second.Generation);
     }
@@ -80,10 +85,10 @@ public sealed class LogSourceTests
 
         // Act
         LogSourcePage correlated = await source.ReadAsync(
-            new LogSourceQuery([ContractLogLevel.Warning], null, correlationId, Limit: 10),
+            CreateQuery([ContractLogLevel.Warning], correlationId),
             CancellationToken.None);
         LogSourcePage errors = await source.ReadAsync(
-            new LogSourceQuery([ContractLogLevel.Error], null, null, Limit: 10),
+            CreateQuery([ContractLogLevel.Error], null),
             CancellationToken.None);
         IReadOnlyList<KnownLogMatch> knownMatches = KnownLogClassifier.Classify(errors.Entries);
 
@@ -97,6 +102,20 @@ public sealed class LogSourceTests
         KnownLogMatch match = knownMatches.Single();
         Assert.AreEqual("psdtoolkit.cache-missing", match.RuleId);
     }
+
+    private static LogSourceQuery CreateQuery(
+        IReadOnlyList<ContractLogLevel> levels,
+        Guid? correlationId) =>
+        new(
+            levels,
+            null,
+            correlationId,
+            Limit: 10,
+            Cursor: null,
+            InstanceId: null,
+            RequestCorrelationId: Guid.CreateVersion7(),
+            Deadline: DateTimeOffset.UtcNow.AddSeconds(10),
+            TimeoutMs: 10_000);
 
     private static string CreateServerLine(
         string timestamp,
