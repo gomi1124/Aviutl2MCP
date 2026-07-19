@@ -9,8 +9,9 @@
 - 完了証拠: [受け入れテスト対応表](acceptance-test-matrix.md)の33 AC
 - M1証拠: locked restore、C# 8 project build、native `.aux2` build、28 tool schema conformance、C#/C++ 40-byte header golden vector
 - M2進捗: 2026-07-19 WP2～WP4完了。plugin lifecycle、atomic descriptor、logon SID＋SYSTEM pipe ACL、frame/handshake、dispatcher、Command gate、cancel、at-most-once、revision、locatorを実装。Native 16 checkと.NET 61 test（実`.aux2` load/C# named-pipe相互運用を含む）で検証済み
-- WP9進捗: W9.1～W9.2 logging基盤完了。serverのPID別stderr/JSONL、native制限ring/AviUtl `LOG_HANDLE`、共通診断項目、相関ID、秘密値maskをNative 17 checkと.NET 65 testで検証済み
+- WP9進捗: W9.1～W9.2 logging基盤完了。serverのPID別stderr/JSONL、native制限ring/AviUtl `LOG_HANDLE`、共通診断項目、相関ID、秘密値maskをNative 17 checkと.NET 70 testで検証済み
 - WP9 report進捗: W9.9 generatorを先行実装。component別相関log、revision、preview/artifact SHA-256、versions、checks、起動PIDを相関directory内のJSONへ安全に集約し、非UUIDv7拒否と秘密値maskを自動testで検証済み
+- WP9 verification進捗: W9.8 before/after verifier完了。revision差とRGBA PNGのCRC/zlib/filter復号後pixel差を検証し、変更pixel数・比率・最大/平均channel差を返す
 
 V1の28 tools、5 resources、4 promptsを削減せず実装する。各末端taskは原則15～60分の検証可能な単位とし、失敗時に層を特定できる順で進める。
 
