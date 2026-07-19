@@ -8,7 +8,14 @@ PSDToolKit2 と GCMZDrops が導入された Windows 環境を対象に、編集
 
 ## 現在の状態
 
-Phase 0～2はユーザー承認済みです。Phase 3（クラス図・実装分解）は敵対的レビューまで完了し、Phase 4（実装・自動テスト）へ移行します。
+V1のMCP server、AviUtl2 Bridge、PSDToolKit2/GCMZDrops連携、自動診断を実装し、Phase 4の受け入れ検証を進めています。
+
+- 28 tools、5 resources、4 prompts
+- revision競合、instance曖昧性、at-most-once、batch/Undoを考慮した編集境界
+- PSD作成、setup、character/layer状態、音声・字幕・LAB連携
+- MCP stdio、IPC、native、実AviUtl2の分層テスト
+- correlation ID、component別log、revision、preview hashを含むdebug report
+- `.au2pkg.zip` Bridge packageと自己完結`win-x64` MCP server package
 
 - [Phase 0 仕様書](docs/specification.md)
 - [Phase 1 要件定義書](docs/requirements.md)
@@ -35,5 +42,19 @@ Phase 0～2はユーザー承認済みです。Phase 3（クラス図・実装�
 - AviUtl ExEdit2
 - PSDToolKit2
 - GCMZDrops
+
+導入方法とMCP client設定は[導入・診断ガイド](docs/install.md)を参照してください。
+
+## Build・test・debug
+
+```powershell
+dotnet restore .\AviUtl2MCP.slnx --locked-mode
+dotnet build .\AviUtl2MCP.slnx --no-restore --configuration Release
+.\scripts\Test-McpStdio.ps1 -Configuration Release -NoBuild
+.\scripts\Test-BridgeIntegration.ps1 -Configuration Release -NoBuild
+.\scripts\Build-Package.ps1 -Configuration Release -Version 0.1.0
+```
+
+実AviUtl2テストは既存の編集環境を保護するため、明示的なopt-in、専用fixture copy、runner所有PIDの条件が揃った場合だけ実行します。debug reportは`artifacts\debug`または`artifacts\real-e2e`へ生成されます。
 
 本プロジェクトは [MIT License](LICENSE) で公開します。
