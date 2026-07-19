@@ -4195,6 +4195,11 @@ void test_native_psd_voice_request_handler() {
         }.dump();
     };
     write_config(false, true);
+    std::error_code canonical_lab_error;
+    const std::filesystem::path canonical_lab_path =
+        std::filesystem::canonical(lab_path, canonical_lab_error);
+    require(!canonical_lab_error,
+        "PSD voice LAB fixture path could not be canonicalized");
 
     fake_sdk_state fake;
     fake.has_psd_effects = true;
@@ -4281,7 +4286,7 @@ void test_native_psd_voice_request_handler() {
     require(dry_run.at("result").at("plannedChanges").size() == 3U,
         "PSD voice dry-run returned an unexpected change plan");
     require(dry_run.at("result").at("companionFiles").at("labPath")
-            == lab_path.string(),
+            == canonical_lab_path.string(),
         "PSD voice dry-run changed the LAB companion path");
     require(dry_run.at("revision") == initial_revision,
         "PSD voice dry-run changed the content revision");
