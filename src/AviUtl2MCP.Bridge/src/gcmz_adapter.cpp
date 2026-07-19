@@ -367,6 +367,14 @@ gcmz_send_result gcmz_adapter::send_files(
                     : "GCMZDrops request could not be delivered",
             };
         }
+        if (message_result == FALSE) {
+            return gcmz_send_result{
+                .target = target,
+                .payload = payload,
+                .error_code = "gcmz_rejected",
+                .error_message = "GCMZDrops rejected the request payload",
+            };
+        }
         return gcmz_send_result{
             .ok = true,
             .target = target,

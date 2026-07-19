@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -22,8 +23,17 @@ struct psd_value_validation final {
     const std::filesystem::path& normalized_audio_path,
     std::string_view text);
 
+[[nodiscard]] std::string create_psd_drop_object(
+    std::string_view normalized_psd_path,
+    std::uint32_t tag);
+
 [[nodiscard]] std::string create_psd_subtitle_alias(
     std::string_view template_text,
-    std::string_view character_id);
+    std::string_view character_id,
+    int length);
+
+[[nodiscard]] bool psd_subtitle_alias_matches(
+    std::string_view expected_alias,
+    std::string_view actual_alias) noexcept;
 
 }  // namespace aviutl2_mcp

@@ -3860,16 +3860,43 @@ void test_psd_value_and_alias_codecs() {
         "require(\"PSDToolKit\").mes(o, obj)\\n?>\r\n";
     const std::string alias = aviutl2_mcp::create_psd_subtitle_alias(
         subtitle_template,
-        "ゆかり\\\"A");
+        "ゆかり\\\"A",
+        30);
     require(alias.find("__AVIUTL2_MCP_CHARACTER_ID__") == std::string::npos
             && alias.find("id = \"ゆかり\\\\\\\"A\"") != std::string::npos
+            && alias.find("frame=0,29") != std::string::npos
             && alias.find("require(\"PSDToolKit\").mes") != std::string::npos,
-        "subtitle alias did not replace and Lua-escape the character ID");
+        "subtitle alias did not replace the length or Lua-escape the character ID");
+    const std::string normalized_alias = alias
+        + "追加既定項目=1\r\n";
+    require(aviutl2_mcp::psd_subtitle_alias_matches(alias, normalized_alias),
+        "AviUtl2-normalized subtitle alias was rejected");
+    std::string mismatched_alias = normalized_alias;
+    mismatched_alias.replace(
+        mismatched_alias.find("ゆかり"),
+        std::string_view("ゆかり").size(),
+        "あかり");
+    require(!aviutl2_mcp::psd_subtitle_alias_matches(alias, mismatched_alias),
+        "subtitle alias with a different character ID was accepted");
+    const std::string psd_object = aviutl2_mcp::create_psd_drop_object(
+        "C:\\素材\\立ち絵.psd",
+        123U);
+    require(psd_object.find("effect.name=PSDファイル@PSDToolKit\r\n") != std::string::npos
+            && psd_object.find("PSDファイル=C:\\素材\\立ち絵.psd\r\n") != std::string::npos
+            && psd_object.find("タグ=123\r\n") != std::string::npos
+            && psd_object.find("effect.name=描画@PSDToolKit\r\n") != std::string::npos,
+        "PSD drop object did not match the PSDToolKit2 template");
     require_throws([&subtitle_template] {
         static_cast<void>(aviutl2_mcp::create_psd_subtitle_alias(
             subtitle_template + subtitle_template,
-            "id"));
+            "id",
+            1));
     }, "invalid duplicate subtitle template was accepted");
+    require_throws([] {
+        static_cast<void>(aviutl2_mcp::create_psd_drop_object(
+            "C:\\素材\\bad|file.psd",
+            1U));
+    }, "ambiguous PSD drop object path was accepted");
 }
 
 void test_native_psd_setup_request_handler() {
@@ -4165,8 +4192,17 @@ void test_native_psd_create_request_handler() {
     auto gcmz = std::make_shared<fake_gcmz_client>();
     gcmz->on_send = [&fake, &psd_path](const aviutl2_mcp::gcmz_drop_request& request) {
         require(request.layer == 6 && request.files.size() == 1U
-                && request.files[0] == psd_path,
+                && request.files[0].extension() == L".object",
             "PSD create sent an incorrect GCMZDrops request");
+        std::ifstream input(request.files[0], std::ios::binary);
+        const std::string object_data{
+            std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+        require(object_data.find("effect.name=PSDファイル@PSDToolKit\r\n")
+                    != std::string::npos
+                && object_data.find("PSDファイル=" + psd_path.string() + "\r\n")
+                    != std::string::npos,
+            "PSD create did not send a PSDToolKit2 object through GCMZDrops");
         fake.has_psd_file_object = true;
         fake.psd_effect_file = psd_path.string();
         fake.second_position = {.layer = 5, .start = 49, .end = 148};
@@ -4185,7 +4221,10 @@ void test_native_psd_create_request_handler() {
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_psd_create_request_handler>(
         identity,
         facade,
-        gcmz));
+        gcmz,
+        aviutl2_mcp::native_psd_create_options{
+            .temporary_root = root / L"temp",
+        }));
     const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
     const std::string initial_revision = dispatcher.revisions().content_revision();
     const std::string initial_view_revision = dispatcher.revisions().view_revision();
@@ -4342,6 +4381,7 @@ void test_native_psd_voice_request_handler() {
     const std::filesystem::path temporary_root = root / L"temp";
     const std::string subtitle_template =
         "[Object]\r\n"
+        "frame=0,0\r\n"
         "[Object.0]\r\n"
         "effect.name=テキスト\r\n"
         "テキスト=<?o={id=\"__AVIUTL2_MCP_CHARACTER_ID__\"}"

@@ -67,12 +67,17 @@ private:
     sdk_read_facade& sdk_;
 };
 
+struct native_psd_create_options final {
+    std::optional<std::filesystem::path> temporary_root;
+};
+
 class native_psd_create_request_handler final : public operation_handler {
 public:
     native_psd_create_request_handler(
         bridge_identity identity,
         sdk_read_facade& sdk,
-        std::shared_ptr<gcmz_client> gcmz);
+        std::shared_ptr<gcmz_client> gcmz,
+        native_psd_create_options options = {});
 
     [[nodiscard]] std::string operation() const override;
     [[nodiscard]] bool is_mutating() const noexcept override;
@@ -84,6 +89,7 @@ private:
     bridge_identity identity_;
     sdk_read_facade& sdk_;
     std::shared_ptr<gcmz_client> gcmz_;
+    native_psd_create_options options_;
 };
 
 struct native_psd_voice_options final {

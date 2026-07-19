@@ -72,11 +72,31 @@ PSD/PSBとWAV/TXTの投入はGCMZDrops API v3を使い、[IPC契約の複合操�
 - `.lab`は任意。同basenameが存在すれば使い、なければあいうえお口パク検証をwarningにする。
 - GCMZDropsへ渡すpathは正規化済み絶対pathで、対象AviUtl2 PIDを照合する。
 
-#### 3.2.1 `direct-wav-txt`
+#### 3.2.1 PSD object wrapper
+
+GCMZDrops外部APIは`.object`、`.txt`、標準media fileを挿入対象にし、`.psd`/`.psb`を直接送ってもPSDToolKit2のhost file-drop handlerを呼ばない。そのためApplicationは `%LOCALAPPDATA%\AviUtl2MCP\v1\temp\{correlationId}\psd.object` をUTF-8 BOMなしで作成し、GCMZDrops API v3へこの1ファイルだけを渡す。内容はPSDToolKit2同梱templateと同じ次の完全な形とする。
+
+```ini
+[Object]
+[Object.0]
+effect.name=PSDファイル@PSDToolKit
+PSDファイル=__NORMALIZED_PSD_PATH__
+タグ=__CORRELATION_TAG__
+レイヤー=L.0
+[Object.1]
+effect.name=描画@PSDToolKit
+```
+
+- `__NORMALIZED_PSD_PATH__`は存在する`.psd`/`.psb`の正規化済み絶対pathとし、NUL/CR/LF/`|`、無効UTF-8、64 KiB超過を拒否する。
+- `__CORRELATION_TAG__`はcorrelation IDのSHA-256先頭4 byteから導出する一意な正整数とし、再試行でも同じ値を使う。
+- temp artifactはGCMZDrops送信後もSDK事後検索が完了するまで保持する。成功・失敗のどちらでもdirectoryを再解析し、相関ID配下だけをbest-effortで削除する。
+- 事後検索では指定frame/layer、`PSDファイル@PSDToolKit`、正規化PSD path、tag、初期layer state `L.0`を照合する。
+
+#### 3.2.2 `direct-wav-txt`
 
 `external_wav_txt_pair=true`のときだけ使う。GCMZDrops API v3の1要求へ、同basenameの正規化済みWAVとTXTを各1件、計2件として渡す。TXTは変更せず、PSDToolKit2側のUTF-8読取と改行escapeに委ねる。
 
-#### 3.2.2 `intermediate-object-audio-text-v1`
+#### 3.2.3 `intermediate-object-audio-text-v1`
 
 `external_object_audio_text=true`のときだけ使う。Applicationは `%LOCALAPPDATA%\AviUtl2MCP\v1\temp\{correlationId}\voice.object` をcurrent userだけがアクセスできるdirectoryにUTF-8 BOMなしで作成し、GCMZDrops API v3へこの1ファイルだけを渡す。内容は次の完全な形とし、余分な`[2]`以降やsubsectionを許可しない。
 
@@ -132,6 +152,8 @@ V1は人間向け`layerPath + isVisible`からPSDToolKit固有値を推測生成
 - UTF-8、最大64 KiB、Object section 1件、effect `テキスト` 1件、placeholder `__AVIUTL2_MCP_CHARACTER_ID__` 1件を必須とする。
 - placeholderはcharacter IDをLua double-quoted stringとしてescapeして置換する。`\`、`"`、制御byteをescapeし、生の改行や終端を挿入しない。
 - 生成aliasに `require("PSDToolKit").mes` が1回だけ含まれることを検証する。
+- templateの`frame=0,0`は`frame=0,<length-1>`へ置換する。alias内のframe情報は公開SDK `create_object_from_alias` の`length`より優先されるため、要求された字幕長をalias自身へ固定する。
+- 作成後はframe/layerに加え、`テキスト` effect、PSDToolKit marker、escape済みcharacter IDを含む生成script行を照合する。AviUtl2によるsection順序や既定itemの正規化は許容し、意味の異なるaliasは拒否する。
 - 任意のユーザーaliasやscriptを自動探索・実行しない。template不一致では `capability_not_available` とする。
 
 字幕本文はaliasへ埋め込まず、GCMZDropsが作成した `セリフ準備@PSDToolKit` の `テキスト` と `キャラクターID` をPSDToolKit2が参照する。字幕本文、alias全文、audio/text pathは通常ログへ出さない。
@@ -155,7 +177,8 @@ status/capabilities/diagnoseは次を別々に返す。
 - `PSDToolKit.user.ini`の上書きと無効UTF-8を安全に処理する
 - `layerState`の`L.0`、v0/v1、過大値、NUL/改行、round-trip不一致
 - PSD path差替え、セーフガード維持、複数PSD effectを拒否する
-- subtitle templateのhash、section、placeholder、Lua escapeを検証する
+- PSD wrapperの完全なsection/key、path拒否、tag、初期layer state、cleanupを検証する
+- subtitle templateのhash、section、placeholder、Lua escape、要求length、host正規化後の意味的一致を検証する
 - `characterId`必須と生成後round-tripを検証する
 - `external_wav_txt_pair=true`の直接経路と`external_object_audio_text=true`の中間object経路を個別に検証する
 - 両設定false、欠落、不正JSONで`psdVoice`だけが無効になり、設定を変更しないことを検証する

@@ -40,6 +40,30 @@ namespace {
 
 constexpr std::string_view SUBTITLE_TEMPLATE_SHA256 =
     "f8063841c273854ba5b2f150ba29958bec0da1256653b4ba3bccd84c95d87fdc";
+constexpr std::uint32_t MAXIMUM_POSTCONDITION_POLL_MS = 45'000U;
+constexpr std::chrono::milliseconds POSTCONDITION_POLL_INTERVAL{100};
+
+template <typename TResult, typename TProbe>
+[[nodiscard]] std::optional<TResult> poll_for_postcondition(
+    const std::uint32_t timeout_ms,
+    TProbe&& probe) {
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds((std::min)(timeout_ms, MAXIMUM_POSTCONDITION_POLL_MS));
+    do {
+        std::optional<TResult> result = probe();
+        if (result.has_value()) {
+            return result;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            break;
+        }
+        std::this_thread::sleep_for((std::min)(
+            POSTCONDITION_POLL_INTERVAL,
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)));
+    } while (true);
+    return std::nullopt;
+}
 
 [[nodiscard]] std::optional<int> parse_optional_integer(
     const nlohmann::json& params,
@@ -862,20 +886,34 @@ void validate_wav_file(const std::filesystem::path& path) {
     return get_local_app_data_path() / L"AviUtl2MCP" / L"v1" / L"temp";
 }
 
-class voice_temporary_artifact final {
+[[nodiscard]] std::filesystem::path resolve_psd_temporary_root(
+    const native_psd_create_options& options) {
+    if (options.temporary_root.has_value()) {
+        return *options.temporary_root;
+    }
+    return get_local_app_data_path() / L"AviUtl2MCP" / L"v1" / L"temp";
+}
+
+class temporary_object_artifact final {
 public:
-    voice_temporary_artifact(
+    temporary_object_artifact(
         std::filesystem::path root,
-        std::string correlation_id)
-        : correlation_id_(std::move(correlation_id)) {
+        std::string correlation_id,
+        std::filesystem::path file_name,
+        std::string operation)
+        : correlation_id_(std::move(correlation_id)),
+          operation_(std::move(operation)) {
         if (!is_nonzero_uuid(correlation_id_)) {
-            throw std::invalid_argument("voice correlation ID is invalid");
+            throw std::invalid_argument("temporary artifact correlation ID is invalid");
+        }
+        if (file_name.empty() || file_name.has_parent_path()) {
+            throw std::invalid_argument("temporary artifact filename is invalid");
         }
         ensure_user_only_directory(root);
         std::error_code error;
         root_ = std::filesystem::weakly_canonical(root, error);
         if (error) {
-            throw std::system_error(error, "voice temporary root could not be resolved");
+            throw std::system_error(error, "temporary artifact root could not be resolved");
         }
         directory_ = root_ / utf8_to_filesystem_path(correlation_id_);
         if (directory_.parent_path() != root_
@@ -883,13 +921,13 @@ public:
             throw std::invalid_argument("voice temporary directory escaped its root");
         }
         if (std::filesystem::exists(directory_, error) || error) {
-            throw std::invalid_argument("voice temporary directory already exists");
+            throw std::invalid_argument("temporary artifact directory already exists");
         }
         ensure_user_only_directory(directory_);
-        file_ = directory_ / L"voice.object";
+        file_ = directory_ / std::move(file_name);
     }
 
-    ~voice_temporary_artifact() {
+    ~temporary_object_artifact() {
         std::error_code error;
         try {
             if (directory_.empty() || directory_.parent_path() != root_
@@ -904,18 +942,18 @@ public:
             get_native_logger().write(
                 native_log_level::warning,
                 "psd",
-                "psd.voice_temp_cleanup_failed",
-                "Voice temporary artifact cleanup failed",
+                "psd.temp_cleanup_failed",
+                "PSD temporary artifact cleanup failed",
                 native_log_context{
                     .correlation_id = correlation_id_,
-                    .operation = "psd.createVoice",
+                    .operation = operation_,
                     .result_code = "cleanup_failed",
                 });
         }
     }
 
-    voice_temporary_artifact(const voice_temporary_artifact&) = delete;
-    voice_temporary_artifact& operator=(const voice_temporary_artifact&) = delete;
+    temporary_object_artifact(const temporary_object_artifact&) = delete;
+    temporary_object_artifact& operator=(const temporary_object_artifact&) = delete;
 
     [[nodiscard]] const std::filesystem::path& file() const noexcept {
         return file_;
@@ -938,7 +976,21 @@ private:
     std::filesystem::path directory_;
     std::filesystem::path file_;
     std::string correlation_id_;
+    std::string operation_;
 };
+
+[[nodiscard]] std::uint32_t create_psd_drop_tag(const std::string_view correlation_id) {
+    const std::string digest = calculate_sha256(std::span(
+        reinterpret_cast<const std::uint8_t*>(correlation_id.data()),
+        correlation_id.size()));
+    std::uint32_t tag = 0U;
+    for (const char character : std::string_view(digest).substr(0U, 8U)) {
+        tag = (tag << 4U) | static_cast<std::uint32_t>(
+            character <= '9' ? character - '0' : character - 'a' + 10);
+    }
+    tag &= 0x7fffffffU;
+    return tag == 0U ? 1U : tag;
+}
 
 struct psd_voice_parameters final {
     std::filesystem::path audio_path;
@@ -1226,7 +1278,10 @@ struct created_voice_result final {
             project_generation,
             true,
             false);
-        if (!detail.ok || detail.detail.alias != expected_alias || match.has_value()) {
+        if (!detail.ok
+            || !detail.detail.alias.has_value()
+            || !psd_subtitle_alias_matches(expected_alias, *detail.detail.alias)
+            || match.has_value()) {
             return std::nullopt;
         }
         match = object;
@@ -2048,10 +2103,12 @@ operation_result native_psd_validate_request_handler::execute(
 native_psd_create_request_handler::native_psd_create_request_handler(
     bridge_identity identity,
     sdk_read_facade& sdk,
-    std::shared_ptr<gcmz_client> gcmz)
+    std::shared_ptr<gcmz_client> gcmz,
+    native_psd_create_options options)
     : identity_(std::move(identity)),
       sdk_(sdk),
-      gcmz_(std::move(gcmz)) {
+      gcmz_(std::move(gcmz)),
+      options_(std::move(options)) {
     if (gcmz_ == nullptr) {
         throw std::invalid_argument("PSD create requires a GCMZDrops client");
     }
@@ -2177,6 +2234,14 @@ operation_result native_psd_create_request_handler::execute(
                 "PSD creation was cancelled before cursor positioning",
                 context);
         }
+        temporary_object_artifact temporary_artifact(
+            resolve_psd_temporary_root(options_),
+            request.correlation_id,
+            L"psd.object",
+            "psd.create");
+        temporary_artifact.write(create_psd_drop_object(
+            filesystem_path_to_utf8(parameters.psd_path),
+            create_psd_drop_tag(request.correlation_id)));
         const sdk_view_edit_result cursor = sdk_.edit_view({
             .scene_id = parameters.scene_id,
             .frame = parameters.start_frame,
@@ -2206,12 +2271,13 @@ operation_result native_psd_create_request_handler::execute(
                 .layer = parameters.layer,
                 .frame_advance = 0,
                 .margin = -1,
-                .files = {parameters.psd_path},
+                .files = {temporary_artifact.file()},
             },
             process_id,
             project_path,
             send_timeout);
-        if (!sent.ok && !sent.target.ok) {
+        if (!sent.ok
+            && (!sent.target.ok || sent.error_code != "gcmz_timeout")) {
             return create_native_failure(
                 sent.error_code,
                 sent.error_message,
@@ -2220,17 +2286,13 @@ operation_result native_psd_create_request_handler::execute(
         }
 
         const std::string project_generation = context.revisions().project_generation();
-        const auto maximum_poll = std::chrono::milliseconds((std::min)(request.timeout_ms, 10'000U));
-        const auto deadline = std::chrono::steady_clock::now() + maximum_poll;
-        std::optional<sdk_object_detail_snapshot> created;
-        do {
-            created = find_created_psd_object(
-                sdk_, identity_, project_generation, parameters);
-            if (created.has_value()) {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        } while (std::chrono::steady_clock::now() < deadline);
+        const std::optional<sdk_object_detail_snapshot> created =
+            poll_for_postcondition<sdk_object_detail_snapshot>(
+                request.timeout_ms,
+                [this, &project_generation, &parameters] {
+                    return find_created_psd_object(
+                        sdk_, identity_, project_generation, parameters);
+                });
         if (!created.has_value()) {
             static_cast<void>(context.revisions().commit_content_change());
             return create_external_partial_failure(
@@ -2452,7 +2514,8 @@ operation_result native_psd_voice_request_handler::execute(
                 read_subtitle_template(
                     resolve_subtitle_template_path(options_),
                     expected_subtitle_sha256),
-                parameters.character_id);
+                parameters.character_id,
+                parameters.length);
         } catch (const std::invalid_argument& exception) {
             return create_native_failure(
                 "capability_not_available",
@@ -2505,14 +2568,16 @@ operation_result native_psd_voice_request_handler::execute(
             }.dump(), context);
         }
 
-        std::unique_ptr<voice_temporary_artifact> temporary_artifact;
+        std::unique_ptr<temporary_object_artifact> temporary_artifact;
         std::vector<std::filesystem::path> drop_files;
         if (config.voice_route == psd_voice_route::direct_wav_txt) {
             drop_files = {parameters.audio_path, parameters.text_path};
         } else {
-            temporary_artifact = std::make_unique<voice_temporary_artifact>(
+            temporary_artifact = std::make_unique<temporary_object_artifact>(
                 resolve_voice_temporary_root(options_),
-                request.correlation_id);
+                request.correlation_id,
+                L"voice.object",
+                "psd.createVoice");
             temporary_artifact->write(create_intermediate_voice_object(
                 parameters.audio_path,
                 parameters.text));
@@ -2559,7 +2624,8 @@ operation_result native_psd_voice_request_handler::execute(
             process_id,
             project_path,
             (std::min)(request.timeout_ms, 10'000U));
-        if (!sent.ok && !sent.target.ok) {
+        if (!sent.ok
+            && (!sent.target.ok || sent.error_code != "gcmz_timeout")) {
             return create_native_failure(
                 sent.error_code,
                 sent.error_message,
@@ -2569,17 +2635,13 @@ operation_result native_psd_voice_request_handler::execute(
 
         nlohmann::json applied_changes = nlohmann::json::array();
         applied_changes.push_back(planned_changes.at(0));
-        const auto deadline = std::chrono::steady_clock::now()
-            + std::chrono::milliseconds((std::min)(request.timeout_ms, 10'000U));
-        std::optional<created_voice_result> created_voice;
-        do {
-            created_voice = find_created_voice(
-                sdk_, identity_, project_generation, parameters);
-            if (created_voice.has_value()) {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        } while (std::chrono::steady_clock::now() < deadline);
+        const std::optional<created_voice_result> created_voice =
+            poll_for_postcondition<created_voice_result>(
+                request.timeout_ms,
+                [this, &project_generation, &parameters] {
+                    return find_created_voice(
+                        sdk_, identity_, project_generation, parameters);
+                });
         if (!created_voice.has_value()) {
             static_cast<void>(context.revisions().commit_content_change());
             return create_external_partial_failure(
@@ -2686,12 +2748,17 @@ operation_result native_psd_voice_request_handler::execute(
                 context);
         }
         applied_changes.push_back(planned_changes.at(2));
-        const std::optional<sdk_object_snapshot> verified_subtitle = find_created_subtitle(
-            sdk_,
-            identity_,
-            project_generation,
-            parameters,
-            subtitle_alias);
+        const std::optional<sdk_object_snapshot> verified_subtitle =
+            poll_for_postcondition<sdk_object_snapshot>(
+                request.timeout_ms,
+                [this, &project_generation, &parameters, &subtitle_alias] {
+                    return find_created_subtitle(
+                        sdk_,
+                        identity_,
+                        project_generation,
+                        parameters,
+                        subtitle_alias);
+                });
         if (!verified_subtitle.has_value()) {
             static_cast<void>(context.revisions().commit_content_change());
             return create_external_partial_failure(

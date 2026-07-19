@@ -258,7 +258,7 @@ public sealed class RealReadPreviewDiagnosticTests
                     beforeRevision,
                     dryRun: false),
                 timeout.Token);
-            Assert.IsTrue(created.Ok, created.Error?.Message);
+            Assert.IsTrue(created.Ok, DescribeGatewayFailure(created));
             Assert.IsTrue(created.Data!.Created);
             Assert.AreEqual(PsdPlacementStatus.Valid, created.Data.PlacementStatus);
             Assert.HasCount(1, created.Data.Objects);
@@ -479,7 +479,7 @@ public sealed class RealReadPreviewDiagnosticTests
                         parameters,
                         beforeRevision),
                     timeout.Token);
-            Assert.IsTrue(created.Ok, created.Error?.Message);
+            Assert.IsTrue(created.Ok, DescribeGatewayFailure(created));
             Assert.IsNotNull(created.Data!.TimelineObject);
             Assert.AreEqual("AviUtl2 MCP PSD create E2E", created.Data.TimelineObject.Name);
             Assert.AreEqual(10, created.Data.TimelineObject.Layer);
@@ -616,7 +616,7 @@ public sealed class RealReadPreviewDiagnosticTests
                         voiceParameters,
                         characterRevision),
                     timeout.Token);
-            Assert.IsTrue(created.Ok, created.Error?.Message);
+            Assert.IsTrue(created.Ok, DescribeGatewayFailure(created));
             Assert.IsNotNull(created.Data!.VoiceObjects);
             Assert.IsNotNull(created.Data.SubtitleObjects);
             Assert.HasCount(2, created.Data.VoiceObjects);
@@ -701,6 +701,19 @@ public sealed class RealReadPreviewDiagnosticTests
             expectedRevision,
         dryRun,
         parameters);
+
+    private static string DescribeGatewayFailure<TData>(GatewayResponse<TData> response)
+    {
+        if (response.Error is null)
+        {
+            return "The Bridge operation failed without structured error details.";
+        }
+        return $"{response.Error.Message}\n"
+            + $"code={response.Error.Code}; phase={response.Error.Phase}; "
+            + $"outcome={response.Error.Outcome}; undoRecommended={response.Error.UndoRecommended}\n"
+            + $"result={JsonSerializer.Serialize(response.Data)}\n"
+            + $"details={response.Error.Details.GetRawText()}";
+    }
 
     private static async Task<(ObjectSummary Summary, ObjectData Detail, string PsdPath)>
         GetSinglePsdObjectAsync(

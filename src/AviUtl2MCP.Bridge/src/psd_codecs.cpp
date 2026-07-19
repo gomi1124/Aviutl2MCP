@@ -196,27 +196,84 @@ std::string normalize_psd_voice_text(const std::string_view text) {
     return escape_voice_text(text);
 }
 
+std::string create_psd_drop_object(
+    const std::string_view normalized_psd_path,
+    const std::uint32_t tag) {
+    if (normalized_psd_path.empty()
+        || normalized_psd_path.size() > MAXIMUM_TEXT_BYTES
+        || !is_valid_utf8(normalized_psd_path)
+        || normalized_psd_path.find_first_of("\r\n") != std::string_view::npos
+        || normalized_psd_path.find('\0') != std::string_view::npos
+        || normalized_psd_path.find('|') != std::string_view::npos) {
+        throw std::invalid_argument("PSD path cannot be represented by the PSDToolKit2 object template");
+    }
+    return "[Object]\r\n"
+        "[Object.0]\r\n"
+        "effect.name=PSDファイル@PSDToolKit\r\n"
+        "PSDファイル=" + std::string(normalized_psd_path) + "\r\n"
+        "タグ=" + std::to_string(tag) + "\r\n"
+        "レイヤー=L.0\r\n"
+        "[Object.1]\r\n"
+        "effect.name=描画@PSDToolKit\r\n";
+}
+
 std::string create_psd_subtitle_alias(
     const std::string_view template_text,
-    const std::string_view character_id) {
+    const std::string_view character_id,
+    const int length) {
     const psd_value_validation validation = validate_psd_character_id(character_id);
     if (!validation.ok) {
         throw std::invalid_argument(validation.error_message);
     }
+    if (length < 1) {
+        throw std::invalid_argument("subtitle length must be positive");
+    }
+    constexpr std::string_view FRAME_PLACEHOLDER = "frame=0,0";
     if (template_text.empty() || template_text.size() > MAXIMUM_TEXT_BYTES
         || !is_valid_utf8(template_text)
         || count_occurrences(template_text, "[Object]") != 1U
         || count_occurrences(template_text, "effect.name=テキスト") != 1U
+        || count_occurrences(template_text, FRAME_PLACEHOLDER) != 1U
         || count_occurrences(template_text, SUBTITLE_PLACEHOLDER) != 1U
         || count_occurrences(template_text, "require(\"PSDToolKit\").mes") != 1U) {
         throw std::invalid_argument("subtitle template does not match the V1 contract");
     }
     std::string alias(template_text);
     alias.replace(
+        alias.find(FRAME_PLACEHOLDER),
+        FRAME_PLACEHOLDER.size(),
+        "frame=0," + std::to_string(length - 1));
+    alias.replace(
         alias.find(SUBTITLE_PLACEHOLDER),
         SUBTITLE_PLACEHOLDER.size(),
         escape_lua_string(character_id));
     return alias;
+}
+
+bool psd_subtitle_alias_matches(
+    const std::string_view expected_alias,
+    const std::string_view actual_alias) noexcept {
+    constexpr std::string_view SCRIPT_MARKER = "require(\"PSDToolKit\").mes";
+    if (!is_valid_utf8(expected_alias)
+        || !is_valid_utf8(actual_alias)
+        || count_occurrences(expected_alias, SCRIPT_MARKER) != 1U
+        || count_occurrences(actual_alias, SCRIPT_MARKER) != 1U
+        || actual_alias.find("effect.name=テキスト") == std::string_view::npos) {
+        return false;
+    }
+    const std::size_t marker = expected_alias.find(SCRIPT_MARKER);
+    const std::size_t previous_line = expected_alias.find_last_of("\r\n", marker);
+    const std::size_t line_start = previous_line == std::string_view::npos
+        ? 0U
+        : previous_line + 1U;
+    const std::size_t line_end = expected_alias.find_first_of("\r\n", marker);
+    const std::string_view expected_script_line = expected_alias.substr(
+        line_start,
+        line_end == std::string_view::npos
+            ? std::string_view::npos
+            : line_end - line_start);
+    return !expected_script_line.empty()
+        && actual_alias.find(expected_script_line) != std::string_view::npos;
 }
 
 }  // namespace aviutl2_mcp
