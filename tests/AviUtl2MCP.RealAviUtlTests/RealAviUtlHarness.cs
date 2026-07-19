@@ -79,7 +79,9 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
         recordedFailure ??= exception;
     }
 
-    public static async Task<RealAviUtlHarness> StartAsync(CancellationToken cancellationToken)
+    public static async Task<RealAviUtlHarness> StartAsync(
+        CancellationToken cancellationToken,
+        Action<string>? prepareFixture = null)
     {
         if (!IsEnabled)
         {
@@ -133,6 +135,7 @@ internal sealed class RealAviUtlHarness : IAsyncDisposable
                 Path.Combine(bridgeDirectory, "assets"));
             PrepareModuleTrust(dataPath, portableDataDirectory);
             CreateFixtureProject(sourceProjectPath, fixtureProjectPath);
+            prepareFixture?.Invoke(fixtureProjectPath);
 
             string portableAviUtlPath = Path.Combine(
                 portableApplicationDirectory,
