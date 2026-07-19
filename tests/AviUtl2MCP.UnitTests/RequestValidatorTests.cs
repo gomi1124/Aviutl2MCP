@@ -118,4 +118,69 @@ public sealed class RequestValidatorTests
         // Assert
         Assert.ThrowsExactly<ArgumentException>(action);
     }
+
+    [TestMethod]
+    public void ValidateEditInputRejectsAliasWithoutObjectSection()
+    {
+        // Arrange
+        CreateAliasObjectInput input = new()
+        {
+            ExpectedRevision = new Revision("r1"),
+            Alias = "[Settings]\r\nvalue=1\r\n",
+            Placement = new Placement(0, 1, 1, DurationFrames: 1),
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidateEditInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(action);
+    }
+
+    [TestMethod]
+    public void ValidateEditInputRejectsRelativeMediaPath()
+    {
+        // Arrange
+        CreateMediaObjectInput input = new()
+        {
+            ExpectedRevision = new Revision("r1"),
+            MediaPath = "voice.wav",
+            Placement = new Placement(0, 1, 1, DurationFrames: 1),
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidateEditInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(action);
+    }
+
+    [TestMethod]
+    public void ValidateEditInputAllowsClearingObjectName()
+    {
+        // Arrange
+        SetObjectNameInput input = new()
+        {
+            ExpectedRevision = new Revision("r1"),
+            Locator = CreateValidLocator(),
+            Name = string.Empty,
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidateEditInput(input);
+
+        // Assert
+        action();
+    }
+
+    private static ObjectLocator CreateValidLocator() => new(
+        Guid.CreateVersion7(),
+        Guid.CreateVersion7(),
+        0,
+        1,
+        1,
+        30,
+        "object",
+        new string('a', 64),
+        new string('b', 64));
 }

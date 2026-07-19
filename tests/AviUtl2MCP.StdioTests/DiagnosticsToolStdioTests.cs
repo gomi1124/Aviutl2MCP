@@ -19,6 +19,15 @@ public sealed class DiagnosticsToolStdioTests
         "aviutl_list_effects",
         "aviutl_list_effect_items",
     ];
+    private static readonly string[] EDIT_TOOL_NAMES =
+    [
+        "aviutl_create_object",
+        "aviutl_create_media_object",
+        "aviutl_create_alias_object",
+        "aviutl_move_object",
+        "aviutl_delete_object",
+        "aviutl_set_object_name",
+    ];
     private static readonly string[] RESOURCE_URIS =
     [
         "aviutl://status",
@@ -64,6 +73,7 @@ public sealed class DiagnosticsToolStdioTests
             McpClientTool statusTool = tools.Single(tool => tool.Name == "aviutl_get_status");
             McpClientTool projectTool = tools.Single(tool => tool.Name == "aviutl_get_project");
             McpClientTool timelineTool = tools.Single(tool => tool.Name == "aviutl_get_timeline");
+            McpClientTool deleteTool = tools.Single(tool => tool.Name == "aviutl_delete_object");
             ReadResourceResult statusResource = await client.ReadResourceAsync(
                 "aviutl://status",
                 cancellationToken: timeout.Token);
@@ -81,6 +91,25 @@ public sealed class DiagnosticsToolStdioTests
             CallToolResult invalidTimelineResult = await client.CallToolAsync(
                 timelineTool.Name,
                 new Dictionary<string, object?> { ["limit"] = 0 },
+                cancellationToken: timeout.Token);
+            CallToolResult offlineDeleteResult = await client.CallToolAsync(
+                deleteTool.Name,
+                new Dictionary<string, object?>
+                {
+                    ["expectedRevision"] = "epoch:generation:0",
+                    ["locator"] = new Dictionary<string, object?>
+                    {
+                        ["instanceId"] = Guid.CreateVersion7(),
+                        ["projectGeneration"] = Guid.CreateVersion7(),
+                        ["sceneId"] = 0,
+                        ["layer"] = 1,
+                        ["startFrame"] = 1,
+                        ["endFrame"] = 30,
+                        ["name"] = "voice",
+                        ["aliasSha256"] = new string('a', 64),
+                        ["effectSignatureSha256"] = new string('b', 64),
+                    },
+                },
                 cancellationToken: timeout.Token);
             CallToolResult logsResult = await client.CallToolAsync(
                 logsTool.Name,
@@ -103,13 +132,20 @@ public sealed class DiagnosticsToolStdioTests
                 cancellationToken: timeout.Token);
 
             // Assert
-            Assert.AreEqual(10, tools.Count);
+            Assert.AreEqual(16, tools.Count);
             CollectionAssert.IsSubsetOf(
                 READ_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());
             foreach (string readToolName in READ_TOOL_NAMES)
             {
                 AssertToolMetadata(tools.Single(tool => tool.Name == readToolName));
+            }
+            CollectionAssert.IsSubsetOf(
+                EDIT_TOOL_NAMES,
+                tools.Select(tool => tool.Name).ToArray());
+            foreach (string editToolName in EDIT_TOOL_NAMES)
+            {
+                AssertEditToolMetadata(tools.Single(tool => tool.Name == editToolName));
             }
             AssertToolMetadata(logsTool, "sources", "limit");
             AssertToolMetadata(diagnoseTool, "includeReadSmoke", "includePreviewSmoke", "maxLogLines");
@@ -146,6 +182,12 @@ public sealed class DiagnosticsToolStdioTests
             Assert.AreEqual(
                 "invalid_argument",
                 invalidTimelineEnvelope.GetProperty("error").GetProperty("code").GetString());
+
+            Assert.AreEqual(true, offlineDeleteResult.IsError);
+            JsonElement offlineDeleteEnvelope = offlineDeleteResult.StructuredContent!.Value;
+            Assert.AreEqual(
+                "aviutl_not_running",
+                offlineDeleteEnvelope.GetProperty("error").GetProperty("code").GetString());
 
             Assert.AreEqual(false, logsResult.IsError);
             JsonElement logsEnvelope = logsResult.StructuredContent!.Value;
@@ -206,6 +248,18 @@ public sealed class DiagnosticsToolStdioTests
         TextResourceContents textContent = (TextResourceContents)content;
         using JsonDocument document = JsonDocument.Parse(textContent.Text);
         return document.RootElement.Clone();
+    }
+
+    private static void AssertEditToolMetadata(McpClientTool tool)
+    {
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations!.ReadOnlyHint);
+        Assert.AreEqual(true, tool.ProtocolTool.Annotations.DestructiveHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.OpenWorldHint);
+        Assert.IsTrue(tool.ProtocolTool.OutputSchema.HasValue);
+        JsonElement properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        Assert.IsTrue(properties.TryGetProperty("expectedRevision", out _));
+        Assert.IsTrue(properties.TryGetProperty("dryRun", out _));
+        Assert.IsFalse(properties.TryGetProperty("input", out _));
     }
 
     private static string CreateCorrelationDirectory()

@@ -1,4 +1,5 @@
 using AviUtl2MCP.Application.Diagnostics;
+using AviUtl2MCP.Application.Edits;
 using AviUtl2MCP.Application.Gateways;
 using AviUtl2MCP.Application.Instances;
 using AviUtl2MCP.Application.Paging;
@@ -38,6 +39,8 @@ builder.Services.AddSingleton<IInstanceResolver>(services =>
     services.GetRequiredService<ServerInstanceResolver>());
 builder.Services.AddSingleton<IBridgeDiagnosticsGateway, BridgeDiagnosticsGateway>();
 builder.Services.AddSingleton<IAviUtlQueryGateway, BridgeQueryGateway>();
+builder.Services.AddSingleton<IAviUtlEditGateway, BridgeEditGateway>();
+builder.Services.AddSingleton<AviUtlEditService>();
 builder.Services.AddSingleton(services => new PagingCursorCodec(
     services.GetRequiredService<ServerRuntimeIdentity>().CursorSigningKey.Span));
 builder.Services.AddSingleton(services => new AviUtlQueryService(
@@ -73,6 +76,7 @@ builder.Services
     .WithStdioServerTransport()
     .WithTools<DiagnosticsToolSet>(ContractJsonSerializer.CreateSerializerOptions())
     .WithTools<ReadToolSet>(ContractJsonSerializer.CreateSerializerOptions())
+    .WithTools<EditToolSet>(ContractJsonSerializer.CreateSerializerOptions())
     .WithResources<AviUtlResourceSet>();
 
 await builder.Build().RunAsync().ConfigureAwait(false);

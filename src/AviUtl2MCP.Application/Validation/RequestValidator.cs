@@ -95,6 +95,66 @@ public static partial class RequestValidator
         _ = new Revision(input.ExpectedRevision.Value);
     }
 
+    public static void ValidateEditInput(MutationInput input)
+    {
+        ValidateMutationInput(input);
+        switch (input)
+        {
+            case CreateObjectInput create:
+                ArgumentNullException.ThrowIfNull(create.Effect);
+                ValidateString(create.Effect.Name, nameof(create.Effect), 4096);
+                ValidatePlacement(create.Placement);
+                ValidateOptionalObjectName(create.Name, nameof(create.Name));
+                if (create.Items is not null)
+                {
+                    ValidateCollectionCount(create.Items, nameof(create.Items), 0, 1000);
+                    foreach (EffectItemAssignment item in create.Items)
+                    {
+                        ValidateString(item.Name, nameof(item.Name), 4096);
+                        ValidateEffectItemValue(item.Value);
+                    }
+                }
+                break;
+            case CreateMediaObjectInput media:
+                ValidatePlacement(media.Placement);
+                ValidateOptionalObjectName(media.Name, nameof(media.Name));
+                if (!Path.IsPathFullyQualified(media.MediaPath))
+                {
+                    throw new ArgumentException("Media path must be absolute.", nameof(input));
+                }
+                string mediaPath = NormalizePath(media.MediaPath);
+                if (!File.Exists(mediaPath)
+                    || (File.GetAttributes(mediaPath) & FileAttributes.Directory) != 0)
+                {
+                    throw new ArgumentException("Media path must identify an existing regular file.", nameof(input));
+                }
+                break;
+            case CreateAliasObjectInput alias:
+                ValidatePlacement(alias.Placement);
+                ValidateOptionalObjectName(alias.Name, nameof(alias.Name));
+                if (alias.Alias.Contains('\0') || Encoding.UTF8.GetByteCount(alias.Alias) > 1024 * 1024
+                    || !alias.Alias.Contains("[Object]", StringComparison.Ordinal))
+                {
+                    throw new ArgumentException("Alias must contain Object data within the 1 MiB limit.", nameof(input));
+                }
+                break;
+            case MoveObjectInput move:
+                ValidateLocator(move.Locator);
+                ArgumentNullException.ThrowIfNull(move.Placement);
+                ArgumentOutOfRangeException.ThrowIfNegative(move.Placement.SceneId);
+                ArgumentOutOfRangeException.ThrowIfLessThan(move.Placement.Layer, 1);
+                ArgumentOutOfRangeException.ThrowIfLessThan(move.Placement.StartFrame, 1);
+                break;
+            case DeleteObjectInput delete:
+                ValidateLocator(delete.Locator);
+                break;
+            case SetObjectNameInput setName:
+                ValidateLocator(setName.Locator);
+                ValidateOptionalObjectName(setName.Name, nameof(setName.Name), isRequired: true);
+                break;
+        }
+    }
+
     public static void ValidateLocator(ObjectLocator locator)
     {
         ArgumentNullException.ThrowIfNull(locator);
@@ -240,6 +300,50 @@ public static partial class RequestValidator
         {
             ValidateString(value, parameterName, maxCharacters);
         }
+    }
+
+    private static void ValidateOptionalObjectName(
+        string? value,
+        string parameterName,
+        bool isRequired = false)
+    {
+        if (value is null)
+        {
+            if (isRequired)
+            {
+                throw new ArgumentNullException(parameterName);
+            }
+            return;
+        }
+        if (value.Contains('\0') || value.Length > 4096
+            || Encoding.UTF8.GetByteCount(value) > MAX_TOOL_STRING_UTF8_BYTES)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, "Object name exceeds the contract limit.");
+        }
+    }
+
+    private static void ValidateEffectItemValue(System.Text.Json.JsonElement value)
+    {
+        if (value.ValueKind is System.Text.Json.JsonValueKind.True
+            or System.Text.Json.JsonValueKind.False)
+        {
+            return;
+        }
+        if (value.ValueKind == System.Text.Json.JsonValueKind.Number
+            && value.TryGetDouble(out double number)
+            && double.IsFinite(number))
+        {
+            return;
+        }
+        if (value.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+            string text = value.GetString()!;
+            if (!text.Contains('\0') && Encoding.UTF8.GetByteCount(text) <= MAX_TOOL_STRING_UTF8_BYTES)
+            {
+                return;
+            }
+        }
+        throw new ArgumentException("Effect item value must be a bounded boolean, number, or string.", nameof(value));
     }
 
     private static void ValidateSha256(string value, string parameterName)
