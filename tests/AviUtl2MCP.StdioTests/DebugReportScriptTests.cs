@@ -107,6 +107,13 @@ public sealed class DebugReportScriptTests
             Assert.AreEqual(
                 1,
                 root.GetProperty("logs").GetProperty("server").GetProperty("entries").GetArrayLength());
+            JsonElement serverLogFile = root
+                .GetProperty("logs")
+                .GetProperty("server")
+                .GetProperty("files")[0];
+            Assert.AreEqual(JsonValueKind.Object, serverLogFile.ValueKind);
+            Assert.AreEqual("server.jsonl", serverLogFile.GetProperty("name").GetString());
+            Assert.IsTrue(serverLogFile.GetProperty("byteLength").GetInt64() > 0);
             Assert.AreEqual(
                 1234,
                 root.GetProperty("cleanupScope").GetProperty("launchedProcessIds")[0].GetInt32());

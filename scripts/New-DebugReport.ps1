@@ -135,7 +135,7 @@ function Read-CorrelationLogs {
     }
     return [ordered]@{
         source = $Source
-        files = @($files)
+        files = $files.ToArray()
         entries = $limitedEntries
         isTruncated = $isTruncated
         tailWindowLines = $windowLines
