@@ -1,0 +1,131 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  managed:
+    name: managed
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages*.lock.json"
+      - name: Locked restore
+        run: dotnet restore AviUtl2MCP.slnx --locked-mode
+      - name: Build
+        run: dotnet build AviUtl2MCP.slnx --no-restore --configuration Release --verbosity minimal
+      - name: Unit tests
+        run: dotnet test tests/AviUtl2MCP.UnitTests/AviUtl2MCP.UnitTests.csproj --no-restore --no-build --configuration Release --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results
+
+  contract:
+    name: contract
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages*.lock.json"
+      - name: Locked restore
+        run: dotnet restore AviUtl2MCP.slnx --locked-mode
+      - name: Build
+        run: dotnet build AviUtl2MCP.slnx --no-restore --configuration Release --verbosity minimal
+      - name: MCP contract tests
+        run: dotnet test tests/AviUtl2MCP.McpContractTests/AviUtl2MCP.McpContractTests.csproj --no-restore --no-build --configuration Release --logger "trx;LogFileName=contract.trx" --results-directory artifacts/test-results
+      - name: MCP stdio debug run
+        shell: powershell
+        run: ./scripts/Test-McpStdio.ps1 -Configuration Release -NoBuild
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: contract-debug
+          path: |
+            artifacts/test-results
+            artifacts/debug/mcp-stdio
+          if-no-files-found: error
+
+  integration:
+    name: integration
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages*.lock.json"
+      - name: Locked restore
+        run: dotnet restore AviUtl2MCP.slnx --locked-mode
+      - name: Build
+        run: dotnet build AviUtl2MCP.slnx --no-restore --configuration Release --verbosity minimal
+      - name: Bridge integration debug run
+        shell: powershell
+        run: ./scripts/Test-BridgeIntegration.ps1 -Configuration Release -NoBuild
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: integration-debug
+          path: artifacts/debug/bridge-integration
+          if-no-files-found: error
+
+  native:
+    name: native
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Configure native Bridge
+        run: cmake -S . -B build/native -A x64
+      - name: Build native Bridge
+        run: cmake --build build/native --config Release
+      - name: Native tests
+        run: ctest --test-dir build/native -C Release --output-on-failure
+
+  package:
+    name: package
+    runs-on: windows-latest
+    needs:
+      - managed
+      - contract
+      - integration
+      - native
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages*.lock.json"
+      - name: Build release packages
+        shell: powershell
+        run: ./scripts/Build-Package.ps1 -Configuration Release -Version 0.1.0
+      - uses: actions/upload-artifact@v7
+        with:
+          name: AviUtl2MCP-0.1.0
+          path: artifacts/release
+          if-no-files-found: error

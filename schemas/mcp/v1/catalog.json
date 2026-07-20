@@ -1,0 +1,666 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gomi1124/Aviutl2MCP/schemas/mcp/v1/catalog.json",
+  "title": "AviUtl2 MCP V1 Tool Catalog",
+  "catalogVersion": "1.0.0",
+  "propertyNaming": "camelCase",
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "Path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767
+    },
+    "CommonInput": {
+      "type": "object",
+      "properties": {
+        "instanceId": { "$ref": "#/$defs/Uuid" },
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000 }
+      }
+    },
+    "MutationInput": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": { "$ref": "#/$defs/Revision" },
+        "dryRun": { "type": "boolean", "default": false }
+      },
+      "required": ["expectedRevision"]
+    },
+    "PageInput": {
+      "type": "object",
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 },
+        "cursor": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "ObjectLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "instanceId": { "$ref": "#/$defs/Uuid" },
+        "projectGeneration": { "$ref": "#/$defs/Uuid" },
+        "sceneId": { "type": "integer", "minimum": 0 },
+        "layer": { "type": "integer", "minimum": 1 },
+        "startFrame": { "type": "integer", "minimum": 1 },
+        "endFrame": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "maxLength": 4096 },
+        "aliasSha256": { "$ref": "#/$defs/Sha256" },
+        "effectSignatureSha256": { "$ref": "#/$defs/Sha256" }
+      },
+      "required": ["instanceId", "projectGeneration", "sceneId", "layer", "startFrame", "endFrame", "name", "aliasSha256", "effectSignatureSha256"]
+    },
+    "Placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sceneId": { "type": "integer", "minimum": 0 },
+        "layer": { "type": "integer", "minimum": 1 },
+        "startFrame": { "type": "integer", "minimum": 1 },
+        "endFrame": { "type": "integer", "minimum": 1 },
+        "durationFrames": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["sceneId", "layer", "startFrame"],
+      "oneOf": [
+        { "required": ["endFrame"] },
+        { "required": ["durationFrames"] }
+      ]
+    },
+    "MovePlacement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sceneId": { "type": "integer", "minimum": 0 },
+        "layer": { "type": "integer", "minimum": 1 },
+        "startFrame": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["sceneId", "layer", "startFrame"]
+    },
+    "EffectDefinitionSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      },
+      "required": ["name"]
+    },
+    "EffectInstanceSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "occurrence": { "type": "integer", "minimum": 0, "default": 0 }
+      },
+      "required": ["name"]
+    },
+    "EffectItemValue": {
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "integer" },
+        { "type": "number", "not": { "type": "integer" } },
+        { "type": "string", "maxLength": 65536 }
+      ]
+    },
+    "EffectItemAssignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "value": { "$ref": "#/$defs/EffectItemValue" }
+      },
+      "required": ["name", "value"]
+    },
+    "Selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startFrame": { "type": "integer", "minimum": 1 },
+        "endFrame": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["startFrame", "endFrame"]
+    },
+    "CreateObjectArgs": {
+      "type": "object",
+      "properties": {
+        "effect": { "$ref": "#/$defs/EffectDefinitionSelector" },
+        "placement": { "$ref": "#/$defs/Placement" },
+        "name": { "type": "string", "maxLength": 4096 },
+        "items": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/EffectItemAssignment" } }
+      },
+      "required": ["effect", "placement"]
+    },
+    "CreateMediaObjectArgs": {
+      "type": "object",
+      "properties": {
+        "mediaPath": { "$ref": "#/$defs/Path" },
+        "placement": { "$ref": "#/$defs/Placement" },
+        "name": { "type": "string", "maxLength": 4096 }
+      },
+      "required": ["mediaPath", "placement"]
+    },
+    "CreateAliasObjectArgs": {
+      "type": "object",
+      "properties": {
+        "alias": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+        "placement": { "$ref": "#/$defs/Placement" },
+        "name": { "type": "string", "maxLength": 4096 }
+      },
+      "required": ["alias", "placement"]
+    },
+    "MoveObjectArgs": {
+      "type": "object",
+      "properties": {
+        "locator": { "$ref": "#/$defs/ObjectLocator" },
+        "placement": { "$ref": "#/$defs/MovePlacement" }
+      },
+      "required": ["locator", "placement"]
+    },
+    "DeleteObjectArgs": {
+      "type": "object",
+      "properties": { "locator": { "$ref": "#/$defs/ObjectLocator" } },
+      "required": ["locator"]
+    },
+    "SetObjectNameArgs": {
+      "type": "object",
+      "properties": {
+        "locator": { "$ref": "#/$defs/ObjectLocator" },
+        "name": { "type": "string", "maxLength": 4096 }
+      },
+      "required": ["locator", "name"]
+    },
+    "SetEffectItemArgs": {
+      "type": "object",
+      "properties": {
+        "locator": { "$ref": "#/$defs/ObjectLocator" },
+        "effect": { "$ref": "#/$defs/EffectInstanceSelector" },
+        "itemName": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "value": { "$ref": "#/$defs/EffectItemValue" }
+      },
+      "required": ["locator", "effect", "itemName", "value"]
+    },
+    "SetEffectStateArgs": {
+      "type": "object",
+      "properties": {
+        "locator": { "$ref": "#/$defs/ObjectLocator" },
+        "effect": { "$ref": "#/$defs/EffectInstanceSelector" },
+        "isEnabled": { "type": "boolean" },
+        "isLocked": { "type": "boolean" }
+      },
+      "required": ["locator", "effect"],
+      "anyOf": [{ "required": ["isEnabled"] }, { "required": ["isLocked"] }]
+    },
+    "SetLayerArgs": {
+      "type": "object",
+      "properties": {
+        "sceneId": { "type": "integer", "minimum": 0 },
+        "layer": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "maxLength": 4096 },
+        "isVisible": { "type": "boolean" },
+        "isLocked": { "type": "boolean" }
+      },
+      "required": ["layer"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["isVisible"] }, { "required": ["isLocked"] }]
+    },
+    "BatchOperation": {
+      "oneOf": [
+        { "$ref": "#/$defs/BatchCreateObject" },
+        { "$ref": "#/$defs/BatchCreateMediaObject" },
+        { "$ref": "#/$defs/BatchCreateAliasObject" },
+        { "$ref": "#/$defs/BatchMoveObject" },
+        { "$ref": "#/$defs/BatchDeleteObject" },
+        { "$ref": "#/$defs/BatchSetObjectName" },
+        { "$ref": "#/$defs/BatchSetEffectItem" },
+        { "$ref": "#/$defs/BatchSetEffectState" },
+        { "$ref": "#/$defs/BatchSetLayer" }
+      ]
+    },
+    "BatchCreateObject": { "$ref": "#/$defs/BatchCreateObjectShape" },
+    "BatchCreateObjectShape": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "createObject" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/CreateObjectArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchCreateMediaObject": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "createMediaObject" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/CreateMediaObjectArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchCreateAliasObject": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "createAliasObject" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/CreateAliasObjectArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchMoveObject": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "moveObject" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/MoveObjectArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchDeleteObject": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "deleteObject" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/DeleteObjectArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchSetObjectName": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "setObjectName" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/SetObjectNameArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchSetEffectItem": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "setEffectItem" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/SetEffectItemArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchSetEffectState": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "setEffectState" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/SetEffectStateArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchSetLayer": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "setLayer" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/SetLayerArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "Warning": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "details": { "type": "object" } },
+      "required": ["code", "message", "details"]
+    },
+    "ToolError": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "canRetry": { "type": "boolean" }, "details": { "type": "object" } },
+      "required": ["code", "message", "canRetry", "details"]
+    },
+    "ToolEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ok": { "type": "boolean" },
+        "correlationId": { "$ref": "#/$defs/Uuid" },
+        "instanceId": { "$ref": "#/$defs/Uuid" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "viewRevision": { "$ref": "#/$defs/Revision" },
+        "data": { "type": "object" },
+        "warnings": { "type": "array", "items": { "$ref": "#/$defs/Warning" } },
+        "error": { "$ref": "#/$defs/ToolError" }
+      },
+      "required": ["ok", "correlationId", "warnings"],
+      "allOf": [
+        { "if": { "properties": { "ok": { "const": true } }, "required": ["ok"] }, "then": { "required": ["data"], "not": { "required": ["error"] } } },
+        { "if": { "properties": { "ok": { "const": false } }, "required": ["ok"] }, "then": { "required": ["error"] } }
+      ]
+    },
+    "CoordinateSystem": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "frameBase": { "const": 1 }, "layerBase": { "const": 1 }, "endInclusive": { "const": true } },
+      "required": ["frameBase", "layerBase", "endInclusive"]
+    },
+    "EffectSummary": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "name": { "type": "string" }, "occurrence": { "type": "integer", "minimum": 0 }, "isEnabled": { "type": "boolean" }, "isLocked": { "type": "boolean" } },
+      "required": ["name", "occurrence", "isEnabled", "isLocked"]
+    },
+    "ObjectSummary": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "locator": { "$ref": "#/$defs/ObjectLocator" }, "name": { "type": "string" }, "sceneId": { "type": "integer" }, "layer": { "type": "integer" }, "startFrame": { "type": "integer" }, "endFrame": { "type": "integer" }, "isSelected": { "type": "boolean" }, "mediaPath": { "type": "string" }, "effects": { "type": "array", "items": { "$ref": "#/$defs/EffectSummary" } }
+      },
+      "required": ["locator", "name", "sceneId", "layer", "startFrame", "endFrame", "isSelected", "effects"]
+    },
+    "LayerSummary": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "sceneId": { "type": "integer" }, "layer": { "type": "integer" }, "name": { "type": "string" }, "isVisible": { "type": "boolean" }, "isLocked": { "type": "boolean" } },
+      "required": ["sceneId", "layer", "name", "isVisible", "isLocked"]
+    },
+    "Change": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "kind": { "type": "string" }, "target": { "type": "string" }, "before": {}, "after": {} },
+      "required": ["kind", "target"]
+    },
+    "StatusData": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "connectionState": { "enum": ["disconnected", "connecting", "ready", "incompatible", "faulted"] },
+        "components": { "type": "array", "items": { "type": "object", "additionalProperties": false, "properties": { "name": { "type": "string" }, "status": { "type": "string" }, "version": { "type": ["string", "null"] } }, "required": ["name", "status", "version"] } },
+        "projectState": { "enum": ["notOpen", "unsaved", "saved", "unknown"] },
+        "editState": { "enum": ["edit", "play", "save", "unknown"] },
+        "selectedInstance": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "instances": { "type": "array", "items": { "type": "object", "additionalProperties": false, "properties": { "instanceId": { "$ref": "#/$defs/Uuid" }, "processId": { "type": "integer", "minimum": 1 }, "bridgeVersion": { "type": "string" }, "state": { "type": "string" } }, "required": ["instanceId", "processId", "bridgeVersion", "state"] } }
+      },
+      "required": ["connectionState", "components", "projectState", "editState", "selectedInstance", "instances"]
+    },
+    "ConstraintValue": {
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "integer" },
+        { "type": "number", "not": { "type": "integer" } },
+        { "type": "string" }
+      ]
+    },
+    "CapabilityConstraint": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "name": { "type": "string", "minLength": 1 }, "value": { "$ref": "#/$defs/ConstraintValue" }, "unit": { "type": ["string", "null"] } },
+      "required": ["name", "value", "unit"]
+    },
+    "CapabilityOperation": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "name": { "type": "string", "minLength": 1 }, "available": { "type": "boolean" }, "reason": { "type": ["string", "null"] }, "constraints": { "type": "array", "items": { "$ref": "#/$defs/CapabilityConstraint" } } },
+      "required": ["name", "available", "reason", "constraints"]
+    },
+    "CapabilityVersions": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "server": { "type": "string" }, "schema": { "type": "string" }, "protocol": { "type": "string" },
+        "bridge": { "type": ["string", "null"] }, "aviutl": { "type": ["string", "null"] }, "sdk": { "type": ["string", "null"] },
+        "psdToolKit": { "type": ["string", "null"] }, "gcmzDrops": { "type": ["string", "null"] }
+      },
+      "required": ["server", "schema", "protocol", "bridge", "aviutl", "sdk", "psdToolKit", "gcmzDrops"]
+    },
+    "CapabilityLimits": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "ipcJsonBytes": { "type": "integer", "minimum": 1 }, "ipcBinaryBytes": { "type": "integer", "minimum": 1 },
+        "ipcInFlight": { "type": "integer", "minimum": 1 }, "bridgeConnections": { "type": "integer", "minimum": 1 },
+        "globalQueue": { "type": "integer", "minimum": 1 }, "mutationTombstones": { "type": "integer", "minimum": 1 },
+        "mutationResponseCache": { "type": "integer", "minimum": 1 }, "timelineDefaultItems": { "type": "integer", "minimum": 1 },
+        "timelineMaxItems": { "type": "integer", "minimum": 1 }, "batchOperations": { "type": "integer", "minimum": 1 },
+        "aliasUtf8Bytes": { "type": "integer", "minimum": 1 }, "toolStringUtf8Bytes": { "type": "integer", "minimum": 1 },
+        "logDefaultLines": { "type": "integer", "minimum": 0 }, "logMaxLines": { "type": "integer", "minimum": 1 },
+        "previewMaxWidth": { "type": "integer", "minimum": 1 }, "previewMaxHeight": { "type": "integer", "minimum": 1 },
+        "pngBytes": { "type": "integer", "minimum": 1 }, "statusTimeoutMs": { "type": "integer", "minimum": 1 },
+        "editTimeoutMs": { "type": "integer", "minimum": 1 }, "previewTimeoutMs": { "type": "integer", "minimum": 1 },
+        "pagingCursorTtlSeconds": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["ipcJsonBytes", "ipcBinaryBytes", "ipcInFlight", "bridgeConnections", "globalQueue", "mutationTombstones", "mutationResponseCache", "timelineDefaultItems", "timelineMaxItems", "batchOperations", "aliasUtf8Bytes", "toolStringUtf8Bytes", "logDefaultLines", "logMaxLines", "previewMaxWidth", "previewMaxHeight", "pngBytes", "statusTimeoutMs", "editTimeoutMs", "previewTimeoutMs", "pagingCursorTtlSeconds"]
+    },
+    "CapabilitiesData": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "operations": { "type": "array", "items": { "$ref": "#/$defs/CapabilityOperation" } },
+        "versions": { "$ref": "#/$defs/CapabilityVersions" }, "limits": { "$ref": "#/$defs/CapabilityLimits" }
+      },
+      "required": ["operations", "versions", "limits"]
+    },
+    "ProjectData": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "path": { "type": ["string", "null"] }, "isSaved": { "type": "boolean" }, "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 }, "frameRate": { "type": "number", "exclusiveMinimum": 0 }, "sampleRate": { "type": "integer", "minimum": 1 }, "currentSceneId": { "type": "integer", "minimum": 0 }, "currentFrame": { "type": "integer", "minimum": 1 }, "selectedLayers": { "type": "array", "items": { "type": "integer", "minimum": 1 } }, "selection": { "oneOf": [{ "$ref": "#/$defs/Selection" }, { "type": "null" }] }, "scenes": { "type": "array", "items": { "type": "object", "additionalProperties": false, "properties": { "sceneId": { "type": "integer" }, "name": { "type": "string" } }, "required": ["sceneId", "name"] } }, "coordinateSystem": { "$ref": "#/$defs/CoordinateSystem" }
+      },
+      "required": ["path", "isSaved", "width", "height", "frameRate", "sampleRate", "currentSceneId", "currentFrame", "selectedLayers", "selection", "scenes", "coordinateSystem"]
+    },
+    "TimelineData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "layers": { "type": "array", "items": { "$ref": "#/$defs/LayerSummary" } }, "objects": { "type": "array", "items": { "$ref": "#/$defs/ObjectSummary" } }, "nextCursor": { "type": ["string", "null"] }, "isTruncated": { "type": "boolean" }, "coordinateSystem": { "$ref": "#/$defs/CoordinateSystem" } },
+      "required": ["layers", "objects", "nextCursor", "isTruncated", "coordinateSystem"]
+    },
+    "ObjectsPageData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "objects": { "type": "array", "items": { "$ref": "#/$defs/ObjectSummary" } }, "nextCursor": { "type": ["string", "null"] }, "isTruncated": { "type": "boolean" }, "coordinateSystem": { "$ref": "#/$defs/CoordinateSystem" } },
+      "required": ["objects", "nextCursor", "isTruncated", "coordinateSystem"]
+    },
+    "EffectItemsGroup": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "effect": { "$ref": "#/$defs/EffectSummary" }, "items": { "type": "array", "items": { "$ref": "#/$defs/EffectItem" } } },
+      "required": ["effect", "items"]
+    },
+    "ObjectData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "object": { "$ref": "#/$defs/ObjectSummary" }, "alias": { "type": "string", "maxLength": 1048576 }, "effectItems": { "type": "array", "items": { "$ref": "#/$defs/EffectItemsGroup" } } },
+      "required": ["object", "effectItems"]
+    },
+    "EffectDefinition": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "name": { "type": "string" }, "type": { "enum": ["filter", "input", "transition", "control", "output", "unknown"] }, "flags": { "type": "array", "uniqueItems": true, "items": { "enum": ["video", "audio", "filter", "camera", "unknown"] } }, "isCreatable": { "type": "boolean" } },
+      "required": ["name", "type", "flags", "isCreatable"]
+    },
+    "EffectsData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "effects": { "type": "array", "items": { "$ref": "#/$defs/EffectDefinition" } }, "modules": { "type": "array", "items": { "type": "object", "additionalProperties": false, "properties": { "type": { "type": "string" }, "name": { "type": "string" }, "information": { "type": "string" } }, "required": ["type", "name", "information"] } }, "fonts": { "type": "array", "items": { "type": "string" } }, "palettes": { "type": "array", "items": { "type": "string" } }, "nextCursor": { "type": ["string", "null"] }, "isTruncated": { "type": "boolean" } },
+      "required": ["effects", "modules", "fonts", "palettes", "nextCursor", "isTruncated"]
+    },
+    "EffectItem": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "name": { "type": "string" }, "type": { "enum": ["integer", "number", "check", "text", "string", "file", "color", "select", "scene", "range", "combo", "mask", "font", "figure", "data", "folder", "unknown"] }, "codec": { "enum": ["integer", "number", "check01", "aliasString", "unsupported"] }, "isWritable": { "type": "boolean" }, "value": { "$ref": "#/$defs/EffectItemValue" }, "choices": { "type": "array", "items": { "type": "string" } } },
+      "required": ["name", "type", "codec", "isWritable"]
+    },
+    "EffectItemsData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "items": { "type": "array", "items": { "$ref": "#/$defs/EffectItem" } } },
+      "required": ["items"]
+    },
+    "CreateObjectData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "object": { "$ref": "#/$defs/ObjectSummary" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["object", "appliedChanges"] }]
+    },
+    "CreateObjectsData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "objects": { "type": "array", "items": { "$ref": "#/$defs/ObjectSummary" } }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["objects", "appliedChanges"] }]
+    },
+    "UpdatedObjectData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "object": { "$ref": "#/$defs/ObjectSummary" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["object", "appliedChanges"] }]
+    },
+    "DeleteData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "object": { "$ref": "#/$defs/ObjectSummary" }, "deleted": { "type": "boolean" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["object", "deleted", "appliedChanges"] }]
+    },
+    "EffectItemUpdateData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "item": { "$ref": "#/$defs/EffectItem" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["item", "appliedChanges"] }]
+    },
+    "EffectStateUpdateData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "effect": { "$ref": "#/$defs/EffectSummary" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["effect", "appliedChanges"] }]
+    },
+    "LayerUpdateData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "layer": { "$ref": "#/$defs/LayerSummary" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["layer", "appliedChanges"] }]
+    },
+    "CursorData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "sceneId": { "type": "integer" }, "frame": { "type": "integer" }, "displayFrame": { "type": "integer" }, "selection": { "oneOf": [{ "$ref": "#/$defs/Selection" }, { "type": "null" }] }, "coordinateSystem": { "$ref": "#/$defs/CoordinateSystem" } },
+      "required": ["sceneId", "frame", "displayFrame", "selection", "coordinateSystem"]
+    },
+    "BatchResult": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "op": { "enum": ["createObject", "createMediaObject", "createAliasObject", "moveObject", "deleteObject", "setObjectName", "setEffectItem", "setEffectState", "setLayer"] },
+        "status": { "enum": ["planned", "applied", "failed", "skipped"] },
+        "object": { "$ref": "#/$defs/ObjectSummary" }, "objects": { "type": "array", "items": { "$ref": "#/$defs/ObjectSummary" } },
+        "changes": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "error": { "$ref": "#/$defs/ToolError" }
+      },
+      "required": ["clientOperationId", "op", "status", "changes"]
+    },
+    "BatchData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "results": { "type": "array", "items": { "$ref": "#/$defs/BatchResult" } }, "appliedOperationIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }, "undoRecommended": { "type": "boolean" } },
+      "required": ["results", "appliedOperationIds", "undoRecommended"]
+    },
+    "PreviewData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "mimeType": { "const": "image/png" }, "width": { "type": "integer", "minimum": 1, "maximum": 4096 }, "height": { "type": "integer", "minimum": 1, "maximum": 4096 }, "frame": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/Sha256" }, "byteLength": { "type": "integer", "minimum": 1, "maximum": 16777216 } },
+      "required": ["mimeType", "width", "height", "frame", "sha256", "byteLength"]
+    },
+    "LogsData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "entries": { "type": "array", "items": { "type": "object", "additionalProperties": false, "properties": { "timestamp": { "type": "string", "format": "date-time" }, "level": { "type": "string" }, "source": { "type": "string" }, "eventId": { "type": "string" }, "correlationId": { "type": ["string", "null"] }, "message": { "type": "string" } }, "required": ["timestamp", "level", "source", "eventId", "correlationId", "message"] } }, "nextCursor": { "type": ["string", "null"] }, "isTruncated": { "type": "boolean" } },
+      "required": ["entries", "nextCursor", "isTruncated"]
+    },
+    "DiagnosticCheck": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "checkId": { "type": "string" }, "status": { "enum": ["pass", "warning", "fail", "skipped"] }, "evidence": { "type": "array", "items": { "type": "string" } }, "impact": { "type": "string" }, "recommendation": { "type": "string" }, "canRetry": { "type": "boolean" } },
+      "required": ["checkId", "status", "evidence", "impact", "recommendation", "canRetry"]
+    },
+    "DiagnosticComponent": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "name": { "type": "string", "minLength": 1 }, "status": { "enum": ["detected", "missing", "incompatible", "unavailable", "error"] }, "version": { "type": ["string", "null"] }, "evidence": { "type": "array", "items": { "type": "string" } } },
+      "required": ["name", "status", "version", "evidence"]
+    },
+    "KnownLogMatch": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "ruleId": { "type": "string", "minLength": 1 }, "source": { "type": "string", "minLength": 1 }, "severity": { "enum": ["info", "warning", "error"] }, "evidence": { "type": "array", "items": { "type": "string" } }, "impact": { "type": "string" }, "recommendation": { "type": "string" } },
+      "required": ["ruleId", "source", "severity", "evidence", "impact", "recommendation"]
+    },
+    "DiagnoseData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "status": { "enum": ["healthy", "degraded", "unavailable"] }, "checks": { "type": "array", "items": { "$ref": "#/$defs/DiagnosticCheck" } }, "components": { "type": "array", "items": { "$ref": "#/$defs/DiagnosticComponent" } }, "knownLogMatches": { "type": "array", "items": { "$ref": "#/$defs/KnownLogMatch" } } },
+      "required": ["status", "checks", "components", "knownLogMatches"]
+    },
+    "PsdSetupData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "objects": { "type": "array", "items": { "$ref": "#/$defs/ObjectSummary" } }, "created": { "type": "boolean" }, "placementStatus": { "enum": ["valid", "missing", "misplaced", "ambiguous"] }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "required": ["objects", "created", "placementStatus"]
+    },
+    "PsdCharacterData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "object": { "$ref": "#/$defs/ObjectSummary" }, "characterId": { "type": "string" }, "item": { "$ref": "#/$defs/EffectItem" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["object", "characterId", "item", "appliedChanges"] }]
+    },
+    "PsdLayerStateData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "object": { "$ref": "#/$defs/ObjectSummary" }, "layerState": { "type": "string", "minLength": 1, "maxLength": 65536 }, "roundTripMatched": { "type": "boolean" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["object", "layerState", "roundTripMatched", "appliedChanges"] }]
+    },
+    "PsdVoiceData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "voiceObjects": { "type": "array", "items": { "$ref": "#/$defs/ObjectSummary" } }, "subtitleObjects": { "type": "array", "items": { "$ref": "#/$defs/ObjectSummary" } }, "companionFiles": { "type": "object", "additionalProperties": false, "properties": { "audioPath": { "type": "string" }, "textPath": { "type": "string" }, "labPath": { "type": ["string", "null"] } }, "required": ["audioPath", "textPath", "labPath"] }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
+      "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["voiceObjects", "subtitleObjects", "companionFiles", "appliedChanges"] }]
+    },
+    "PsdValidateData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "checks": { "type": "array", "items": { "$ref": "#/$defs/DiagnosticCheck" } }, "profile": { "type": ["string", "null"] } },
+      "required": ["checks", "profile"]
+    },
+    "StatusOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/StatusData" } } }] },
+    "CapabilitiesOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/CapabilitiesData" } } }] },
+    "ProjectOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/ProjectData" } } }] },
+    "TimelineOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/TimelineData" } } }] },
+    "ObjectsPageOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/ObjectsPageData" } } }] },
+    "ObjectOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/ObjectData" } } }] },
+    "EffectsOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/EffectsData" } } }] },
+    "EffectItemsOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/EffectItemsData" } } }] },
+    "CreateObjectOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/CreateObjectData" } } }] },
+    "CreateObjectsOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/CreateObjectsData" } } }] },
+    "UpdatedObjectOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/UpdatedObjectData" } } }] },
+    "DeleteOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/DeleteData" } } }] },
+    "EffectItemUpdateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/EffectItemUpdateData" } } }] },
+    "EffectStateUpdateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/EffectStateUpdateData" } } }] },
+    "LayerUpdateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/LayerUpdateData" } } }] },
+    "CursorOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/CursorData" } } }] },
+    "BatchOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/BatchData" } } }] },
+    "PreviewOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/PreviewData" } } }] },
+    "LogsOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/LogsData" } } }] },
+    "DiagnoseOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/DiagnoseData" } } }] },
+    "PsdSetupOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/PsdSetupData" } } }] },
+    "PsdCharacterOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/PsdCharacterData" } } }] },
+    "PsdLayerStateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/PsdLayerStateData" } } }] },
+    "PsdVoiceOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/PsdVoiceData" } } }] },
+    "PsdValidateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/PsdValidateData" } } }] },
+    "GetStatusInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }], "unevaluatedProperties": false },
+    "GetCapabilitiesInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }], "unevaluatedProperties": false },
+    "GetProjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "includeScenes": { "type": "boolean", "default": true } } }], "unevaluatedProperties": false },
+    "GetTimelineInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/PageInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "layerStart": { "type": "integer", "minimum": 1 }, "layerEnd": { "type": "integer", "minimum": 1 }, "startFrame": { "type": "integer", "minimum": 1 }, "endFrame": { "type": "integer", "minimum": 1 }, "detail": { "enum": ["summary", "effects"], "default": "summary" } } }], "unevaluatedProperties": false },
+    "FindObjectsInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/PageInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "layerStart": { "type": "integer", "minimum": 1 }, "layerEnd": { "type": "integer", "minimum": 1 }, "startFrame": { "type": "integer", "minimum": 1 }, "endFrame": { "type": "integer", "minimum": 1 }, "nameContains": { "type": "string", "minLength": 1, "maxLength": 4096 }, "effectName": { "type": "string", "minLength": 1, "maxLength": 4096 }, "mediaPath": { "$ref": "#/$defs/Path" } } }], "unevaluatedProperties": false },
+    "GetObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "locator": { "$ref": "#/$defs/ObjectLocator" }, "includeAlias": { "type": "boolean", "default": false }, "includeEffectItems": { "type": "boolean", "default": true } }, "required": ["locator"] }], "unevaluatedProperties": false },
+    "ListEffectsInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/PageInput" }, { "type": "object", "properties": { "category": { "enum": ["filter", "input", "transition", "control", "output"] }, "nameContains": { "type": "string", "minLength": 1, "maxLength": 4096 } } }], "unevaluatedProperties": false },
+    "ListEffectItemsInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "effect": { "$ref": "#/$defs/EffectDefinitionSelector" }, "includeChoices": { "type": "boolean", "default": true } }, "required": ["effect"] }], "unevaluatedProperties": false },
+    "CreateObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/CreateObjectArgs" }], "unevaluatedProperties": false },
+    "CreateMediaObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/CreateMediaObjectArgs" }], "unevaluatedProperties": false },
+    "CreateAliasObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/CreateAliasObjectArgs" }], "unevaluatedProperties": false },
+    "MoveObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/MoveObjectArgs" }], "unevaluatedProperties": false },
+    "DeleteObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/DeleteObjectArgs" }], "unevaluatedProperties": false },
+    "SetObjectNameInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetObjectNameArgs" }], "unevaluatedProperties": false },
+    "SetEffectItemInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetEffectItemArgs" }], "unevaluatedProperties": false },
+    "SetEffectStateInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetEffectStateArgs" }], "unevaluatedProperties": false },
+    "SetLayerInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetLayerArgs" }], "unevaluatedProperties": false },
+    "SetCursorInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "frame": { "type": "integer", "minimum": 1 }, "displayFrame": { "type": "integer", "minimum": 1 }, "selection": { "$ref": "#/$defs/Selection" }, "expectedViewRevision": { "$ref": "#/$defs/Revision" } }, "anyOf": [{ "required": ["frame"] }, { "required": ["displayFrame"] }, { "required": ["selection"] }] }], "unevaluatedProperties": false },
+    "ExecuteBatchInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "type": "object", "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/BatchOperation" } } }, "required": ["operations"] }], "unevaluatedProperties": false },
+    "RenderPreviewInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "frame": { "type": "integer", "minimum": 1 }, "maxWidth": { "type": "integer", "minimum": 1, "maximum": 4096 }, "maxHeight": { "type": "integer", "minimum": 1, "maximum": 4096 }, "includeAlpha": { "type": "boolean", "default": false } }, "required": ["frame"], "oneOf": [{ "required": ["maxWidth", "maxHeight"] }, { "not": { "anyOf": [{ "required": ["maxWidth"] }, { "required": ["maxHeight"] }] } }] }], "unevaluatedProperties": false },
+    "GetLogsInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "sources": { "type": "array", "uniqueItems": true, "items": { "enum": ["server", "bridge", "aviutl"] } }, "levels": { "type": "array", "uniqueItems": true, "items": { "enum": ["trace", "debug", "information", "warning", "error", "critical"] } }, "since": { "type": "string", "format": "date-time" }, "correlationId": { "$ref": "#/$defs/Uuid" }, "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100 }, "cursor": { "type": "string", "minLength": 1, "maxLength": 4096 } } }], "unevaluatedProperties": false },
+    "DiagnoseInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "includeReadSmoke": { "type": "boolean", "default": false }, "includePreviewSmoke": { "type": "boolean", "default": false }, "maxLogLines": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 100 } } }], "unevaluatedProperties": false },
+    "PsdCreateInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "type": "object", "properties": { "psdPath": { "$ref": "#/$defs/Path" }, "placement": { "$ref": "#/$defs/Placement" }, "name": { "type": "string", "maxLength": 4096 } }, "required": ["psdPath", "placement"] }], "unevaluatedProperties": false },
+    "PsdSetupInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "preferredLayer": { "type": "integer", "minimum": 1 }, "preferredFrame": { "type": "integer", "minimum": 1 }, "createIfMissing": { "type": "boolean", "default": true } } }], "unevaluatedProperties": false },
+    "PsdSetCharacterInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "type": "object", "properties": { "locator": { "$ref": "#/$defs/ObjectLocator" }, "characterId": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000\\r\\n]+$" } }, "required": ["locator", "characterId"] }], "unevaluatedProperties": false },
+    "PsdSetLayerStateInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "type": "object", "properties": { "locator": { "$ref": "#/$defs/ObjectLocator" }, "layerState": { "type": "string", "minLength": 1, "maxLength": 65536, "pattern": "^[^\\u0000\\r\\n]+$" } }, "required": ["locator", "layerState"] }], "unevaluatedProperties": false },
+    "PsdCreateVoiceInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "type": "object", "properties": { "audioPath": { "$ref": "#/$defs/Path" }, "textPath": { "$ref": "#/$defs/Path" }, "labPath": { "$ref": "#/$defs/Path" }, "characterId": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000\\r\\n]+$" }, "psdLocator": { "$ref": "#/$defs/ObjectLocator" }, "placement": { "$ref": "#/$defs/Placement" } }, "required": ["audioPath", "characterId", "placement"] }], "unevaluatedProperties": false },
+    "PsdValidateInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "locator": { "$ref": "#/$defs/ObjectLocator" }, "scope": { "enum": ["object", "scene"], "default": "object" }, "checks": { "type": "array", "uniqueItems": true, "items": { "enum": ["setup", "character", "blink", "lipSync", "subtitle"] } } }, "if": { "properties": { "scope": { "const": "object" } } }, "then": { "required": ["locator"] } }], "unevaluatedProperties": false }
+  },
+  "x-toolDescriptions": {
+    "aviutl_get_status": "AviUtl2と連携componentの接続・編集状態を取得します。",
+    "aviutl_get_capabilities": "現在利用できる操作、理由、制限値を取得します。",
+    "aviutl_get_project": "現在のprojectとsceneの概要を取得します。",
+    "aviutl_get_timeline": "指定範囲のlayerとobjectを取得します。",
+    "aviutl_find_objects": "条件に一致するtimeline objectを検索します。",
+    "aviutl_get_object": "object、effect、設定itemの詳細を取得します。",
+    "aviutl_list_effects": "利用可能なeffect、module、font、paletteを列挙します。",
+    "aviutl_list_effect_items": "effect definitionの設定itemとcodecを列挙します。",
+    "aviutl_create_object": "effect definitionからobjectを作成します。",
+    "aviutl_create_media_object": "media fileからobjectを作成します。",
+    "aviutl_create_alias_object": "UTF-8 object aliasからobjectを作成します。",
+    "aviutl_move_object": "objectのscene、layer、開始frameを変更します。",
+    "aviutl_delete_object": "指定objectを削除します。",
+    "aviutl_set_object_name": "指定objectの名前を変更します。",
+    "aviutl_set_effect_item": "既存effect itemの値をcodecに従って変更します。",
+    "aviutl_set_effect_state": "既存effectの有効・lock状態を変更します。",
+    "aviutl_set_layer": "layerの名前、表示、lock状態を変更します。",
+    "aviutl_set_cursor": "cursor、表示frame、選択範囲を変更します。",
+    "aviutl_execute_batch": "複数のSDK編集を1 Undo単位で実行します。",
+    "aviutl_render_preview": "指定frameをPNG previewとして取得します。",
+    "aviutl_get_logs": "マスク済みのServer、Bridge、AviUtl2 logを取得します。",
+    "aviutl_diagnose": "接続、plugin、logを読取専用で総合診断します。",
+    "aviutl_psd_create": "PSDまたはPSBをGCMZDrops経由で作成・検証します。",
+    "aviutl_psd_setup": "PSDToolKit2 setup objectを検証・作成します。",
+    "aviutl_psd_set_character": "PSDToolKit2 objectのcharacter IDを変更します。",
+    "aviutl_psd_set_layer_state": "canonical PSD layer stateを設定しround-trip検証します。",
+    "aviutl_psd_create_voice": "WAV/TXTからvoice prepと字幕を作成・検証します。",
+    "aviutl_psd_validate": "PSD、目パチ、口パク、字幕構成を検証します。"
+  },
+  "x-tools": [
+    { "name": "aviutl_get_status", "inputSchema": { "$ref": "#/$defs/GetStatusInput" }, "outputSchema": { "$ref": "#/$defs/StatusOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_get_capabilities", "inputSchema": { "$ref": "#/$defs/GetCapabilitiesInput" }, "outputSchema": { "$ref": "#/$defs/CapabilitiesOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_get_project", "inputSchema": { "$ref": "#/$defs/GetProjectInput" }, "outputSchema": { "$ref": "#/$defs/ProjectOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_get_timeline", "inputSchema": { "$ref": "#/$defs/GetTimelineInput" }, "outputSchema": { "$ref": "#/$defs/TimelineOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_find_objects", "inputSchema": { "$ref": "#/$defs/FindObjectsInput" }, "outputSchema": { "$ref": "#/$defs/ObjectsPageOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_get_object", "inputSchema": { "$ref": "#/$defs/GetObjectInput" }, "outputSchema": { "$ref": "#/$defs/ObjectOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_list_effects", "inputSchema": { "$ref": "#/$defs/ListEffectsInput" }, "outputSchema": { "$ref": "#/$defs/EffectsOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_list_effect_items", "inputSchema": { "$ref": "#/$defs/ListEffectItemsInput" }, "outputSchema": { "$ref": "#/$defs/EffectItemsOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_create_object", "inputSchema": { "$ref": "#/$defs/CreateObjectInput" }, "outputSchema": { "$ref": "#/$defs/CreateObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
+    { "name": "aviutl_create_media_object", "inputSchema": { "$ref": "#/$defs/CreateMediaObjectInput" }, "outputSchema": { "$ref": "#/$defs/CreateObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
+    { "name": "aviutl_create_alias_object", "inputSchema": { "$ref": "#/$defs/CreateAliasObjectInput" }, "outputSchema": { "$ref": "#/$defs/CreateObjectsOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
+    { "name": "aviutl_move_object", "inputSchema": { "$ref": "#/$defs/MoveObjectInput" }, "outputSchema": { "$ref": "#/$defs/UpdatedObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_delete_object", "inputSchema": { "$ref": "#/$defs/DeleteObjectInput" }, "outputSchema": { "$ref": "#/$defs/DeleteOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_set_object_name", "inputSchema": { "$ref": "#/$defs/SetObjectNameInput" }, "outputSchema": { "$ref": "#/$defs/UpdatedObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_set_effect_item", "inputSchema": { "$ref": "#/$defs/SetEffectItemInput" }, "outputSchema": { "$ref": "#/$defs/EffectItemUpdateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_set_effect_state", "inputSchema": { "$ref": "#/$defs/SetEffectStateInput" }, "outputSchema": { "$ref": "#/$defs/EffectStateUpdateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_set_layer", "inputSchema": { "$ref": "#/$defs/SetLayerInput" }, "outputSchema": { "$ref": "#/$defs/LayerUpdateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_set_cursor", "inputSchema": { "$ref": "#/$defs/SetCursorInput" }, "outputSchema": { "$ref": "#/$defs/CursorOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_execute_batch", "inputSchema": { "$ref": "#/$defs/ExecuteBatchInput" }, "outputSchema": { "$ref": "#/$defs/BatchOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
+    { "name": "aviutl_render_preview", "inputSchema": { "$ref": "#/$defs/RenderPreviewInput" }, "outputSchema": { "$ref": "#/$defs/PreviewOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_get_logs", "inputSchema": { "$ref": "#/$defs/GetLogsInput" }, "outputSchema": { "$ref": "#/$defs/LogsOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_diagnose", "inputSchema": { "$ref": "#/$defs/DiagnoseInput" }, "outputSchema": { "$ref": "#/$defs/DiagnoseOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_psd_create", "inputSchema": { "$ref": "#/$defs/PsdCreateInput" }, "outputSchema": { "$ref": "#/$defs/CreateObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
+    { "name": "aviutl_psd_setup", "inputSchema": { "$ref": "#/$defs/PsdSetupInput" }, "outputSchema": { "$ref": "#/$defs/PsdSetupOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
+    { "name": "aviutl_psd_set_character", "inputSchema": { "$ref": "#/$defs/PsdSetCharacterInput" }, "outputSchema": { "$ref": "#/$defs/PsdCharacterOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_psd_set_layer_state", "inputSchema": { "$ref": "#/$defs/PsdSetLayerStateInput" }, "outputSchema": { "$ref": "#/$defs/PsdLayerStateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_psd_create_voice", "inputSchema": { "$ref": "#/$defs/PsdCreateVoiceInput" }, "outputSchema": { "$ref": "#/$defs/PsdVoiceOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
+    { "name": "aviutl_psd_validate", "inputSchema": { "$ref": "#/$defs/PsdValidateInput" }, "outputSchema": { "$ref": "#/$defs/PsdValidateOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } }
+  ]
+}

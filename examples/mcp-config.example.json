@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "aviutl2": {
+      "command": "C:\\ABSOLUTE\\PATH\\AviUtl2MCP-Server-win-x64\\AviUtl2MCP.Server.exe",
+      "args": [],
+      "env": {
+        "AVIUTL2_MCP_INSTANCE_DIRECTORY": "C:\\Users\\YOUR_NAME\\AppData\\Local\\AviUtl2MCP\\v1\\instances"
+      }
+    }
+  }
+}

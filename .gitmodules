@@ -1,0 +1,6 @@
+[submodule "external/aviutl2_sdk"]
+	path = external/aviutl2_sdk
+	url = https://github.com/aviutl2/aviutl2_sdk_mirror.git
+[submodule "external/nlohmann_json"]
+	path = external/nlohmann_json
+	url = https://github.com/nlohmann/json.git

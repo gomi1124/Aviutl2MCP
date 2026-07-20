@@ -136,19 +136,23 @@ MCP の標準出力はプロトコル専用とし、ログは標準エラーへ�
 - AviUtl2、SDK、PSDToolKit2 は更新途上であり、バージョン差異を能力情報として扱う必要がある。
 - GCMZDrops 外部 API は最初に起動した AviUtl2 インスタンスでのみ利用できる。
 - AviUtl2 SDK の編集関数はメインスレッドの編集コールバック内で実行する必要がある。
-- 現在の環境には .NET SDK と Node.js があるが、ネイティブプラグインを構築する C++ ツールチェーンが未導入である。
+- 現在の環境には .NET SDK、Node.js、Visual Studio C++ ツールチェーンが導入されている。
 - GitHub リポジトリは public とし、MIT License を適用する。
 
 ### 9.1 ローカル調査環境
 
-- AviUtl ExEdit2: version 2.1.0
+- AviUtl ExEdit2: version 2.1.1（2026-07-20実機確認）
 - AviUtl2 実行ファイル: `C:\Program Files\AviUtl2\aviutl2.exe`
 - AviUtl2 データディレクトリ: `C:\ProgramData\aviutl2`
 - PSDToolKit2: `C:\ProgramData\aviutl2\Plugin\PSDToolKit` に導入済み
 - GCMZDrops: `C:\ProgramData\aviutl2\Plugin\GCMZDrops` に導入済み
 - .NET SDK: 10.0.103
 - Node.js: 24.14.0
-- Visual Studio: Community 2022 17.14.26（C++ワークロードなし）
+- Visual Studio: Community 2022 17.14.26
+- C++ワークロード: `Microsoft.VisualStudio.Workload.NativeDesktop`（2026-07-18 導入済み）
+- MSVC: 19.44.35222 x64
+- CMake: 3.31.6-msvc6
+- Ninja: 1.12.1
 
 PSDToolKit2 と GCMZDrops のローカルバイナリにはファイルバージョン情報が埋め込まれていない。実機起動後に、GCMZDrops API とブリッジの能力照会から実行時バージョンを取得する。
 
