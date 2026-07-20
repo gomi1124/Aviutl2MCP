@@ -122,7 +122,7 @@ V1のflags:
   "aviutlProcessId":1234,
   "aviutlProcessCreationTime":134135000000000000,
   "protocol":{"major":1,"minor":0},
-  "versions":{"bridge":"0.1.0","sdk":"2.1.0","aviutl":"2.1.0"},
+  "versions":{"bridge":"0.1.0","sdk":"2003300","aviutl":"2010100"},
   "limits":{"jsonBytes":8388608,"binaryBytes":16777216,"inFlight":8},
   "capabilities":{}
 }

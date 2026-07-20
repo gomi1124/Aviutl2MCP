@@ -3,7 +3,7 @@
 ## 1. 前提
 
 - Windows x64
-- AviUtl ExEdit2 2.1.0以降
+- AviUtl ExEdit2 2.1.1以降（実機確認済み基準版）
 - PSDToolKit2 2.0.0alpha10互換profile
 - GCMZDrops API v3
 
@@ -24,6 +24,7 @@ packageは`Plugin\AviUtl2MCP`だけを所有し、更新・uninstall時はこの
 4. MCP clientを再起動し、28 tools・5 resources・4 promptsを列挙する。
 
 複数のAviUtl2が起動している場合、編集toolへ対象の`instanceId`を明示します。指定がなければ曖昧な対象への編集は拒否されます。
+MCP server全体の既定対象を固定する場合は、環境変数`AVIUTL2_MCP_INSTANCE`へ対象の`instanceId`を指定します。旧実装名`AVIUTL2_MCP_INSTANCE_ID`も互換受付しますが、両方を指定する場合は同じ値にしてください。
 
 ## 4. 自動診断
 

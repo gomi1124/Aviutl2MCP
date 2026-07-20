@@ -6,7 +6,7 @@
 - 状態: ユーザー承認済み（2026-07-18）
 - Phase 2追記: 複数インスタンス選択とat-most-once受入基準を明確化し、2026-07-18に承認済み
 - 前提仕様: [Phase 0 仕様書](specification.md)
-- 対象環境: Windows 64-bit、AviUtl ExEdit2 2.1.0
+- 対象環境: Windows 64-bit、AviUtl ExEdit2 2.1.1
 
 ## 2. ゴール
 
@@ -253,7 +253,7 @@ Resources は読み取り専用とし、未接続時も構造化された状態�
 
 ### 7.5 互換性・保守性
 
-- **NFR-CMP-001** AviUtl ExEdit2 2.1.0、Windows 64-bitを基準環境とする。
+- **NFR-CMP-001** AviUtl ExEdit2 2.1.1、Windows 64-bitを基準環境とする。
 - **NFR-CMP-002** SDK、PSDToolKit2、GCMZDropsの版差を能力検出で吸収する。
 - **NFR-CMP-003** MCP層、IPC層、AviUtl2 SDKアダプター、PSD連携を分離する。
 - **NFR-CMP-004** 公開プロトコルと設定ファイルにバージョンを持たせる。

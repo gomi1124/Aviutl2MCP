@@ -5,13 +5,14 @@ namespace AviUtl2MCP.Server;
 public sealed class ServerRuntimeIdentity
 {
     private const int CURSOR_SIGNING_KEY_BYTES = 32;
+    private const string INSTANCE_VARIABLE = "AVIUTL2_MCP_INSTANCE";
+    private const string COMPATIBILITY_INSTANCE_VARIABLE = "AVIUTL2_MCP_INSTANCE_ID";
     private readonly byte[] _cursorSigningKey = RandomNumberGenerator.GetBytes(CURSOR_SIGNING_KEY_BYTES);
 
     public ServerRuntimeIdentity()
     {
         ServerVersion = typeof(ServerMarker).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
-        EnvironmentInstanceId = ParseEnvironmentInstanceId(
-            Environment.GetEnvironmentVariable("AVIUTL2_MCP_INSTANCE_ID"));
+        EnvironmentInstanceId = ResolveEnvironmentInstanceId();
     }
 
     public Guid ServerEpoch { get; } = Guid.NewGuid();
@@ -24,7 +25,25 @@ public sealed class ServerRuntimeIdentity
 
     public ReadOnlyMemory<byte> CursorSigningKey => _cursorSigningKey;
 
-    private static Guid? ParseEnvironmentInstanceId(string? value)
+    private static Guid? ResolveEnvironmentInstanceId()
+    {
+        Guid? configured = ParseEnvironmentInstanceId(
+            INSTANCE_VARIABLE,
+            Environment.GetEnvironmentVariable(INSTANCE_VARIABLE));
+        Guid? compatibility = ParseEnvironmentInstanceId(
+            COMPATIBILITY_INSTANCE_VARIABLE,
+            Environment.GetEnvironmentVariable(COMPATIBILITY_INSTANCE_VARIABLE));
+        if (configured.HasValue
+            && compatibility.HasValue
+            && configured != compatibility)
+        {
+            throw new InvalidOperationException(
+                $"{INSTANCE_VARIABLE} and {COMPATIBILITY_INSTANCE_VARIABLE} must identify the same instance when both are specified.");
+        }
+        return configured ?? compatibility;
+    }
+
+    private static Guid? ParseEnvironmentInstanceId(string variableName, string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -33,6 +52,6 @@ public sealed class ServerRuntimeIdentity
         return Guid.TryParse(value, out Guid instanceId) && instanceId != Guid.Empty
             ? instanceId
             : throw new InvalidOperationException(
-                "AVIUTL2_MCP_INSTANCE_ID must be a non-empty GUID when specified.");
+                $"{variableName} must be a non-empty GUID when specified.");
     }
 }

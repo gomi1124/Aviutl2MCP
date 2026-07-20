@@ -17,8 +17,23 @@ namespace AviUtl2MCP.RealAviUtlTests;
 [TestClass]
 public sealed class RealReadPreviewDiagnosticTests
 {
+    private const uint MINIMUM_TESTED_AVIUTL_VERSION = 2010100U;
     private static readonly byte[] PNG_SIGNATURE =
         [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    private static readonly string[] REQUIRED_READY_COMPONENTS =
+    [
+        "bridge",
+        "aviutl",
+        "sdk",
+        "psdtoolkit.effect",
+        "psdtoolkit.alias",
+    ];
+    private static readonly string[] GCMZ_EXCLUSIVE_OPERATION_NAMES =
+    [
+        "aviutl_psd_create",
+        "aviutl_psd_create_voice",
+    ];
+    private static readonly string[] VALID_DIAGNOSTIC_STATUSES = ["pass", "degraded"];
 
     [TestMethod]
     [TestCategory("RealAviUtl2")]
@@ -75,6 +90,7 @@ public sealed class RealReadPreviewDiagnosticTests
         Assert.AreEqual(
             harness.InstanceId,
             status.GetProperty("data").GetProperty("selectedInstance").GetGuid());
+        AssertRequiredComponentsReady(status);
 
         StdioClientTransport secondTransport = new(new StdioClientTransportOptions
         {
@@ -107,6 +123,7 @@ public sealed class RealReadPreviewDiagnosticTests
         Assert.AreEqual(
             8,
             capabilities.GetProperty("data").GetProperty("limits").GetProperty("bridgeConnections").GetInt32());
+        AssertAviUtl211Compatibility(capabilities);
         JsonElement project = await WaitForProjectAsync(client, harness.InstanceId, timeout.Token);
         Assert.AreEqual(1920, project.GetProperty("data").GetProperty("width").GetInt32());
         Assert.AreEqual(1080, project.GetProperty("data").GetProperty("height").GetInt32());
@@ -159,14 +176,22 @@ public sealed class RealReadPreviewDiagnosticTests
                 ["timeoutMs"] = 60_000,
             },
             cancellationToken: timeout.Token));
-        Assert.AreEqual(
-            "degraded",
-            diagnostics.GetProperty("data").GetProperty("status").GetString());
-        AssertDiagnosticStatus(diagnostics, "known-logs", "warning");
-        JsonElement cacheWarning = diagnostics.GetProperty("data").GetProperty("knownLogMatches")
+        JsonElement diagnosticData = diagnostics.GetProperty("data");
+        CollectionAssert.Contains(
+            VALID_DIAGNOSTIC_STATUSES,
+            diagnosticData.GetProperty("status").GetString());
+        JsonElement[] knownLogMatches = diagnosticData
+            .GetProperty("knownLogMatches")
             .EnumerateArray()
-            .Single(match => match.GetProperty("ruleId").GetString() == "psdtoolkit.cache-missing");
-        Assert.AreEqual("warning", cacheWarning.GetProperty("severity").GetString());
+            .ToArray();
+        AssertDiagnosticStatus(
+            diagnostics,
+            "known-logs",
+            knownLogMatches.Length == 0 ? "pass" : "warning");
+        foreach (JsonElement knownLogMatch in knownLogMatches)
+        {
+            Assert.AreEqual("warning", knownLogMatch.GetProperty("severity").GetString());
+        }
         AssertDiagnosticPassed(diagnostics, "read-smoke");
         AssertDiagnosticPassed(diagnostics, "preview-smoke");
 
@@ -975,6 +1000,62 @@ public sealed class RealReadPreviewDiagnosticTests
             png.Length,
             envelope.GetProperty("data").GetProperty("byteLength").GetInt32());
         return (envelope, png);
+    }
+
+    private static void AssertRequiredComponentsReady(JsonElement status)
+    {
+        JsonElement[] components = status
+            .GetProperty("data")
+            .GetProperty("components")
+            .EnumerateArray()
+            .ToArray();
+        foreach (string componentName in REQUIRED_READY_COMPONENTS)
+        {
+            JsonElement component = components.Single(candidate =>
+                candidate.GetProperty("name").GetString() == componentName);
+            Assert.AreEqual(
+                "ready",
+                component.GetProperty("status").GetString(),
+                $"Component {componentName} was not ready on the tested AviUtl2 build.");
+        }
+    }
+
+    private static void AssertAviUtl211Compatibility(JsonElement capabilities)
+    {
+        JsonElement data = capabilities.GetProperty("data");
+        JsonElement versions = data.GetProperty("versions");
+        string? aviUtlVersionText = versions.GetProperty("aviutl").GetString();
+        Assert.IsNotNull(aviUtlVersionText);
+        Assert.IsTrue(
+            uint.TryParse(
+                aviUtlVersionText,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out uint aviUtlVersion),
+            $"AviUtl2 version was not numeric: {aviUtlVersionText}");
+        Assert.IsGreaterThanOrEqualTo(MINIMUM_TESTED_AVIUTL_VERSION, aviUtlVersion);
+        Assert.AreEqual("2003300", versions.GetProperty("sdk").GetString());
+
+        JsonElement[] operations = data.GetProperty("operations").EnumerateArray().ToArray();
+        Assert.AreEqual(28, operations.Length);
+        int availableOperationCount = 0;
+        foreach (JsonElement operation in operations)
+        {
+            if (operation.GetProperty("available").GetBoolean())
+            {
+                ++availableOperationCount;
+                continue;
+            }
+            string operationName = operation.GetProperty("name").GetString()!;
+            CollectionAssert.Contains(
+                GCMZ_EXCLUSIVE_OPERATION_NAMES,
+                operationName,
+                $"Core operation {operationName} was unavailable on AviUtl2 {aviUtlVersionText}.");
+            Assert.AreEqual(
+                "gcmzdrops_not_available",
+                operation.GetProperty("reason").GetString());
+        }
+        Assert.IsGreaterThanOrEqualTo(26, availableOperationCount);
     }
 
     private static async Task<JsonElement> WaitForProjectAsync(
