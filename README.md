@@ -8,7 +8,7 @@ PSDToolKit2 と GCMZDrops が導入された Windows 環境を対象に、編集
 
 ## 現在の状態
 
-V1のMCP server、AviUtl2 Bridge、PSDToolKit2/GCMZDrops連携、自動診断、配布packageを実装し、33件の受け入れ検証を完了しています。
+V1のMCP server、AviUtl2 Bridge、PSDToolKit2/GCMZDrops連携、自動診断、配布packageを実装し、34件の受け入れ検証を完了しています。
 
 - 29 tools、5 resources、4 prompts
 - revision競合、instance曖昧性、at-most-once、batch/Undoを考慮した編集境界
