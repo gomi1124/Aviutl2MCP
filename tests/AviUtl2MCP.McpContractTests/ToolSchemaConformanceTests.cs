@@ -27,8 +27,8 @@ public sealed class ToolSchemaConformanceTests
         JsonArray tools = catalog["x-tools"]!.AsArray();
 
         // Act and Assert
-        Assert.HasCount(28, fixtures);
-        Assert.HasCount(28, tools);
+        Assert.HasCount(29, fixtures);
+        Assert.HasCount(29, tools);
         foreach (JsonNode? toolNode in tools)
         {
             JsonObject tool = toolNode!.AsObject();
@@ -57,6 +57,7 @@ public sealed class ToolSchemaConformanceTests
             ["aviutl_get_status"] = new(typeof(GetStatusInput), "{}"),
             ["aviutl_get_capabilities"] = new(typeof(GetCapabilitiesInput), "{}"),
             ["aviutl_get_project"] = new(typeof(GetProjectInput), "{}"),
+            ["aviutl_save_project"] = new(typeof(SaveProjectInput), """{"expectedRevision":"r1"}"""),
             ["aviutl_get_timeline"] = new(typeof(GetTimelineInput), "{}"),
             ["aviutl_find_objects"] = new(typeof(FindObjectsInput), "{}"),
             ["aviutl_get_object"] = CreateFixture(typeof(GetObjectInput), """{"locator":__LOCATOR__}"""),

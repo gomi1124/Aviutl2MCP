@@ -221,7 +221,7 @@ public sealed class EditToolSet(
         ObjectLocator locator,
         EffectInstanceSelector effect,
         string itemName,
-        System.Text.Json.JsonElement value,
+        [EffectItemValue] System.Text.Json.JsonElement value,
         Guid? instanceId = null,
         int? timeoutMs = null,
         bool dryRun = false,
@@ -238,6 +238,29 @@ public sealed class EditToolSet(
                 Value = value,
             },
             _editService.SetEffectItemAsync,
+            cancellationToken);
+
+    [McpServerTool(
+        Name = "aviutl_save_project",
+        Title = "AviUtl2 project保存",
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<SaveProjectData>))]
+    [Description("現在開いている名前付きprojectを保存します。別名保存dialogは開きません。")]
+    public ValueTask<CallToolResult> SaveProjectAsync(
+        Revision expectedRevision,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        CancellationToken cancellationToken = default) => ExecuteSaveProjectAsync(
+            new SaveProjectInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+            },
             cancellationToken);
 
     [McpServerTool(
@@ -445,6 +468,47 @@ public sealed class EditToolSet(
                 input,
                 context).ConfigureAwait(false);
             ToolEnvelope<CursorData> envelope = ToolResultFactory.CreateEnvelope(
+                execution.Result,
+                context,
+                execution.InstanceId,
+                execution.Revision,
+                execution.ViewRevision);
+            return McpToolResultFactory.Create(envelope);
+        }
+    }
+
+    private async ValueTask<CallToolResult> ExecuteSaveProjectAsync(
+        SaveProjectInput input,
+        CancellationToken cancellationToken)
+    {
+        RequestContext context;
+        try
+        {
+            context = _requestContextFactory.CreateContext(
+                input.InstanceId,
+                input.TimeoutMs,
+                EDIT_DEFAULT_TIMEOUT_MS,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is ArgumentException or OverflowException)
+        {
+            return CreateInvalidArgument<SaveProjectData>(exception.Message, cancellationToken);
+        }
+        using (context)
+        {
+            input = input with { TimeoutMs = context.TimeoutMs };
+            try
+            {
+                RequestValidator.ValidateSaveProjectInput(input);
+            }
+            catch (Exception exception) when (exception is ArgumentException or OverflowException)
+            {
+                return CreateInvalidArgument<SaveProjectData>(context, exception.Message);
+            }
+            QueryExecutionResult<SaveProjectData> execution = await _editService.SaveProjectAsync(
+                input,
+                context).ConfigureAwait(false);
+            ToolEnvelope<SaveProjectData> envelope = ToolResultFactory.CreateEnvelope(
                 execution.Result,
                 context,
                 execution.InstanceId,

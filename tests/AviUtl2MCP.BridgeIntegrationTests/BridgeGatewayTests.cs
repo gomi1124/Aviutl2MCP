@@ -18,7 +18,7 @@ public sealed class BridgeGatewayTests
 {
     private static readonly byte[] expectedPngSignature = [0x89, 0x50, 0x4e, 0x47];
     private static readonly string[] expectedOperations =
-        ["project.get", "object.delete", "batch.execute", "preview.render", "psd.validate", "logs.get"];
+        ["project.get", "project.save", "object.delete", "batch.execute", "preview.render", "psd.validate", "logs.get"];
 
     [TestMethod]
     public async Task FiveDomainGatewaysShareRegistryAndMapTypedResults()
@@ -42,6 +42,16 @@ public sealed class BridgeGatewayTests
             // Act
             GatewayResponse<ProjectData> project = await query.GetProjectAsync(
                 CreateRequest(instanceId, new GetProjectInput()),
+                CancellationToken.None);
+            GatewayResponse<SaveProjectData> saved = await edit.SaveProjectAsync(
+                new GatewayRequest<SaveProjectArgs>(
+                    instanceId,
+                    Guid.CreateVersion7(),
+                    DateTimeOffset.UtcNow.AddSeconds(5),
+                    5000,
+                    new Revision("revision-1"),
+                    false,
+                    new SaveProjectArgs()),
                 CancellationToken.None);
             GatewayResponse<DeleteData> deleted = await edit.ExecuteEditAsync<DeleteObjectArgs, DeleteData>(
                 "object.delete",
@@ -74,6 +84,7 @@ public sealed class BridgeGatewayTests
 
             // Assert
             Assert.AreEqual(1920, project.Data?.Width);
+            Assert.IsTrue(saved.Data?.Saved);
             Assert.IsTrue(deleted.Data?.Deleted);
             Assert.IsFalse(partialBatch.Ok);
             Assert.AreEqual("partial_operation", partialBatch.Error?.Code);
@@ -86,8 +97,10 @@ public sealed class BridgeGatewayTests
             CollectionAssert.AreEqual(
                 expectedOperations,
                 connectionFactory.Connection.Requests.Select(request => request.Method).ToArray());
-            Assert.IsTrue(connectionFactory.Connection.Requests[1].DryRun);
+            Assert.IsFalse(connectionFactory.Connection.Requests[1].DryRun);
             Assert.IsTrue(connectionFactory.Connection.Requests[1].ExpectedRevision == new Revision("revision-1"));
+            Assert.IsTrue(connectionFactory.Connection.Requests[2].DryRun);
+            Assert.IsTrue(connectionFactory.Connection.Requests[2].ExpectedRevision == new Revision("revision-1"));
         }
         finally
         {
@@ -297,6 +310,7 @@ public sealed class BridgeGatewayTests
                     null,
                     [],
                     new CoordinateSystem(1, 1, true)),
+                "project.save" => new SaveProjectData(@"C:\fixture\project.aup2", true),
                 "object.delete" => new DeleteData { Deleted = true, AppliedChanges = [] },
                 "preview.render" => new PreviewData("image/png", 16, 16, 1, new string('a', 64), 4),
                 "psd.validate" => new PsdValidateData([], null),

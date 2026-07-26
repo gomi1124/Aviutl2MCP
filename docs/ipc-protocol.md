@@ -211,6 +211,8 @@ V1のflags:
 
 operationの正確な入力・出力DTOは同じversionの`schemas/ipc/`へ保存し、C#とC++のgolden contract testで照合する。
 
+`project.save`は変更operationとしてat-most-once管理するが、project内容を変更しないためcontent revisionを増加させない。host command送信後にsave callbackを確認できない場合は`outcome="unknown"`を返し、同じrequest IDを再実行しない。
+
 ## 10. Binary payload
 
 V1でbinaryを使う応答は主にpreview PNGとする。

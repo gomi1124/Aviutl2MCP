@@ -28,11 +28,13 @@ public sealed record DeleteObjectArgs(ObjectLocator Locator);
 
 public sealed record SetObjectNameArgs(ObjectLocator Locator, string Name);
 
+public sealed record SaveProjectArgs;
+
 public sealed record SetEffectItemArgs(
     ObjectLocator Locator,
     EffectInstanceSelector Effect,
     string ItemName,
-    JsonElement Value);
+    [property: EffectItemValue] JsonElement Value);
 
 public sealed record SetEffectStateArgs(ObjectLocator Locator, EffectInstanceSelector Effect)
 {
@@ -140,6 +142,8 @@ public sealed record EffectItemUpdateData
 
     public IReadOnlyList<Change>? AppliedChanges { get; init; }
 }
+
+public sealed record SaveProjectData(string Path, bool Saved);
 
 public sealed record EffectStateUpdateData
 {

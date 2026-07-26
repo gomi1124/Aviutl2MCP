@@ -38,6 +38,14 @@ public sealed class BridgeEditGateway(BridgeConnectionRegistry connectionRegistr
         CancellationToken cancellationToken) =>
         SendOperationAsync<ExecuteBatchInput, BatchData>("batch.execute", request, cancellationToken);
 
+    public ValueTask<GatewayResponse<SaveProjectData>> SaveProjectAsync(
+        GatewayRequest<SaveProjectArgs> request,
+        CancellationToken cancellationToken) =>
+        SendOperationAsync<SaveProjectArgs, SaveProjectData>(
+            "project.save",
+            request,
+            cancellationToken);
+
     public ValueTask<GatewayResponse<CursorData>> SetCursorAsync(
         GatewayRequest<SetCursorInput> request,
         CancellationToken cancellationToken) =>

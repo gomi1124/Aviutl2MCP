@@ -16,6 +16,7 @@ using AviUtl2MCP.Server.Diagnostics;
 using AviUtl2MCP.Server.Logging;
 using AviUtl2MCP.Server.Prompts;
 using AviUtl2MCP.Server.Resources;
+using AviUtl2MCP.Server.Schema;
 using AviUtl2MCP.Server.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -81,10 +82,18 @@ builder.Services.AddSingleton(services => new DiagnosticsService(
 builder.Services
     .AddMcpServer()
     .WithStdioServerTransport()
-    .WithTools<DiagnosticsToolSet>(ContractJsonSerializer.CreateSerializerOptions())
-    .WithTools<ReadToolSet>(ContractJsonSerializer.CreateSerializerOptions())
-    .WithTools<EditToolSet>(ContractJsonSerializer.CreateSerializerOptions())
-    .WithTools<PsdToolSet>(ContractJsonSerializer.CreateSerializerOptions())
+    .WithToolsUsingSchema<DiagnosticsToolSet>(
+        ContractJsonSerializer.CreateSerializerOptions(),
+        ToolSchemaOptions.Create())
+    .WithToolsUsingSchema<ReadToolSet>(
+        ContractJsonSerializer.CreateSerializerOptions(),
+        ToolSchemaOptions.Create())
+    .WithToolsUsingSchema<EditToolSet>(
+        ContractJsonSerializer.CreateSerializerOptions(),
+        ToolSchemaOptions.Create())
+    .WithToolsUsingSchema<PsdToolSet>(
+        ContractJsonSerializer.CreateSerializerOptions(),
+        ToolSchemaOptions.Create())
     .WithPrompts<AviUtlPromptProvider>(ContractJsonSerializer.CreateSerializerOptions())
     .WithResources<AviUtlResourceSet>();
 

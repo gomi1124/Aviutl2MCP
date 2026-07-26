@@ -237,10 +237,10 @@ public sealed class RequestValidatorTests
     }
 
     [TestMethod]
-    public void ValidateEditInputAcceptsSupportedEffectItemValue()
+    public void ValidateEditInputAcceptsZeroEffectItemValue()
     {
         // Arrange
-        using JsonDocument document = JsonDocument.Parse("42");
+        using JsonDocument document = JsonDocument.Parse("0");
         SetEffectItemInput input = new()
         {
             ExpectedRevision = new Revision("r1"),

@@ -458,6 +458,11 @@
       "properties": { "object": { "$ref": "#/$defs/ObjectSummary" }, "deleted": { "type": "boolean" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
       "oneOf": [{ "required": ["plannedChanges"] }, { "required": ["object", "deleted", "appliedChanges"] }]
     },
+    "SaveProjectData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "path": { "$ref": "#/$defs/Path" }, "saved": { "const": true } },
+      "required": ["path", "saved"]
+    },
     "EffectItemUpdateData": {
       "type": "object", "additionalProperties": false,
       "properties": { "item": { "$ref": "#/$defs/EffectItem" }, "plannedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "appliedChanges": { "type": "array", "items": { "$ref": "#/$defs/Change" } } },
@@ -561,6 +566,7 @@
     "CreateObjectsOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/CreateObjectsData" } } }] },
     "UpdatedObjectOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/UpdatedObjectData" } } }] },
     "DeleteOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/DeleteData" } } }] },
+    "SaveProjectOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/SaveProjectData" } } }] },
     "EffectItemUpdateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/EffectItemUpdateData" } } }] },
     "EffectStateUpdateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/EffectStateUpdateData" } } }] },
     "LayerUpdateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/LayerUpdateData" } } }] },
@@ -577,6 +583,7 @@
     "GetStatusInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }], "unevaluatedProperties": false },
     "GetCapabilitiesInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }], "unevaluatedProperties": false },
     "GetProjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "includeScenes": { "type": "boolean", "default": true } } }], "unevaluatedProperties": false },
+    "SaveProjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "expectedRevision": { "$ref": "#/$defs/Revision" } }, "required": ["expectedRevision"] }], "unevaluatedProperties": false },
     "GetTimelineInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/PageInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "layerStart": { "type": "integer", "minimum": 1 }, "layerEnd": { "type": "integer", "minimum": 1 }, "startFrame": { "type": "integer", "minimum": 1 }, "endFrame": { "type": "integer", "minimum": 1 }, "detail": { "enum": ["summary", "effects"], "default": "summary" } } }], "unevaluatedProperties": false },
     "FindObjectsInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/PageInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "layerStart": { "type": "integer", "minimum": 1 }, "layerEnd": { "type": "integer", "minimum": 1 }, "startFrame": { "type": "integer", "minimum": 1 }, "endFrame": { "type": "integer", "minimum": 1 }, "nameContains": { "type": "string", "minLength": 1, "maxLength": 4096 }, "effectName": { "type": "string", "minLength": 1, "maxLength": 4096 }, "mediaPath": { "$ref": "#/$defs/Path" } } }], "unevaluatedProperties": false },
     "GetObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "locator": { "$ref": "#/$defs/ObjectLocator" }, "includeAlias": { "type": "boolean", "default": false }, "includeEffectItems": { "type": "boolean", "default": true } }, "required": ["locator"] }], "unevaluatedProperties": false },
@@ -607,6 +614,7 @@
     "aviutl_get_status": "AviUtl2と連携componentの接続・編集状態を取得します。",
     "aviutl_get_capabilities": "現在利用できる操作、理由、制限値を取得します。",
     "aviutl_get_project": "現在のprojectとsceneの概要を取得します。",
+    "aviutl_save_project": "現在の名前付きprojectを保存し、保存完了を確認します。",
     "aviutl_get_timeline": "指定範囲のlayerとobjectを取得します。",
     "aviutl_find_objects": "条件に一致するtimeline objectを検索します。",
     "aviutl_get_object": "object、effect、設定itemの詳細を取得します。",
@@ -637,6 +645,7 @@
     { "name": "aviutl_get_status", "inputSchema": { "$ref": "#/$defs/GetStatusInput" }, "outputSchema": { "$ref": "#/$defs/StatusOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_get_capabilities", "inputSchema": { "$ref": "#/$defs/GetCapabilitiesInput" }, "outputSchema": { "$ref": "#/$defs/CapabilitiesOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_get_project", "inputSchema": { "$ref": "#/$defs/GetProjectInput" }, "outputSchema": { "$ref": "#/$defs/ProjectOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_save_project", "inputSchema": { "$ref": "#/$defs/SaveProjectInput" }, "outputSchema": { "$ref": "#/$defs/SaveProjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_get_timeline", "inputSchema": { "$ref": "#/$defs/GetTimelineInput" }, "outputSchema": { "$ref": "#/$defs/TimelineOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_find_objects", "inputSchema": { "$ref": "#/$defs/FindObjectsInput" }, "outputSchema": { "$ref": "#/$defs/ObjectsPageOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_get_object", "inputSchema": { "$ref": "#/$defs/GetObjectInput" }, "outputSchema": { "$ref": "#/$defs/ObjectOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },

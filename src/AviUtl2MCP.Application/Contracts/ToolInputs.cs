@@ -32,6 +32,11 @@ public sealed record GetProjectInput : CommonInput
     public bool IncludeScenes { get; init; } = true;
 }
 
+public sealed record SaveProjectInput : CommonInput
+{
+    public required Revision ExpectedRevision { get; init; }
+}
+
 public enum TimelineDetail
 {
     Summary,
@@ -151,6 +156,7 @@ public sealed record SetEffectItemInput : MutationInput
 
     public required string ItemName { get; init; }
 
+    [EffectItemValue]
     public required System.Text.Json.JsonElement Value { get; init; }
 }
 

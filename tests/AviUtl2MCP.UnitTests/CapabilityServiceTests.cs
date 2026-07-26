@@ -16,8 +16,8 @@ public sealed class CapabilityServiceTests
         CapabilitiesData data = CapabilityService.GetCapabilities(environment);
 
         // Assert
-        Assert.HasCount(28, data.Operations);
-        Assert.HasCount(28, data.Operations.Select(operation => operation.Name).Distinct(StringComparer.Ordinal).ToArray());
+        Assert.HasCount(29, data.Operations);
+        Assert.HasCount(29, data.Operations.Select(operation => operation.Name).Distinct(StringComparer.Ordinal).ToArray());
         Assert.IsTrue(data.Operations.All(operation => operation.Available));
         Assert.AreEqual(100, data.Limits.BatchOperations);
     }
@@ -57,7 +57,27 @@ public sealed class CapabilityServiceTests
         Assert.AreEqual("edit_not_available", setup.Reason);
     }
 
-    private static CapabilityEnvironment CreateEnvironment(bool hasGcmzDrops, bool canEdit = true)
+    [TestMethod]
+    public void GetCapabilitiesRequiresNamedProjectForSave()
+    {
+        // Arrange
+        CapabilityEnvironment environment = CreateEnvironment(
+            hasGcmzDrops: true,
+            isProjectSaved: false);
+
+        // Act
+        CapabilityOperation save = CapabilityService.GetCapabilities(environment)
+            .Operations.Single(operation => operation.Name == "aviutl_save_project");
+
+        // Assert
+        Assert.IsFalse(save.Available);
+        Assert.AreEqual("project_path_required", save.Reason);
+    }
+
+    private static CapabilityEnvironment CreateEnvironment(
+        bool hasGcmzDrops,
+        bool canEdit = true,
+        bool isProjectSaved = true)
     {
         CapabilityVersions versions = new(
             "0.1.0",
@@ -68,6 +88,13 @@ public sealed class CapabilityServiceTests
             "2.1.0",
             "2.0.0",
             hasGcmzDrops ? "3.0.0" : null);
-        return new CapabilityEnvironment(true, true, canEdit, true, hasGcmzDrops, versions);
+        return new CapabilityEnvironment(
+            true,
+            true,
+            isProjectSaved,
+            canEdit,
+            true,
+            hasGcmzDrops,
+            versions);
     }
 }

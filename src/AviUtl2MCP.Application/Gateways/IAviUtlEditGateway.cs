@@ -13,6 +13,10 @@ public interface IAviUtlEditGateway
         GatewayRequest<ExecuteBatchInput> request,
         CancellationToken cancellationToken);
 
+    ValueTask<GatewayResponse<SaveProjectData>> SaveProjectAsync(
+        GatewayRequest<SaveProjectArgs> request,
+        CancellationToken cancellationToken);
+
     ValueTask<GatewayResponse<CursorData>> SetCursorAsync(
         GatewayRequest<SetCursorInput> request,
         CancellationToken cancellationToken);

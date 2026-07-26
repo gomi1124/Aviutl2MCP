@@ -2461,7 +2461,18 @@ void test_sdk_read_facade() {
 void test_native_query_request_handlers() {
     fake_sdk_state fake;
     configure_fake_sdk(fake);
-    aviutl2_mcp::sdk_read_facade facade;
+    int save_command_count = 0;
+    aviutl2_mcp::sdk_read_facade facade(
+        [&fake, &save_command_count](void*, std::uint32_t) {
+            ++save_command_count;
+            require(fake.project_save_handler != nullptr,
+                "project save command ran before callback registration");
+            fake.project_save_handler(&fake.project_file);
+            return aviutl2_mcp::sdk_project_save_command_result{
+                .ok = true,
+                .command_was_dispatched = true,
+            };
+        });
     require(facade.register_host(&fake.host), "query handler fixture SDK registration failed");
     fake.project_load_handler(&fake.project_file);
 
@@ -2479,6 +2490,8 @@ void test_native_query_request_handlers() {
         facade,
         "psd.capabilities"));
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_project_request_handler>(facade));
+    dispatcher.register_handler(
+        std::make_unique<aviutl2_mcp::native_project_save_request_handler>(facade));
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_timeline_request_handler>(
         identity,
         facade));
@@ -2533,7 +2546,7 @@ void test_native_query_request_handlers() {
         identity.instance_id).get()));
     require(capabilities.at("ok").get<bool>(), "native capabilities query failed");
     const nlohmann::json& operations = capabilities.at("result").at("operations");
-    require(operations.size() == 28U, "native capabilities query did not return all 28 operations");
+    require(operations.size() == 29U, "native capabilities query did not return all 29 operations");
     const auto find_operation = [&operations](const std::string& name) -> const nlohmann::json& {
         const auto match = std::ranges::find_if(operations, [&name](const nlohmann::json& operation) {
             return operation.at("name") == name;
@@ -2545,6 +2558,8 @@ void test_native_query_request_handlers() {
     };
     require(find_operation("aviutl_get_project").at("available").get<bool>(),
         "native capabilities disabled a readable project");
+    require(find_operation("aviutl_save_project").at("available").get<bool>(),
+        "native capabilities disabled saving a named editable project");
     require(!find_operation("aviutl_psd_create").at("available").get<bool>()
             && find_operation("aviutl_psd_create").at("reason") == "gcmzdrops_not_available",
         "native capabilities claimed an unprobed GCMZDrops integration");
@@ -2663,6 +2678,45 @@ void test_native_query_request_handlers() {
             && project.at("result").at("currentFrame") == 15
             && project.at("result").at("coordinateSystem").at("frameBase") == 1,
         "native project query returned an invalid public DTO");
+
+    const std::string save_revision = dispatcher.revisions().content_revision();
+    const aviutl2_mcp::ipc_frame save_request = create_request_frame(
+        create_uuid_v7_bytes(std::chrono::system_clock::now(), 181U),
+        "project.save",
+        correlation_id,
+        "{}",
+        save_revision);
+    const nlohmann::json saved = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        save_request,
+        identity.instance_id).get()));
+    require(saved.at("ok").get<bool>()
+            && saved.at("result").at("saved").get<bool>()
+            && saved.at("result").at("path") == "D:\\Video\\fixture.aup2"
+            && saved.at("revision") == save_revision
+            && save_command_count == 1,
+        "native project save did not confirm the callback without changing content revision");
+    const nlohmann::json replayed_save = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        save_request,
+        identity.instance_id).get()));
+    require(replayed_save == saved && save_command_count == 1,
+        "native project save was not protected by at-most-once replay");
+
+    fake.project_path.clear();
+    fake.project_load_handler(&fake.project_file);
+    const nlohmann::json unnamed_save = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 182U),
+            "project.save",
+            correlation_id,
+            "{}",
+            save_revision),
+        identity.instance_id).get()));
+    require(!unnamed_save.at("ok").get<bool>()
+            && unnamed_save.at("error").at("code") == "project_path_required"
+            && save_command_count == 1,
+        "native project save opened a pathless project instead of requiring a name");
+    fake.project_path = L"D:\\Video\\fixture.aup2";
+    fake.project_load_handler(&fake.project_file);
 
     const nlohmann::json invalid = nlohmann::json::parse(get_json(dispatcher.dispatch(
         create_request_frame(
@@ -3277,6 +3331,27 @@ void test_native_effect_layer_view_request_handlers() {
         "native effect item edit did not encode and round-trip the value");
 
     const std::string item_revision = changed_item.at("revision").get<std::string>();
+    const std::string gain_params = nlohmann::json{
+        {"locator", locator_json},
+        {"effect", {{"name", "Audio File"}, {"occurrence", 0}}},
+        {"itemName", "Gain"},
+        {"value", 0},
+    }.dump();
+    const nlohmann::json zero_gain = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 190U),
+            "effect.setItem",
+            correlation_id,
+            gain_params,
+            item_revision),
+        identity.instance_id).get()));
+    require(zero_gain.at("ok").get<bool>()
+            && zero_gain.at("result").at("item").at("value").is_number_float()
+            && zero_gain.at("result").at("item").at("value").get<double>() == 0.0
+            && zero_gain.at("result").at("item").at("codec") == "number"
+            && fake.first_effect_gain == "0",
+        "native number codec did not accept and round-trip integer zero");
+    const std::string gain_revision = zero_gain.at("revision").get<std::string>();
     const std::string state_params = nlohmann::json{
         {"locator", locator_json},
         {"effect", {{"name", "Audio File"}, {"occurrence", 0}}},
@@ -3303,7 +3378,7 @@ void test_native_effect_layer_view_request_handlers() {
             "effect.setState",
             correlation_id,
             state_params,
-            item_revision),
+            gain_revision),
         identity.instance_id).get()));
     require(changed_state.at("ok").get<bool>()
             && !changed_state.at("result").at("effect").at("isEnabled").get<bool>()

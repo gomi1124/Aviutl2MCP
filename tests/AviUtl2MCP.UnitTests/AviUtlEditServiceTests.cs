@@ -176,6 +176,30 @@ public sealed class AviUtlEditServiceTests
     }
 
     [TestMethod]
+    public async Task SaveProjectUsesContentRevisionWithoutDryRun()
+    {
+        // Arrange
+        CapturingEditGateway gateway = new(CreateSuccess(
+            new SaveProjectData(@"C:\fixture\project.aup2", true)));
+        AviUtlEditService service = new(new StubResolver(CreateInstance()), gateway);
+        SaveProjectInput input = new()
+        {
+            ExpectedRevision = EXPECTED_REVISION,
+        };
+        using RequestContext context = CreateContext();
+
+        // Act
+        QueryExecutionResult<SaveProjectData> result = await service.SaveProjectAsync(input, context);
+
+        // Assert
+        Assert.IsTrue(result.Result.IsSuccess);
+        Assert.AreEqual("project.save", gateway.Operation);
+        Assert.AreEqual(EXPECTED_REVISION, gateway.ExpectedRevision!.Value);
+        Assert.IsFalse(gateway.DryRun);
+        Assert.IsInstanceOfType<SaveProjectArgs>(gateway.Parameters);
+    }
+
+    [TestMethod]
     public async Task ExecuteBatchUsesLocatorsAndPreservesPartialData()
     {
         // Arrange
@@ -322,6 +346,17 @@ public sealed class AviUtlEditServiceTests
             DryRun = request.DryRun;
             Parameters = request.Parameters;
             return ValueTask.FromResult((GatewayResponse<BatchData>)response!);
+        }
+
+        public ValueTask<GatewayResponse<SaveProjectData>> SaveProjectAsync(
+            GatewayRequest<SaveProjectArgs> request,
+            CancellationToken cancellationToken)
+        {
+            Operation = "project.save";
+            ExpectedRevision = request.ExpectedRevision;
+            DryRun = request.DryRun;
+            Parameters = request.Parameters;
+            return ValueTask.FromResult((GatewayResponse<SaveProjectData>)response!);
         }
 
         public ValueTask<GatewayResponse<CursorData>> SetCursorAsync(

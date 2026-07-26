@@ -227,6 +227,7 @@ public sealed record EffectItem(
     EffectItemCodec Codec,
     bool IsWritable)
 {
+    [EffectItemValue]
     public JsonElement? Value { get; init; }
 
     public IReadOnlyList<string>? Choices { get; init; }

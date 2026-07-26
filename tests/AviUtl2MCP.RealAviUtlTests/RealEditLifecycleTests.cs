@@ -22,6 +22,7 @@ public sealed class RealEditLifecycleTests
     [TestProperty("TestId", "app.dry-run-no-change")]
     [TestProperty("TestId", "app.revision-conflict")]
     [TestProperty("TestId", "real.batch-single-undo")]
+    [TestProperty("TestId", "real.project-save")]
     [TestProperty("TestId", "smoke.before-after-diff")]
     [Timeout(240_000)]
     public async Task RealAviUtlCreatesEditsBatchesAndDeletesIsolatedObjects()
@@ -49,6 +50,7 @@ public sealed class RealEditLifecycleTests
             "app.dry-run-no-change",
             "app.revision-conflict",
             "real.batch-single-undo",
+            "real.project-save",
             "smoke.before-after-diff",
             "real.fixture-process-guard");
         try
@@ -244,6 +246,10 @@ public sealed class RealEditLifecycleTests
                 group.Effect.Name == textEffect.Name);
             EffectItem writableText = textGroup.Items.Single(item =>
                 item.Name == "テキスト" && item.IsWritable);
+            EffectItem writableCharacterSpacing = textGroup.Items.Single(item =>
+                item.Name == "字間"
+                && item.Codec == EffectItemCodec.Number
+                && item.IsWritable);
             using JsonDocument textValue = JsonDocument.Parse("\"AviUtl2 MCP real edit\"");
             SetEffectItemInput setItemInput = new()
             {
@@ -266,6 +272,67 @@ public sealed class RealEditLifecycleTests
                 harness.InstanceId,
                 renamed,
                 timeout.Token)).Single();
+            using JsonDocument oneValue = JsonDocument.Parse("1");
+            SetEffectItemInput setOneInput = new()
+            {
+                ExpectedRevision = revision,
+                Locator = lifecycleObject.Locator,
+                Effect = new EffectInstanceSelector(textEffect.Name),
+                ItemName = writableCharacterSpacing.Name,
+                Value = oneValue.RootElement.Clone(),
+            };
+            GatewayResponse<EffectItemUpdateData> setOne =
+                await edit.ExecuteEditAsync<SetEffectItemInput, EffectItemUpdateData>(
+                    "effect.setItem",
+                    CreateGatewayRequest(harness.InstanceId, setOneInput, revision),
+                    timeout.Token);
+            Assert.IsTrue(setOne.Ok, setOne.Error?.Message);
+            Assert.AreEqual(1.0, setOne.Data!.Item!.Value?.GetDouble());
+            revision = RequireChangedRevision(harness, revision, setOne.Revision);
+            lifecycleObject = (await FindByNameAsync(
+                query,
+                harness.InstanceId,
+                renamed,
+                timeout.Token)).Single();
+
+            using JsonDocument zeroValue = JsonDocument.Parse("0");
+            SetEffectItemInput setZeroInput = new()
+            {
+                ExpectedRevision = revision,
+                Locator = lifecycleObject.Locator,
+                Effect = new EffectInstanceSelector(textEffect.Name),
+                ItemName = writableCharacterSpacing.Name,
+                Value = zeroValue.RootElement.Clone(),
+            };
+            GatewayResponse<EffectItemUpdateData> setZero =
+                await edit.ExecuteEditAsync<SetEffectItemInput, EffectItemUpdateData>(
+                    "effect.setItem",
+                    CreateGatewayRequest(harness.InstanceId, setZeroInput, revision),
+                    timeout.Token);
+            Assert.IsTrue(setZero.Ok, setZero.Error?.Message);
+            Assert.AreEqual(JsonValueKind.Number, setZero.Data!.Item!.Value?.ValueKind);
+            Assert.AreEqual(0.0, setZero.Data.Item.Value?.GetDouble());
+            revision = RequireChangedRevision(harness, revision, setZero.Revision);
+            lifecycleObject = (await FindByNameAsync(
+                query,
+                harness.InstanceId,
+                renamed,
+                timeout.Token)).Single();
+
+            string projectHashBeforeSave = ComputeFileSha256(harness.FixtureProjectPath);
+            GatewayResponse<SaveProjectData> savedProject = await edit.SaveProjectAsync(
+                CreateGatewayRequest(
+                    harness.InstanceId,
+                    new SaveProjectArgs(),
+                    revision),
+                timeout.Token);
+            Assert.IsTrue(savedProject.Ok, savedProject.Error?.Message);
+            Assert.AreEqual(Path.GetFullPath(harness.FixtureProjectPath), savedProject.Data!.Path);
+            Assert.IsTrue(savedProject.Data.Saved);
+            Assert.AreEqual(revision, savedProject.Revision);
+            Assert.AreNotEqual(
+                projectHashBeforeSave,
+                ComputeFileSha256(harness.FixtureProjectPath));
             (string afterPreviewPath, string afterPreviewHash) =
                 await SavePreviewAsync(
                     preview,
@@ -583,6 +650,9 @@ public sealed class RealEditLifecycleTests
         harness.RecordRevision(after.Value.Value);
         return after.Value;
     }
+
+    private static string ComputeFileSha256(string path) =>
+        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
 
     private static GatewayRequest<T> CreateGatewayRequest<T>(
         Guid instanceId,

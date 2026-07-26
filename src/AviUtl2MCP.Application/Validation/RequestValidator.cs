@@ -95,6 +95,12 @@ public static partial class RequestValidator
         _ = new Revision(input.ExpectedRevision.Value);
     }
 
+    public static void ValidateSaveProjectInput(SaveProjectInput input)
+    {
+        ValidateCommonInput(input);
+        _ = new Revision(input.ExpectedRevision.Value);
+    }
+
     public static void ValidateEditInput(MutationInput input)
     {
         ValidateMutationInput(input);

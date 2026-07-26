@@ -256,6 +256,8 @@ named_pipe_server::named_pipe_server(bridge_identity identity, std::string host_
         get_sdk_read_facade(),
         "psd.capabilities"));
     dispatcher_.register_handler(std::make_unique<native_project_request_handler>(get_sdk_read_facade()));
+    dispatcher_.register_handler(
+        std::make_unique<native_project_save_request_handler>(get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_preview_request_handler>(get_sdk_read_facade()));
     dispatcher_.register_handler(std::make_unique<native_timeline_request_handler>(
         identity_,

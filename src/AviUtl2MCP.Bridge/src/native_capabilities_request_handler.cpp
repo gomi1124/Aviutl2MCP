@@ -58,6 +58,10 @@ constexpr std::array EDIT_OPERATIONS{
     std::string_view("aviutl_execute_batch"),
 };
 
+constexpr std::array SAVE_OPERATIONS{
+    std::string_view("aviutl_save_project"),
+};
+
 constexpr std::array PSD_TOOLKIT_OPERATIONS{
     std::string_view("aviutl_psd_setup"),
     std::string_view("aviutl_psd_set_character"),
@@ -100,6 +104,13 @@ void add_operations(
     return project_reason != nullptr ? project_reason
         : status.edit_state == sdk_edit_state::edit ? nullptr
         : "edit_not_available";
+}
+
+[[nodiscard]] const char* get_save_reason(const sdk_status_snapshot& status) noexcept {
+    const char* edit_reason = get_edit_reason(status);
+    return edit_reason != nullptr ? edit_reason
+        : status.project_state == sdk_project_state::saved ? nullptr
+        : "project_path_required";
 }
 
 [[nodiscard]] const char* choose_reason(
@@ -158,6 +169,7 @@ operation_result native_capabilities_request_handler::execute(
         const char* sdk_reason = get_sdk_reason(status);
         const char* project_reason = get_project_reason(status);
         const char* edit_reason = get_edit_reason(status);
+        const char* save_reason = get_save_reason(status);
         const native_environment_probe psd = probe_native_environment(sdk_, status);
         const bool has_profile = psd.psd_profile.is_match;
         const bool has_gcmz = psd.gcmz.ok;
@@ -169,6 +181,7 @@ operation_result native_capabilities_request_handler::execute(
         add_operations(operations, SDK_OPERATIONS, sdk_reason == nullptr, sdk_reason);
         add_operations(operations, PROJECT_OPERATIONS, project_reason == nullptr, project_reason);
         add_operations(operations, EDIT_OPERATIONS, edit_reason == nullptr, edit_reason);
+        add_operations(operations, SAVE_OPERATIONS, save_reason == nullptr, save_reason);
         const char* psd_edit_reason = choose_reason(
             edit_reason, has_profile, false, has_gcmz, false, has_voice_route);
         add_operations(

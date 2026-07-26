@@ -88,6 +88,23 @@ public sealed class AviUtlEditService(
             new SetEffectItemArgs(input.Locator, input.Effect, input.ItemName, input.Value),
             context);
 
+    public ValueTask<QueryExecutionResult<SaveProjectData>> SaveProjectAsync(
+        SaveProjectInput input,
+        RequestContext context) => ExecuteCoreAsync(
+            input,
+            [],
+            context,
+            (instance, cancellationToken) => _editGateway.SaveProjectAsync(
+                new GatewayRequest<SaveProjectArgs>(
+                    instance.InstanceId,
+                    context.CorrelationId,
+                    context.Deadline,
+                    context.TimeoutMs,
+                    input.ExpectedRevision,
+                    false,
+                    new SaveProjectArgs()),
+                cancellationToken));
+
     public ValueTask<QueryExecutionResult<EffectStateUpdateData>> SetEffectStateAsync(
         SetEffectStateInput input,
         RequestContext context) => ExecuteAsync<SetEffectStateArgs, EffectStateUpdateData>(

@@ -80,7 +80,7 @@ public sealed class RealReadPreviewDiagnosticTests
 
         IList<McpClientTool> tools = await client.ListToolsAsync(
             cancellationToken: timeout.Token);
-        Assert.AreEqual(28, tools.Count);
+        Assert.AreEqual(29, tools.Count);
 
         JsonElement status = RequireSuccess(await client.CallToolAsync(
             "aviutl_get_status",
@@ -1037,7 +1037,7 @@ public sealed class RealReadPreviewDiagnosticTests
         Assert.AreEqual("2003300", versions.GetProperty("sdk").GetString());
 
         JsonElement[] operations = data.GetProperty("operations").EnumerateArray().ToArray();
-        Assert.AreEqual(28, operations.Length);
+        Assert.AreEqual(29, operations.Length);
         int availableOperationCount = 0;
         foreach (JsonElement operation in operations)
         {
@@ -1055,7 +1055,7 @@ public sealed class RealReadPreviewDiagnosticTests
                 "gcmzdrops_not_available",
                 operation.GetProperty("reason").GetString());
         }
-        Assert.IsGreaterThanOrEqualTo(26, availableOperationCount);
+        Assert.IsGreaterThanOrEqualTo(27, availableOperationCount);
     }
 
     private static async Task<JsonElement> WaitForProjectAsync(

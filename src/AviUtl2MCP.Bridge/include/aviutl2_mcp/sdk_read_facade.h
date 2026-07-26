@@ -3,6 +3,7 @@
 #include "aviutl2_mcp/locator_resolver.h"
 
 #include <cstdint>
+#include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -319,6 +320,25 @@ struct sdk_preview_render_result final {
     std::string error_message;
 };
 
+struct sdk_project_save_command_result final {
+    bool ok = false;
+    bool command_was_dispatched = false;
+    std::string error_code;
+    std::string error_message;
+};
+
+using sdk_project_save_command = std::function<sdk_project_save_command_result(
+    void* host_window,
+    std::uint32_t timeout_ms)>;
+
+struct sdk_project_save_result final {
+    bool ok = false;
+    bool command_was_dispatched = false;
+    std::optional<std::string> path;
+    std::string error_code;
+    std::string error_message;
+};
+
 using sdk_batch_request_value = std::variant<
     sdk_create_request,
     sdk_object_edit_request,
@@ -355,7 +375,7 @@ struct sdk_batch_edit_result final {
 
 class sdk_read_facade final {
 public:
-    sdk_read_facade() = default;
+    explicit sdk_read_facade(sdk_project_save_command project_save_command = {});
     ~sdk_read_facade();
 
     sdk_read_facade(const sdk_read_facade&) = delete;
@@ -405,6 +425,8 @@ public:
     [[nodiscard]] sdk_preview_render_result render_preview(
         int frame,
         std::uint32_t timeout_ms) const noexcept;
+    [[nodiscard]] sdk_project_save_result save_project(
+        std::uint32_t timeout_ms) const noexcept;
 
     void capture_project(PROJECT_FILE* project, bool is_load = true) noexcept;
     void set_project_loaded_callback(std::function<void()> callback);
@@ -431,13 +453,17 @@ private:
     void release_sdk_dispatcher() noexcept;
 
     mutable std::mutex mutex_;
+    mutable std::condition_variable project_saved_cv_;
     EDIT_HANDLE* edit_handle_ = nullptr;
+    void* host_app_window_ = nullptr;
     void* sdk_dispatch_window_ = nullptr;
     std::uint32_t sdk_thread_id_ = 0U;
     std::uint64_t sdk_call_not_before_ms_ = 0U;
     sdk_project_state project_state_ = sdk_project_state::unknown;
     std::optional<std::string> project_path_;
     std::string project_cache_error_;
+    std::uint64_t project_save_sequence_ = 0U;
+    sdk_project_save_command project_save_command_;
     std::function<void()> project_loaded_callback_;
 };
 

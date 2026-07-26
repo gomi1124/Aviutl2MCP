@@ -3,13 +3,18 @@ using System.Text.Json.Nodes;
 
 namespace AviUtl2MCP.Application.Contracts;
 
+[AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Property)]
+public sealed class EffectItemValueAttribute : Attribute;
+
 public sealed record MovePlacement(int SceneId, int Layer, int StartFrame);
 
 public sealed record EffectDefinitionSelector(string Name);
 
 public sealed record EffectInstanceSelector(string Name, int Occurrence = 0);
 
-public sealed record EffectItemAssignment(string Name, JsonElement Value);
+public sealed record EffectItemAssignment(
+    string Name,
+    [property: EffectItemValue] JsonElement Value);
 
 public sealed record Selection(int StartFrame, int EndFrame);
 

@@ -2,7 +2,7 @@
 
 ## 1. 適用範囲
 
-本書はV1で公開する28 tools、5 resources、4 promptsの名前、入力、構造化出力、エラー、annotationsを固定する。機械可読な必須、enum、条件、nested DTO、tool別input/outputは [V1 Schema catalog](../schemas/mcp/v1/catalog.json) を正とする。
+本書はV1で公開する29 tools、5 resources、4 promptsの名前、入力、構造化出力、エラー、annotationsを固定する。機械可読な必須、enum、条件、nested DTO、tool別input/outputは [V1 Schema catalog](../schemas/mcp/v1/catalog.json) を正とする。
 
 - MCP SDK: 公式C# SDK `ModelContextProtocol` 1.4.1
 - transport: stdio
@@ -82,7 +82,7 @@ SDKハンドルを公開・保存せず、次の複合ロケーターを使う�
 - `EffectDefinitionSelector`: `name`（1～4096文字）。`enum_effect_name`と`create_object`が公開する名称だけを使う。
 - `EffectInstanceSelector`: `name`（1～4096文字）と`occurrence`（0以上、既定0）。object内の同名effectを順序で選ぶ。
 - `EffectItemValue`: JSON `boolean`、範囲内`integer`、有限`number`、最大64 KiBの`string`のいずれか。`NaN`と無限値は不可。
-- codecはitem typeが`integer`なら10進integer、`number`ならinvariant有限小数、`check`なら`0/1`、その他ならSDK alias形式のUTF-8 stringとする。
+- codecはitem typeが`integer`なら10進integer、`number`ならinvariant有限小数、`check`なら`0/1`、その他ならSDK alias形式のUTF-8 stringとする。`number` codecへJSON integerを渡した場合は正確に表現できる範囲で実数へ正規化し、`0`も有効な更新値として扱う。
 - `data`、`folder`、未知item typeはV1で読取専用とし、それ以外もSDKが返したtypeと値のround-tripをfixtureで確認できた場合だけ`isWritable=true`にする。
 - effect/item名の比較はSDKが返すUTF-8名との完全一致を基本とし、候補一覧をエラー詳細へ含められる。
 
@@ -124,8 +124,9 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 | Tool | 固有入力 | `data` |
 |---|---|---|
 | `aviutl_get_status` | なし | `connectionState`、各componentの`version/status`、`projectState`、`editState`、`selectedInstance`、候補`instances[]` |
-| `aviutl_get_capabilities` | なし | 28操作ごとの`available/reason/constraints`、protocol/schema/bridge版、V1制限値 |
+| `aviutl_get_capabilities` | なし | 29操作ごとの`available/reason/constraints`、protocol/schema/bridge版、V1制限値 |
 | `aviutl_get_project` | `includeScenes?: boolean=true` | `path?`、`isSaved`、解像度、frame/sample rate、current scene/frame、選択・表示範囲、`scenes[]` |
+| `aviutl_save_project` | `expectedRevision: string` | `path`、`saved: true`。名前付きの現在projectだけを保存し、`dryRun`と別名保存dialogは提供しない |
 | `aviutl_get_timeline` | `sceneId?`、`layerStart?`、`layerEnd?`、`startFrame?`、`endFrame?`、`detail?: "summary"|"effects"="summary"`、Page | `layers[]`、`objects[]`、Page、`coordinateSystem` |
 | `aviutl_find_objects` | `sceneId?`、`layerStart?`、`layerEnd?`、`startFrame?`、`endFrame?`、`nameContains?`、`effectName?`、`mediaPath?`、Page | 条件に一致する`objects[]`とPage |
 | `aviutl_get_object` | `locator: Locator`、`includeAlias?: boolean=false`、`includeEffectItems?: boolean=true` | `object`、effectごとの`effectItems[]`、選択状態、任意のUTF-8 `alias` |
@@ -138,7 +139,7 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 
 ### 3.2 タイムライン編集
 
-次のtoolは `aviutl_set_cursor` を除き、すべて `expectedRevision` と任意の `dryRun` を持つ。
+次のtoolは `aviutl_set_cursor` と `aviutl_save_project` を除き、すべて `expectedRevision` と任意の `dryRun` を持つ。`aviutl_save_project`は`expectedRevision`だけを持ち、保存完了後もcontent revisionを変更しない。
 
 | Tool | 固有入力 | `data` |
 |---|---|---|
@@ -287,7 +288,7 @@ Phase 1の共通エラーに加えて、設計で確定した次を使う。
 
 - 入力DTOはDataAnnotationsとApplicationの実行時検証を併用する。
 - JSON deserializationは未知propertyを拒否し、整数overflow、無効enum、非有限numberを拒否する。
-- DTOから生成した28 input/output schemasを `schemas/mcp/v1/catalog.json` の参照解決済みschemaと比較する。
+- DTOから生成した29 input/output schemasを `schemas/mcp/v1/catalog.json` の参照解決済みschemaと比較する。
 - `tools/list`のname、description、inputSchema、outputSchema、annotationsをcatalogに対してsnapshot testする。
 - schemaの破壊的変更はprotocol/schema major変更なしに行わない。
 - 各toolの正常、入力不正、未接続、能力不足、timeoutをMCP contract testで確認する。

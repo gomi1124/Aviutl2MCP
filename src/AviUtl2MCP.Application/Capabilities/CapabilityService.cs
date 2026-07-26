@@ -74,6 +74,13 @@ public static class CapabilityService
             canEdit,
             GetEditReason(environment));
 
+        bool canSaveProject = canEdit && environment.IsProjectSaved;
+        AddOperations(
+            operations,
+            ["aviutl_save_project"],
+            canSaveProject,
+            GetSaveProjectReason(environment));
+
         bool canUsePsdToolKit = canEdit && environment.HasPsdToolKit;
         AddOperations(
             operations,
@@ -135,6 +142,12 @@ public static class CapabilityService
     private static string? GetPsdToolKitReason(CapabilityEnvironment environment)
     {
         return GetEditReason(environment) ?? (!environment.HasPsdToolKit ? "psdtoolkit_not_available" : null);
+    }
+
+    private static string? GetSaveProjectReason(CapabilityEnvironment environment)
+    {
+        return GetEditReason(environment)
+            ?? (!environment.IsProjectSaved ? "project_path_required" : null);
     }
 
     private static string? GetGcmzDropsReason(CapabilityEnvironment environment)

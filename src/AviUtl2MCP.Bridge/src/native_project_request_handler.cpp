@@ -96,4 +96,91 @@ operation_result native_project_request_handler::execute(
     }
 }
 
+native_project_save_request_handler::native_project_save_request_handler(sdk_read_facade& sdk)
+    : sdk_(sdk) {}
+
+std::string native_project_save_request_handler::operation() const {
+    return "project.save";
+}
+
+bool native_project_save_request_handler::is_mutating() const noexcept {
+    return true;
+}
+
+operation_result native_project_save_request_handler::execute(
+    const operation_request& request,
+    operation_execution_context& context) {
+    try {
+        if (!request.expected_revision.has_value()
+            || !context.revisions().matches_content(*request.expected_revision)) {
+            return create_native_failure(
+                "revision_conflict",
+                "The expected content revision does not match the current revision",
+                context);
+        }
+        if (request.dry_run) {
+            return create_native_failure(
+                "invalid_argument",
+                "Project save does not support dryRun",
+                context);
+        }
+        const nlohmann::json params = nlohmann::json::parse(request.params_json);
+        if (!params.is_object() || !params.empty()) {
+            throw std::invalid_argument("Project save parameters must be an empty object");
+        }
+        if (!context.reach_commit_point()) {
+            return create_native_failure(
+                "operation_cancelled",
+                "Project save was cancelled before commit",
+                context);
+        }
+        const sdk_project_save_result saved = sdk_.save_project(request.timeout_ms);
+        if (!saved.ok) {
+            if (saved.command_was_dispatched) {
+                return operation_result{
+                    .ok = false,
+                    .outcome = "unknown",
+                    .result_json = {},
+                    .error_code = saved.error_code,
+                    .error_message = saved.error_message,
+                    .revision = context.revisions().content_revision(),
+                    .view_revision = context.revisions().view_revision(),
+                    .retryable = saved.error_code == "operation_timeout",
+                    .undo_recommended = false,
+                };
+            }
+            return create_native_failure(
+                saved.error_code,
+                saved.error_message,
+                context,
+                saved.error_code == "operation_timeout"
+                    || saved.error_code == "sdk_query_failed");
+        }
+        if (!saved.path.has_value()) {
+            return operation_result{
+                .ok = false,
+                .outcome = "unknown",
+                .result_json = {},
+                .error_code = "sdk_query_failed",
+                .error_message = "Project save succeeded without a project path",
+                .revision = context.revisions().content_revision(),
+                .view_revision = context.revisions().view_revision(),
+            };
+        }
+        return create_native_success(
+            nlohmann::json{
+                {"path", *saved.path},
+                {"saved", true},
+            }.dump(),
+            context);
+    } catch (const nlohmann::json::exception&) {
+        return create_native_failure(
+            "invalid_argument",
+            "Project save request JSON is invalid",
+            context);
+    } catch (const std::invalid_argument& exception) {
+        return create_native_failure("invalid_argument", exception.what(), context);
+    }
+}
+
 }  // namespace aviutl2_mcp

@@ -163,12 +163,12 @@ classDiagram
 |---|---:|---|
 | `StatusToolSet` | 2 | `aviutl_get_status`、`aviutl_get_capabilities` |
 | `TimelineQueryToolSet` | 6 | `aviutl_get_project`、`aviutl_get_timeline`、`aviutl_find_objects`、`aviutl_get_object`、`aviutl_list_effects`、`aviutl_list_effect_items` |
-| `TimelineEditToolSet` | 10 | `aviutl_create_object`、`aviutl_create_media_object`、`aviutl_create_alias_object`、`aviutl_move_object`、`aviutl_delete_object`、`aviutl_set_object_name`、`aviutl_set_effect_item`、`aviutl_set_effect_state`、`aviutl_set_layer`、`aviutl_set_cursor` |
+| `TimelineEditToolSet` | 11 | `aviutl_create_object`、`aviutl_create_media_object`、`aviutl_create_alias_object`、`aviutl_move_object`、`aviutl_delete_object`、`aviutl_set_object_name`、`aviutl_set_effect_item`、`aviutl_set_effect_state`、`aviutl_set_layer`、`aviutl_set_cursor`、`aviutl_save_project` |
 | `BatchToolSet` | 1 | `aviutl_execute_batch` |
 | `DiagnosticsToolSet` | 3 | `aviutl_render_preview`、`aviutl_get_logs`、`aviutl_diagnose` |
 | `PsdToolSet` | 6 | `aviutl_psd_create`、`aviutl_psd_setup`、`aviutl_psd_set_character`、`aviutl_psd_set_layer_state`、`aviutl_psd_create_voice`、`aviutl_psd_validate` |
 
-合計28 toolsとし、tool class内にAviUtl2固有処理を実装しない。
+合計29 toolsとし、tool class内にAviUtl2固有処理を実装しない。
 
 ### 3.2 Resource / Prompt配置
 
@@ -570,14 +570,14 @@ SDK handle、callbackポインター、`PROJECT_FILE*`、render callback buffer�
 | C#とnativeの両方でrevisionを確定すると競合する | 妥当 | Applicationはpreflight、native `RevisionTracker`だけがcommit revisionを確定 |
 | query並列化がSDK handle寿命を破る | 妥当 | native `CommandGate`とSDK callback内DTO copyを必須化 |
 | fakeが実装詳細を共有して不具合を隠す | 妥当 | Application、IPC、native SDK、GCMZでfakeを分離 |
-| class数が過剰 | 一部妥当 | 28 toolごとのclassは作らず、6 Adapter群と責務単位serviceへ集約 |
+| class数が過剰 | 一部妥当 | 29 toolごとのclassは作らず、6 Adapter群と責務単位serviceへ集約 |
 | 診断が暗黙に修復する危険 | 妥当 | 読取専用ruleだけを公開し、修復interfaceを作らない |
 
 レビュー後に循環依存はない。依存方向は `Server -> Application -> gateway interface <- BridgeClient`、native側は `transport -> dispatcher -> handler -> adapter` に固定する。
 
 ## 11. Phase 3完了条件
 
-- 28 tools、5 resources、4 promptsの所有classが決まっている。
+- 29 tools、5 resources、4 promptsの所有classが決まっている。
 - C# Applicationとnative bridgeの依存方向が一方向である。
 - query/edit/preview/PSD/diagnosticsのtest seamが存在する。
 - SDK handle、revision、at-most-once、render、temp artifactのownerと寿命が明記されている。

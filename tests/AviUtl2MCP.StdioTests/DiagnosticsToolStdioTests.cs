@@ -57,6 +57,8 @@ public sealed class DiagnosticsToolStdioTests
         "aviutl://diagnostics/latest",
     ];
     private static readonly string[] SERVER_SOURCE = ["server"];
+    private static readonly string[] EFFECT_ITEM_VALUE_TYPES =
+        ["boolean", "integer", "number", "string"];
 
     [TestMethod]
     public async Task StdioListsAndCallsReadOnlyDiagnosticTools()
@@ -94,6 +96,9 @@ public sealed class DiagnosticsToolStdioTests
             McpClientTool diagnoseTool = tools.Single(tool => tool.Name == "aviutl_diagnose");
             McpClientTool statusTool = tools.Single(tool => tool.Name == "aviutl_get_status");
             McpClientTool projectTool = tools.Single(tool => tool.Name == "aviutl_get_project");
+            McpClientTool saveTool = tools.Single(tool => tool.Name == "aviutl_save_project");
+            McpClientTool effectItemTool = tools.Single(
+                tool => tool.Name == "aviutl_set_effect_item");
             McpClientTool previewTool = tools.Single(tool => tool.Name == "aviutl_render_preview");
             McpClientTool timelineTool = tools.Single(tool => tool.Name == "aviutl_get_timeline");
             McpClientTool deleteTool = tools.Single(tool => tool.Name == "aviutl_delete_object");
@@ -220,7 +225,7 @@ public sealed class DiagnosticsToolStdioTests
                 cancellationToken: timeout.Token);
 
             // Assert
-            Assert.AreEqual(28, tools.Count);
+            Assert.AreEqual(29, tools.Count);
             CollectionAssert.IsSubsetOf(
                 READ_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());
@@ -235,6 +240,8 @@ public sealed class DiagnosticsToolStdioTests
             {
                 AssertEditToolMetadata(tools.Single(tool => tool.Name == editToolName));
             }
+            AssertSaveToolMetadata(saveTool);
+            AssertEffectItemValueSchema(effectItemTool);
             CollectionAssert.IsSubsetOf(
                 PSD_EDIT_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());
@@ -409,6 +416,40 @@ public sealed class DiagnosticsToolStdioTests
         Assert.IsTrue(properties.TryGetProperty("expectedViewRevision", out _));
         Assert.IsFalse(properties.TryGetProperty("dryRun", out _));
         Assert.IsFalse(properties.TryGetProperty("input", out _));
+    }
+
+    private static void AssertSaveToolMetadata(McpClientTool tool)
+    {
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations!.ReadOnlyHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.DestructiveHint);
+        Assert.AreEqual(true, tool.ProtocolTool.Annotations.IdempotentHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.OpenWorldHint);
+        Assert.IsTrue(tool.ProtocolTool.OutputSchema.HasValue);
+        JsonElement properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        Assert.IsTrue(properties.TryGetProperty("expectedRevision", out _));
+        Assert.IsFalse(properties.TryGetProperty("dryRun", out _));
+        Assert.IsFalse(properties.TryGetProperty("input", out _));
+    }
+
+    private static void AssertEffectItemValueSchema(McpClientTool tool)
+    {
+        JsonElement valueSchema = tool.ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("value");
+        JsonElement[] options = valueSchema.GetProperty("oneOf").EnumerateArray().ToArray();
+        foreach (JsonElement option in options)
+        {
+            Assert.AreEqual(
+                JsonValueKind.Object,
+                option.ValueKind,
+                valueSchema.GetRawText());
+        }
+        string[] types = options
+            .Select(option => option.GetProperty("type").GetString()!)
+            .ToArray();
+        CollectionAssert.AreEquivalent(
+            EFFECT_ITEM_VALUE_TYPES,
+            types);
     }
 
     private static string CreateCorrelationDirectory()

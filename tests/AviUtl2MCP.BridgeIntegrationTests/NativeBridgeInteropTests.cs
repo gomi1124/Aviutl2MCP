@@ -127,7 +127,7 @@ public sealed class NativeBridgeInteropTests
             using (JsonDocument capabilitiesDocument = JsonDocument.Parse(capabilitiesResponse.JsonBytes))
             {
                 JsonElement capabilities = capabilitiesDocument.RootElement.GetProperty("result");
-                Assert.AreEqual(28, capabilities.GetProperty("operations").GetArrayLength());
+                Assert.AreEqual(29, capabilities.GetProperty("operations").GetArrayLength());
                 Assert.IsTrue(capabilities.GetProperty("versions").GetProperty("sdk").ValueKind
                     == JsonValueKind.Null);
             }
