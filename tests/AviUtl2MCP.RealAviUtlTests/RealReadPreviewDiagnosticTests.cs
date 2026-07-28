@@ -1023,7 +1023,8 @@ public sealed class RealReadPreviewDiagnosticTests
             Assert.AreEqual(
                 "ready",
                 component.GetProperty("status").GetString(),
-                $"Component {componentName} was not ready on the tested AviUtl2 build.");
+                $"Component {componentName} was not ready on the tested AviUtl2 build: "
+                    + component.GetRawText());
         }
     }
 

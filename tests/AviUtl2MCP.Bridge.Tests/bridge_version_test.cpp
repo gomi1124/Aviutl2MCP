@@ -841,10 +841,10 @@ void enumerate_fake_modules(
     MODULE_INFO script{
         .type = MODULE_INFO::TYPE_SCRIPT_MODULE,
         .name = L"PSDToolKit",
-        .information = L"Animation scripts",
+        .information = L"PSDToolKit helper API 9",
     };
-    callback(parameter, &psd_toolkit);
     callback(parameter, &script);
+    callback(parameter, &psd_toolkit);
 }
 
 void enumerate_fake_fonts(void* parameter, void (*callback)(void*, LPCWSTR)) {
@@ -2409,8 +2409,10 @@ void test_sdk_read_facade() {
             && first_effect_page.catalog.effects[0].is_creatable,
         "SDK facade did not map effect type, flags, or creatability");
     require(first_effect_page.catalog.modules.size() == 2U
-            && first_effect_page.catalog.modules[0].type == "pluginFilter"
-            && first_effect_page.catalog.modules[0].name == "PSDToolKit2"
+            && first_effect_page.catalog.modules[0].type == "scriptModule"
+            && first_effect_page.catalog.modules[0].name == "PSDToolKit"
+            && first_effect_page.catalog.modules[1].type == "pluginFilter"
+            && first_effect_page.catalog.modules[1].name == "PSDToolKit2"
             && first_effect_page.catalog.fonts.size() == 2U
             && first_effect_page.catalog.palettes.size() == 2U,
         "SDK facade did not copy module, font, and palette catalogs");
@@ -2611,7 +2613,7 @@ void test_native_query_request_handlers() {
             && effects.at("result").at("nextCursor") == "effects:2"
             && effects.at("result").at("isTruncated").get<bool>(),
         "native effect handler did not return the first catalog page");
-    require(effects.at("result").at("modules")[0].at("name") == "PSDToolKit2"
+    require(effects.at("result").at("modules")[1].at("name") == "PSDToolKit2"
             && effects.at("result").at("fonts").size() == 2U
             && effects.at("result").at("palettes").size() == 2U,
         "native effect handler omitted independent SDK catalogs");
@@ -3931,7 +3933,11 @@ void test_psd_profile_detector() {
 
     aviutl2_mcp::psd_profile_observation unknown_version = golden;
     unknown_version.version = "2.0.0alpha11";
-    require(!aviutl2_mcp::detect_psd_profile(unknown_version).is_match,
+    const aviutl2_mcp::psd_profile_detection unsupported =
+        aviutl2_mcp::detect_psd_profile(unknown_version);
+    require(!unsupported.is_match
+            && unsupported.failures == std::vector<std::string>({
+                "version_unsupported:expected=2.0.0alpha10:actual=2.0.0alpha11"}),
         "unknown PSDToolKit version enabled write capability");
 
     aviutl2_mcp::psd_profile_observation missing_item = golden;

@@ -78,7 +78,9 @@ psd_profile_detection detect_psd_profile(const psd_profile_observation& observat
     if (!observation.version.has_value()) {
         result.failures.emplace_back("version_missing");
     } else if (*observation.version != PSD_PROFILE_VERSION) {
-        result.failures.emplace_back("version_unsupported");
+        result.failures.emplace_back(
+            "version_unsupported:expected=" + std::string(PSD_PROFILE_VERSION)
+            + ":actual=" + *observation.version);
     }
 
     for (const std::string_view effect_name : REQUIRED_EFFECTS) {
