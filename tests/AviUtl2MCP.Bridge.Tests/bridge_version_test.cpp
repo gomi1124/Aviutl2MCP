@@ -34,6 +34,7 @@
 #include "aviutl2_mcp/request_dispatcher.h"
 #include "aviutl2_mcp/revision_tracker.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
+#include "aviutl2_mcp/version.h"
 
 #include <Windows.h>
 
@@ -1236,6 +1237,12 @@ void test_bridge_version() {
     require(
         aviutl2_mcp::get_bridge_abi_version() == aviutl2_mcp::BRIDGE_ABI_VERSION,
         "bridge ABI version mismatch");
+    require(
+        std::string_view(aviutl2_mcp::PRODUCT_VERSION) == "0.1.1",
+        "bridge product version did not match VERSION");
+    require(
+        aviutl2_mcp::MINIMUM_AVIUTL_VERSION == 2010200U,
+        "bridge minimum AviUtl2 version did not match SDK baseline");
 }
 
 void test_header_golden_vector() {
@@ -1511,6 +1518,13 @@ void test_handshake_negotiation() {
     const aviutl2_mcp::handshake_result accepted = handler.negotiate(hello, GetCurrentProcessId());
     require(accepted.accepted, "compatible ClientHello was rejected");
     require(accepted.limits.in_flight == 8U, "in-flight limit was not negotiated to the smaller value");
+    const nlohmann::json server_hello =
+        nlohmann::json::parse(handler.create_server_hello_json(hello, accepted));
+    require(
+        server_hello.at("versions").at("bridge") == aviutl2_mcp::PRODUCT_VERSION
+            && server_hello.at("versions").at("sdk")
+                == aviutl2_mcp::MINIMUM_AVIUTL_VERSION_TEXT,
+        "ServerHello versions did not match the canonical release version");
 
     const aviutl2_mcp::handshake_result pid_rejected = handler.negotiate(hello, GetCurrentProcessId() + 1U);
     require(pid_rejected.error_code == "client_pid_mismatch", "client PID mismatch was not rejected");
@@ -2566,7 +2580,7 @@ void test_native_query_request_handlers() {
     require(!find_operation("aviutl_psd_setup").at("available").get<bool>()
             && find_operation("aviutl_psd_setup").at("reason") == "psdtoolkit_not_available",
         "native capabilities enabled an incomplete PSDToolKit profile");
-    require(capabilities.at("result").at("versions").at("sdk") == "2003300"
+    require(capabilities.at("result").at("versions").at("sdk") == "2010200"
             && capabilities.at("result").at("versions").at("psdToolKit") == "2.0.0alpha10"
             && capabilities.at("result").at("limits").at("bridgeConnections")
                 == aviutl2_mcp::MAXIMUM_BRIDGE_CONNECTIONS

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -12,7 +13,7 @@ namespace AviUtl2MCP.BridgeIntegrationTests;
 public sealed class NativeBridgeInteropTests
 {
     private const string NATIVE_BRIDGE_PATH_VARIABLE = "AVIUTL2_MCP_NATIVE_BRIDGE_PATH";
-    private const uint TEST_HOST_VERSION = 2003300;
+    private const uint TEST_HOST_VERSION = 2010200;
     private static readonly string[] BRIDGE_LOG_SOURCES = ["bridge"];
 
     [TestMethod]
@@ -34,6 +35,9 @@ public sealed class NativeBridgeInteropTests
         Assert.IsTrue(
             NativeLibrary.TryGetExport(module, "RegisterPlugin", out _),
             "Native bridge did not export the required RegisterPlugin entry point.");
+        RequiredVersion requiredVersion = Marshal.GetDelegateForFunctionPointer<RequiredVersion>(
+            NativeLibrary.GetExport(module, "RequiredVersion"));
+        Assert.AreEqual(TEST_HOST_VERSION, requiredVersion());
         InitializePlugin initialize = Marshal.GetDelegateForFunctionPointer<InitializePlugin>(
             NativeLibrary.GetExport(module, "InitializePlugin"));
         UninitializePlugin uninitialize = Marshal.GetDelegateForFunctionPointer<UninitializePlugin>(
@@ -48,6 +52,7 @@ public sealed class NativeBridgeInteropTests
             InstanceDescriptorWatcher watcher = new(pollInterval: TimeSpan.FromMilliseconds(20));
             BridgeInstanceDescriptor descriptor = await WaitForCurrentProcessDescriptorAsync(watcher);
             descriptorPath = Path.Combine(watcher.DirectoryPath, $"{descriptor.InstanceId:D}.json");
+            Assert.AreEqual("0.1.1", descriptor.BridgeVersion);
 
             await using NamedPipeBridgeTransport transport = new();
             BridgeHandshakeClient handshake = new(transport, Guid.CreateVersion7(), "0.1.0-test");
@@ -61,6 +66,10 @@ public sealed class NativeBridgeInteropTests
             Assert.AreEqual(Environment.ProcessId, session.AviutlProcessId);
             Assert.AreEqual(descriptor.ProcessCreationTime, session.AviutlProcessCreationTime);
             Assert.AreNotEqual(Guid.Empty, session.ServerEpoch);
+            Assert.AreEqual("0.1.1", session.Versions.Bridge);
+            Assert.AreEqual(
+                TEST_HOST_VERSION.ToString(CultureInfo.InvariantCulture),
+                session.Versions.Sdk);
 
             await using NamedPipeBridgeTransport secondTransport = new();
             BridgeHandshakeClient secondHandshake = new(secondTransport, Guid.CreateVersion7(), "0.1.0-test");
@@ -284,6 +293,9 @@ public sealed class NativeBridgeInteropTests
         }
         throw new TimeoutException("Native bridge did not publish a valid descriptor for the test process.");
     }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate uint RequiredVersion();
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.I1)]

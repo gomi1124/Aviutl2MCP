@@ -11,7 +11,7 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 - [PSDToolKit2 公開ソース](https://github.com/oov/aviutl2_psdtoolkit2)
 - [GCMZDrops 外部連携API](https://github.com/oov/aviutl2_gcmzdrops2/blob/main/API.md)
 
-調査対象は2026-07-20時点の公開リポジトリと、ローカルに導入済みの AviUtl ExEdit2 2.1.1、PSDToolKit2、GCMZDrops とする。
+調査対象は2026-07-29時点の公開リポジトリと、ローカルに導入済みの AviUtl ExEdit2 2.1.2、PSDToolKit2、GCMZDrops とする。2026-07-25版の公式SDKと固定submoduleは、文字コード変換に伴う波ダッシュ表現を除き同一であることを確認済み。
 
 ## 3. 判定区分
 

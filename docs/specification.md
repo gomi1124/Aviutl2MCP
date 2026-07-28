@@ -141,7 +141,7 @@ MCP の標準出力はプロトコル専用とし、ログは標準エラーへ�
 
 ### 9.1 ローカル調査環境
 
-- AviUtl ExEdit2: version 2.1.1（2026-07-20実機確認）
+- AviUtl ExEdit2: version 2.1.2（2026-07-29実機確認）
 - AviUtl2 実行ファイル: `C:\Program Files\AviUtl2\aviutl2.exe`
 - AviUtl2 データディレクトリ: `C:\ProgramData\aviutl2`
 - PSDToolKit2: `C:\ProgramData\aviutl2\Plugin\PSDToolKit` に導入済み

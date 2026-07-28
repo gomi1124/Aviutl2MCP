@@ -17,7 +17,7 @@ namespace AviUtl2MCP.RealAviUtlTests;
 [TestClass]
 public sealed class RealReadPreviewDiagnosticTests
 {
-    private const uint MINIMUM_TESTED_AVIUTL_VERSION = 2010100U;
+    private const uint MINIMUM_TESTED_AVIUTL_VERSION = 2010200U;
     private static readonly byte[] PNG_SIGNATURE =
         [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
     private static readonly string[] REQUIRED_READY_COMPONENTS =
@@ -123,7 +123,7 @@ public sealed class RealReadPreviewDiagnosticTests
         Assert.AreEqual(
             8,
             capabilities.GetProperty("data").GetProperty("limits").GetProperty("bridgeConnections").GetInt32());
-        AssertAviUtl211Compatibility(capabilities);
+        AssertAviUtl212Compatibility(capabilities);
         JsonElement project = await WaitForProjectAsync(client, harness.InstanceId, timeout.Token);
         Assert.AreEqual(1920, project.GetProperty("data").GetProperty("width").GetInt32());
         Assert.AreEqual(1080, project.GetProperty("data").GetProperty("height").GetInt32());
@@ -1020,7 +1020,7 @@ public sealed class RealReadPreviewDiagnosticTests
         }
     }
 
-    private static void AssertAviUtl211Compatibility(JsonElement capabilities)
+    private static void AssertAviUtl212Compatibility(JsonElement capabilities)
     {
         JsonElement data = capabilities.GetProperty("data");
         JsonElement versions = data.GetProperty("versions");
@@ -1034,7 +1034,7 @@ public sealed class RealReadPreviewDiagnosticTests
                 out uint aviUtlVersion),
             $"AviUtl2 version was not numeric: {aviUtlVersionText}");
         Assert.IsGreaterThanOrEqualTo(MINIMUM_TESTED_AVIUTL_VERSION, aviUtlVersion);
-        Assert.AreEqual("2003300", versions.GetProperty("sdk").GetString());
+        Assert.AreEqual("2010200", versions.GetProperty("sdk").GetString());
 
         JsonElement[] operations = data.GetProperty("operations").EnumerateArray().ToArray();
         Assert.AreEqual(29, operations.Length);

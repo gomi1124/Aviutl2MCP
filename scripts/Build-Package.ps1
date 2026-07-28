@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = "0.1.0",
+    [string]$Version = "",
 
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
@@ -151,6 +150,23 @@ function Get-CMakePath {
 }
 
 $repositoryRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
+$versionPath = Join-Path $repositoryRoot "VERSION"
+if (-not (Test-Path -LiteralPath $versionPath -PathType Leaf)) {
+    throw "Canonical VERSION file is missing: $versionPath"
+}
+$canonicalVersion = [IO.File]::ReadAllText($versionPath).Trim()
+if ($canonicalVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+    throw "Canonical VERSION is not a valid semantic version: $canonicalVersion"
+}
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = $canonicalVersion
+}
+elseif ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+    throw "Version is not a valid semantic version: $Version"
+}
+elseif ($Version -ne $canonicalVersion) {
+    throw "Requested version $Version does not match canonical VERSION $canonicalVersion."
+}
 $resolvedOutput = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     Join-Path $repositoryRoot "artifacts\release"
 }

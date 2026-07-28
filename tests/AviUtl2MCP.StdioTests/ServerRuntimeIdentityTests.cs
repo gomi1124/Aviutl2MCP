@@ -10,6 +10,19 @@ public sealed class ServerRuntimeIdentityTests
     private const string COMPATIBILITY_INSTANCE_VARIABLE = "AVIUTL2_MCP_INSTANCE_ID";
 
     [TestMethod]
+    public void RuntimeIdentityUsesCanonicalProductVersion()
+    {
+        // Arrange
+        const string expectedVersion = "0.1.1";
+
+        // Act
+        string actualVersion = new ServerRuntimeIdentity().ServerVersion;
+
+        // Assert
+        Assert.AreEqual(expectedVersion, actualVersion);
+    }
+
+    [TestMethod]
     public void RuntimeIdentityUsesDocumentedInstanceVariable()
     {
         // Arrange

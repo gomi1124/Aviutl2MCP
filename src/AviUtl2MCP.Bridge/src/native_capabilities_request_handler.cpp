@@ -6,6 +6,7 @@
 #include "aviutl2_mcp/native_operation_result.h"
 #include "aviutl2_mcp/psd_contract.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
+#include "aviutl2_mcp/version.h"
 
 #include <Windows.h>
 
@@ -214,12 +215,14 @@ operation_result native_capabilities_request_handler::execute(
         const nlohmann::json result = {
             {"operations", std::move(operations)},
             {"versions", {
-                {"server", "0.1.0"},
+                {"server", PRODUCT_VERSION},
                 {"schema", "1.0.0"},
                 {"protocol", "1.0"},
-                {"bridge", "0.1.0"},
+                {"bridge", PRODUCT_VERSION},
                 {"aviutl", host_version_},
-                {"sdk", status.is_sdk_ready ? nlohmann::json("2003300") : nlohmann::json(nullptr)},
+                {"sdk", status.is_sdk_ready
+                    ? nlohmann::json(MINIMUM_AVIUTL_VERSION_TEXT)
+                    : nlohmann::json(nullptr)},
                 {"psdToolKit", psd.psdtoolkit_version.has_value()
                     ? nlohmann::json(*psd.psdtoolkit_version)
                     : nlohmann::json(nullptr)},

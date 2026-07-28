@@ -121,11 +121,15 @@ jobs:
           global-json-file: global.json
           cache: true
           cache-dependency-path: "**/packages*.lock.json"
+      - name: Read release version
+        id: release-version
+        shell: powershell
+        run: '"value=$((Get-Content -LiteralPath VERSION -Raw).Trim())" >> $env:GITHUB_OUTPUT'
       - name: Build release packages
         shell: powershell
-        run: ./scripts/Build-Package.ps1 -Configuration Release -Version 0.1.0
+        run: ./scripts/Build-Package.ps1 -Configuration Release
       - uses: actions/upload-artifact@v7
         with:
-          name: AviUtl2MCP-0.1.0
+          name: AviUtl2MCP-${{ steps.release-version.outputs.value }}
           path: artifacts/release
           if-no-files-found: error

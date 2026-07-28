@@ -3,7 +3,7 @@
 ## 1. 前提
 
 - Windows x64
-- AviUtl ExEdit2 2.1.1以降（実機確認済み基準版）
+- AviUtl ExEdit2 2.1.2以降（実機確認済み基準版）
 - PSDToolKit2 2.0.0alpha10互換profile
 - GCMZDrops API v3
 

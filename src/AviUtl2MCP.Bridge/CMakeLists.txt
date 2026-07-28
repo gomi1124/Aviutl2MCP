@@ -41,6 +41,7 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
 target_include_directories(AviUtl2MCP.Bridge.Core
   PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${AVIUTL2_MCP_GENERATED_INCLUDE_DIRECTORY}"
 )
 
 target_include_directories(AviUtl2MCP.Bridge.Core SYSTEM

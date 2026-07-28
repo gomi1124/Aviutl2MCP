@@ -1,6 +1,7 @@
 #include "aviutl2_mcp/handshake.h"
 
 #include "aviutl2_mcp/ipc_header.h"
+#include "aviutl2_mcp/version.h"
 
 #include <nlohmann/json.hpp>
 
@@ -147,7 +148,10 @@ std::string handshake_handler::create_server_hello_json(
         {"aviutlProcessId", identity_.process_id},
         {"aviutlProcessCreationTime", identity_.process_creation_time},
         {"protocol", {{"major", 1U}, {"minor", 0U}}},
-        {"versions", {{"bridge", "0.1.0"}, {"sdk", "2"}, {"aviutl", host_version_}}},
+        {"versions", {
+            {"bridge", PRODUCT_VERSION},
+            {"sdk", MINIMUM_AVIUTL_VERSION_TEXT},
+            {"aviutl", host_version_}}},
         {"limits", {
             {"jsonBytes", result.limits.json_bytes},
             {"binaryBytes", result.limits.binary_bytes},

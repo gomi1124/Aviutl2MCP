@@ -2,6 +2,7 @@
 #include "aviutl2_mcp/bridge_runtime.h"
 #include "aviutl2_mcp/native_ring_logger.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
+#include "aviutl2_mcp/version.h"
 
 #include <Windows.h>
 
@@ -24,13 +25,13 @@ namespace {
 
 COMMON_PLUGIN_TABLE PLUGIN_TABLE{
     L"AviUtl2 MCP Bridge",
-    L"AviUtl2 MCP Bridge version 0.1.0",
+    aviutl2_mcp::BRIDGE_INFORMATION,
 };
 
 }  // namespace
 
 AVIUTL2_MCP_EXPORT DWORD RequiredVersion() noexcept {
-    return 2003300U;
+    return aviutl2_mcp::MINIMUM_AVIUTL_VERSION;
 }
 
 AVIUTL2_MCP_EXPORT void InitializeLogger(LOG_HANDLE* logger) noexcept {
