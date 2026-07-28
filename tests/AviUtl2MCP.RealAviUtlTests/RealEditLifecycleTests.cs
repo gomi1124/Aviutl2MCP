@@ -10,6 +10,7 @@ using AviUtl2MCP.BridgeClient.Gateways;
 namespace AviUtl2MCP.RealAviUtlTests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class RealEditLifecycleTests
 {
     private static readonly string[] EXPECTED_BATCH_OPERATION_IDS =
