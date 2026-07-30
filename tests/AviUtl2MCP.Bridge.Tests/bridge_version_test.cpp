@@ -347,6 +347,7 @@ struct fake_sdk_state final {
         std::string alias;
         std::wstring name;
         std::wstring effect_name;
+        std::vector<int> section_frames;
     };
 
     HOST_APP_TABLE host{};
@@ -361,6 +362,8 @@ struct fake_sdk_state final {
     int second_object = 2;
     OBJECT_LAYER_FRAME first_position{.layer = 1, .start = 9, .end = 19};
     OBJECT_LAYER_FRAME second_position{.layer = 3, .start = 20, .end = 29};
+    std::vector<int> first_section_frames{9};
+    std::vector<int> second_section_frames{20};
     bool is_first_deleted = false;
     bool is_second_deleted = false;
     int first_effect = 3;
@@ -605,6 +608,33 @@ void wait_fake_rendering_task() {
         return created->position;
     }
     return {.layer = -1, .start = -1, .end = -1};
+}
+
+[[nodiscard]] std::vector<int>* get_fake_section_frames(const OBJECT_HANDLE object) {
+    if (object == &ACTIVE_FAKE_SDK->first_object && !ACTIVE_FAKE_SDK->is_first_deleted) {
+        return &ACTIVE_FAKE_SDK->first_section_frames;
+    }
+    if (object == &ACTIVE_FAKE_SDK->second_object && !ACTIVE_FAKE_SDK->is_second_deleted) {
+        return &ACTIVE_FAKE_SDK->second_section_frames;
+    }
+    if (fake_sdk_state::created_object* created = find_created_object(object)) {
+        return &created->section_frames;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] int get_fake_object_section_count(const OBJECT_HANDLE object) {
+    const std::vector<int>* frames = get_fake_section_frames(object);
+    return frames == nullptr ? 0 : static_cast<int>(frames->size());
+}
+
+[[nodiscard]] int get_fake_object_section_frame(const OBJECT_HANDLE object, const int section) {
+    const std::vector<int>* frames = get_fake_section_frames(object);
+    if (frames == nullptr || section < 0
+        || static_cast<std::size_t>(section) >= frames->size()) {
+        return -1;
+    }
+    return frames->at(static_cast<std::size_t>(section));
 }
 
 [[nodiscard]] LPCWSTR get_fake_scene_name() {
@@ -1026,6 +1056,7 @@ void set_fake_select_range(const int start, const int end) {
     object.alias = std::move(alias);
     object.name.clear();
     object.effect_name.clear();
+    object.section_frames = {frame};
     return &object;
 }
 
@@ -1131,8 +1162,64 @@ void set_fake_object_name(const OBJECT_HANDLE object, const LPCWSTR name) {
     if (position == nullptr) {
         return false;
     }
+    std::vector<int>* section_frames = get_fake_section_frames(object);
+    if (section_frames == nullptr) {
+        return false;
+    }
+    const int frame_delta = frame - position->start;
+    for (int& section_frame : *section_frames) {
+        section_frame += frame_delta;
+    }
     const int length = position->end - position->start + 1;
     *position = {.layer = layer, .start = frame, .end = frame + length - 1};
+    return true;
+}
+
+[[nodiscard]] bool create_fake_object_section(const OBJECT_HANDLE object, const int frame) {
+    const OBJECT_LAYER_FRAME position = get_fake_object_position(object);
+    std::vector<int>* frames = get_fake_section_frames(object);
+    if (frames == nullptr || frame <= position.start || frame > position.end) {
+        return false;
+    }
+    const auto insertion = std::ranges::lower_bound(*frames, frame);
+    if (insertion != frames->end() && *insertion == frame) {
+        return false;
+    }
+    frames->insert(insertion, frame);
+    return true;
+}
+
+[[nodiscard]] bool delete_fake_object_section(
+    const OBJECT_HANDLE object,
+    const int section) {
+    std::vector<int>* frames = get_fake_section_frames(object);
+    if (frames == nullptr || section < 1
+        || static_cast<std::size_t>(section) >= frames->size()) {
+        return false;
+    }
+    frames->erase(frames->begin() + section);
+    return true;
+}
+
+[[nodiscard]] bool move_fake_object_section(
+    const OBJECT_HANDLE object,
+    const int section,
+    const int frame) {
+    const OBJECT_LAYER_FRAME position = get_fake_object_position(object);
+    std::vector<int>* frames = get_fake_section_frames(object);
+    if (frames == nullptr || section < 1
+        || static_cast<std::size_t>(section) >= frames->size()) {
+        return false;
+    }
+    const std::size_t index = static_cast<std::size_t>(section);
+    const int previous = frames->at(index - 1U);
+    const int next = index + 1U < frames->size()
+        ? frames->at(index + 1U)
+        : position.end + 1;
+    if (frame <= previous || frame >= next) {
+        return false;
+    }
+    frames->at(index) = frame;
     return true;
 }
 
@@ -1201,6 +1288,8 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_section.get_selected_object_num = &get_fake_selected_object_count;
     state.edit_section.get_selected_object = &get_fake_selected_object;
     state.edit_section.get_object_layer_frame = &get_fake_object_position;
+    state.edit_section.get_object_section_num = &get_fake_object_section_count;
+    state.edit_section.get_object_section_frame = &get_fake_object_section_frame;
     state.edit_section.get_object_name = &get_fake_object_name;
     state.edit_section.get_layer_name = &get_fake_layer_name;
     state.edit_section.get_layer_enable = &get_fake_layer_enable;
@@ -1227,6 +1316,9 @@ void configure_fake_sdk(fake_sdk_state& state) {
     state.edit_section.set_select_range = &set_fake_select_range;
     state.edit_section.move_object = &move_fake_object;
     state.edit_section.delete_object = &delete_fake_object;
+    state.edit_section.create_object_section = &create_fake_object_section;
+    state.edit_section.delete_object_section = &delete_fake_object_section;
+    state.edit_section.move_object_section = &move_fake_object_section;
     state.project_file.get_project_file_path = &get_fake_project_path;
     state.host.create_edit_handle = &create_fake_edit_handle;
     state.host.register_project_load_handler = &register_fake_project_load_handler;
@@ -1238,7 +1330,7 @@ void test_bridge_version() {
         aviutl2_mcp::get_bridge_abi_version() == aviutl2_mcp::BRIDGE_ABI_VERSION,
         "bridge ABI version mismatch");
     require(
-        std::string_view(aviutl2_mcp::PRODUCT_VERSION) == "0.1.1",
+        std::string_view(aviutl2_mcp::PRODUCT_VERSION) == "0.2.0",
         "bridge product version did not match VERSION");
     require(
         aviutl2_mcp::MINIMUM_AVIUTL_VERSION == 2010200U,
@@ -2562,7 +2654,7 @@ void test_native_query_request_handlers() {
         identity.instance_id).get()));
     require(capabilities.at("ok").get<bool>(), "native capabilities query failed");
     const nlohmann::json& operations = capabilities.at("result").at("operations");
-    require(operations.size() == 29U, "native capabilities query did not return all 29 operations");
+    require(operations.size() == 32U, "native capabilities query did not return all 32 operations");
     const auto find_operation = [&operations](const std::string& name) -> const nlohmann::json& {
         const auto match = std::ranges::find_if(operations, [&name](const nlohmann::json& operation) {
             return operation.at("name") == name;
@@ -3062,6 +3154,12 @@ void test_native_object_edit_request_handlers() {
         identity, facade, "object.delete", aviutl2_mcp::sdk_object_edit_kind::delete_object));
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_object_edit_request_handler>(
         identity, facade, "object.setName", aviutl2_mcp::sdk_object_edit_kind::set_name));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_object_edit_request_handler>(
+        identity, facade, "object.createSection", aviutl2_mcp::sdk_object_edit_kind::create_section));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_object_edit_request_handler>(
+        identity, facade, "object.deleteSection", aviutl2_mcp::sdk_object_edit_kind::delete_section));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_object_edit_request_handler>(
+        identity, facade, "object.moveSection", aviutl2_mcp::sdk_object_edit_kind::move_section));
     const std::string project_generation = dispatcher.revisions().project_generation();
     const std::string correlation_id = aviutl2_mcp::create_bridge_identity().instance_id;
     const aviutl2_mcp::sdk_timeline_query_result timeline = facade.query_timeline(
@@ -3162,6 +3260,82 @@ void test_native_object_edit_request_handlers() {
             && locked_delete.at("error").at("code") == "edit_not_available",
         "native object delete accepted a locked source layer");
 
+    const std::string create_section_params = nlohmann::json{
+        {"locator", moved_locator},
+        {"frame", 35},
+    }.dump();
+    const nlohmann::json dry_created_section = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 181U),
+            "object.createSection",
+            correlation_id,
+            create_section_params,
+            moved_revision,
+            true),
+        identity.instance_id).get()));
+    require(dry_created_section.at("ok").get<bool>()
+            && dry_created_section.at("result").contains("plannedChanges")
+            && fake.first_section_frames == std::vector<int>{30}
+            && dispatcher.revisions().content_revision() == moved_revision,
+        "native object section dry-run changed SDK or revision state");
+
+    const nlohmann::json created_section = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 182U),
+            "object.createSection",
+            correlation_id,
+            create_section_params,
+            moved_revision),
+        identity.instance_id).get()));
+    require(created_section.at("ok").get<bool>()
+            && created_section.at("result").at("object").at("sections").size() == 2U
+            && created_section.at("result").at("object").at("sections").at(1).at("index") == 1
+            && created_section.at("result").at("object").at("sections").at(1).at("startFrame") == 35
+            && fake.first_section_frames == std::vector<int>({30, 34}),
+        "native object section creation did not return the updated sections");
+
+    const std::string created_section_revision =
+        created_section.at("revision").get<std::string>();
+    const std::string move_section_params = nlohmann::json{
+        {"locator", moved_locator},
+        {"section", 1},
+        {"frame", 36},
+    }.dump();
+    const nlohmann::json moved_section = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 183U),
+            "object.moveSection",
+            correlation_id,
+            move_section_params,
+            created_section_revision),
+        identity.instance_id).get()));
+    require(moved_section.at("ok").get<bool>()
+            && moved_section.at("result").at("object").at("sections").at(1).at("startFrame") == 36
+            && fake.first_section_frames == std::vector<int>({30, 35}),
+        "native object section move did not update the section frame");
+
+    const std::string moved_section_revision =
+        moved_section.at("revision").get<std::string>();
+    const std::string delete_section_params = nlohmann::json{
+        {"locator", moved_locator},
+        {"section", 1},
+    }.dump();
+    const nlohmann::json deleted_section = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 184U),
+            "object.deleteSection",
+            correlation_id,
+            delete_section_params,
+            moved_section_revision),
+        identity.instance_id).get()));
+    require(deleted_section.at("ok").get<bool>()
+            && deleted_section.at("result").at("object").at("sections").size() == 1U
+            && deleted_section.at("result").at("object").at("sections").at(0).at("startFrame") == 31
+            && fake.first_section_frames == std::vector<int>{30},
+        "native object section deletion did not preserve the first section");
+    const std::string deleted_section_revision =
+        deleted_section.at("revision").get<std::string>();
+
     const std::string name_params = nlohmann::json{
         {"locator", moved_locator},
         {"name", "Renamed voice"},
@@ -3172,7 +3346,7 @@ void test_native_object_edit_request_handlers() {
             "object.setName",
             correlation_id,
             name_params,
-            moved_revision),
+            deleted_section_revision),
         identity.instance_id).get()));
     require(renamed.at("ok").get<bool>()
             && renamed.at("result").at("object").at("name") == "Renamed voice"
@@ -3602,6 +3776,31 @@ void test_native_batch_request_handler() {
                 }},
             },
             nlohmann::json{
+                {"op", "createObjectSection"},
+                {"clientOperationId", "create-section"},
+                {"args", {
+                    {"locator", locator_json},
+                    {"frame", 35},
+                }},
+            },
+            nlohmann::json{
+                {"op", "moveObjectSection"},
+                {"clientOperationId", "move-section"},
+                {"args", {
+                    {"locator", locator_json},
+                    {"section", 1},
+                    {"frame", 36},
+                }},
+            },
+            nlohmann::json{
+                {"op", "deleteObjectSection"},
+                {"clientOperationId", "delete-section"},
+                {"args", {
+                    {"locator", locator_json},
+                    {"section", 1},
+                }},
+            },
+            nlohmann::json{
                 {"op", "setEffectItem"},
                 {"clientOperationId", "volume"},
                 {"args", {
@@ -3642,12 +3841,13 @@ void test_native_batch_request_handler() {
             true),
         identity.instance_id).get()));
     require(dry_run.at("ok").get<bool>()
-            && dry_run.at("result").at("results").size() == 5U
+            && dry_run.at("result").at("results").size() == 8U
             && dry_run.at("result").at("results").at(0).at("status") == "planned"
             && dry_run.at("result").at("appliedOperationIds").empty()
             && fake.edit_section_count == edit_count_before_dry_run
             && fake.first_name == L"Voice"
             && fake.first_position.layer == 1
+            && fake.first_section_frames == std::vector<int>{9}
             && fake.first_effect_volume == "42"
             && fake.created_object_count == 0U
             && dispatcher.revisions().content_revision() == initial_revision,
@@ -3665,18 +3865,19 @@ void test_native_batch_request_handler() {
         batch_frame,
         identity.instance_id).get()));
     require(committed.at("ok").get<bool>()
-            && committed.at("result").at("results").size() == 5U
-            && committed.at("result").at("appliedOperationIds").size() == 5U
+            && committed.at("result").at("results").size() == 8U
+            && committed.at("result").at("appliedOperationIds").size() == 8U
             && !committed.at("result").at("undoRecommended").get<bool>()
             && fake.edit_section_count == edit_count_before_commit + 1
             && fake.first_name == L"Batch Voice"
             && fake.first_position.layer == 2
             && fake.first_position.start == 30
+            && fake.first_section_frames == std::vector<int>{30}
             && fake.first_effect_volume == "88"
             && fake.layer_names[1] == L"Batch Layer"
             && fake.created_object_count == 1U
             && committed.at("revision") != initial_revision,
-        "native batch did not apply five operations in one SDK edit section");
+        "native batch did not apply eight operations in one SDK edit section");
     const int edit_count_after_commit = fake.edit_section_count;
     const nlohmann::json replayed = nlohmann::json::parse(get_json(dispatcher.dispatch(
         batch_frame,
@@ -4497,6 +4698,7 @@ void test_native_psd_create_request_handler() {
         fake.has_psd_file_object = true;
         fake.psd_effect_file = psd_path.string();
         fake.second_position = {.layer = 5, .start = 49, .end = 148};
+        fake.second_section_frames = {49};
         fake.second_alias =
             "[Object]\r\n"
             "[Object.0]\r\n"
@@ -4573,6 +4775,7 @@ void test_native_psd_create_request_handler() {
     };
 
     fake.second_position = {.layer = 5, .start = 49, .end = 59};
+    fake.second_section_frames = {49};
     const nlohmann::json collision = nlohmann::json::parse(get_json(dispatcher.dispatch(
         create_request_frame(
             create_uuid_v7_bytes(std::chrono::system_clock::now(), 131U),
@@ -4588,6 +4791,7 @@ void test_native_psd_create_request_handler() {
             && gcmz->send_count == 0,
         "PSD create contacted GCMZDrops despite a placement collision");
     fake.second_position = {.layer = 3, .start = 20, .end = 29};
+    fake.second_section_frames = {20};
 
     const nlohmann::json created = nlohmann::json::parse(get_json(dispatcher.dispatch(
         create_request_frame(
@@ -4630,6 +4834,7 @@ void test_native_psd_create_request_handler() {
     const std::string verified_revision = dispatcher.revisions().content_revision();
     fake.has_psd_file_object = false;
     fake.second_position = {.layer = 3, .start = 20, .end = 29};
+    fake.second_section_frames = {20};
     fake.second_alias = "[Object]\r\ntext=hello\r\n";
     gcmz->on_send = {};
     const nlohmann::json partial = nlohmann::json::parse(get_json(dispatcher.dispatch(
@@ -4744,6 +4949,8 @@ void test_native_psd_voice_request_handler() {
         fake.psd_voice_audio = audio_path.string();
         fake.first_position = {.layer = 4, .start = 49, .end = 58};
         fake.second_position = {.layer = 5, .start = 49, .end = 58};
+        fake.first_section_frames = {49};
+        fake.second_section_frames = {49};
         fake.first_alias = "[Object]\r\neffect.name=Audio File\r\n";
         fake.second_alias =
             "[Object]\r\neffect.name=セリフ準備@PSDToolKit\r\n";
@@ -4888,6 +5095,8 @@ void test_native_psd_voice_request_handler() {
         fake.psd_voice_audio = audio_path.string();
         fake.first_position = {.layer = 7, .start = 79, .end = 88};
         fake.second_position = {.layer = 8, .start = 79, .end = 88};
+        fake.first_section_frames = {79};
+        fake.second_section_frames = {79};
     };
     nlohmann::json direct_parameters = intermediate_parameters;
     direct_parameters["characterId"] = "bob";

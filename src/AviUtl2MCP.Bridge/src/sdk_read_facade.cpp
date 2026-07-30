@@ -494,6 +494,27 @@ void copy_effect_item(void* raw_context, const LPCWSTR name, const int type) noe
     if (!include_effects) {
         effects.clear();
     }
+    std::vector<int> section_frames;
+    if (edit.get_object_section_num == nullptr || edit.get_object_section_frame == nullptr) {
+        throw std::runtime_error("SDK object section query is unavailable");
+    }
+    const int section_count = edit.get_object_section_num(object);
+    if (section_count < 1) {
+        throw std::runtime_error("SDK object section count was invalid");
+    }
+    section_frames.reserve(static_cast<std::size_t>(section_count));
+    int previous_frame = -1;
+    for (int section = 0; section < section_count; ++section) {
+        const int frame = edit.get_object_section_frame(object, section);
+        if (frame < position.start || frame > position.end || frame <= previous_frame) {
+            throw std::runtime_error("SDK object section frame was invalid");
+        }
+        section_frames.push_back(frame + 1);
+        previous_frame = frame;
+    }
+    if (section_frames.front() != position.start + 1) {
+        throw std::runtime_error("SDK first object section did not start with the object");
+    }
     return sdk_object_snapshot{
         .candidate = object_candidate{
             .scene_id = info.scene_id,
@@ -506,6 +527,7 @@ void copy_effect_item(void* raw_context, const LPCWSTR name, const int type) noe
         },
         .is_selected = is_selected_object(object, selected_objects),
         .media_path = find_media_path(alias),
+        .section_frames = std::move(section_frames),
         .effects = std::move(effects),
     };
 }
@@ -1451,6 +1473,64 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
                 return;
             }
             is_noop = before.candidate.name == *request.name;
+        } else if (request.kind == sdk_object_edit_kind::create_section) {
+            if (!request.section_frame.has_value()
+                || *request.section_frame <= before.candidate.start_frame
+                || *request.section_frame > before.candidate.end_frame) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message =
+                    "The section frame must be inside the object after its start";
+                return;
+            }
+            is_noop = std::ranges::find(
+                before.section_frames,
+                *request.section_frame) != before.section_frames.end();
+            if (!is_noop && edit->create_object_section == nullptr) {
+                context->result->error_code = "sdk_not_available";
+                context->result->error_message = "SDK object section creation is unavailable";
+                return;
+            }
+        } else if (request.kind == sdk_object_edit_kind::delete_section) {
+            if (!request.section_index.has_value()
+                || *request.section_index < 1
+                || static_cast<std::size_t>(*request.section_index)
+                    >= before.section_frames.size()) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message = "The section index does not identify a middle point";
+                return;
+            }
+            if (edit->delete_object_section == nullptr) {
+                context->result->error_code = "sdk_not_available";
+                context->result->error_message = "SDK object section deletion is unavailable";
+                return;
+            }
+        } else if (request.kind == sdk_object_edit_kind::move_section) {
+            if (!request.section_index.has_value() || !request.section_frame.has_value()
+                || *request.section_index < 1
+                || static_cast<std::size_t>(*request.section_index)
+                    >= before.section_frames.size()) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message = "The section move parameters are invalid";
+                return;
+            }
+            const std::size_t section = static_cast<std::size_t>(*request.section_index);
+            const int previous_frame = before.section_frames[section - 1U];
+            const int next_frame = section + 1U < before.section_frames.size()
+                ? before.section_frames[section + 1U]
+                : before.candidate.end_frame + 1;
+            if (*request.section_frame <= previous_frame
+                || *request.section_frame >= next_frame) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message =
+                    "The section move cannot cross an adjacent section or object boundary";
+                return;
+            }
+            is_noop = before.section_frames[section] == *request.section_frame;
+            if (!is_noop && edit->move_object_section == nullptr) {
+                context->result->error_code = "sdk_not_available";
+                context->result->error_message = "SDK object section movement is unavailable";
+                return;
+            }
         }
         if (context->dry_run || is_noop) {
             context->result->ok = true;
@@ -1484,6 +1564,30 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
                 edit->set_object_name(object, wide_name.c_str());
                 break;
             }
+            case sdk_object_edit_kind::create_section:
+                if (!edit->create_object_section(object, *request.section_frame - 1)) {
+                    context->result->error_code = "invalid_argument";
+                    context->result->error_message = "AviUtl2 rejected the object section creation";
+                    return;
+                }
+                break;
+            case sdk_object_edit_kind::delete_section:
+                if (!edit->delete_object_section(object, *request.section_index)) {
+                    context->result->error_code = "invalid_argument";
+                    context->result->error_message = "AviUtl2 rejected the object section deletion";
+                    return;
+                }
+                break;
+            case sdk_object_edit_kind::move_section:
+                if (!edit->move_object_section(
+                        object,
+                        *request.section_index,
+                        *request.section_frame - 1)) {
+                    context->result->error_code = "invalid_argument";
+                    context->result->error_message = "AviUtl2 rejected the object section move";
+                    return;
+                }
+                break;
         }
         context->result->has_changed = true;
         if (request.kind == sdk_object_edit_kind::delete_object) {
@@ -1498,6 +1602,26 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
                 after_position,
                 selected_objects,
                 true);
+            const sdk_object_snapshot& after = *context->result->object;
+            if (request.kind == sdk_object_edit_kind::create_section
+                && (after.section_frames.size() != before.section_frames.size() + 1U
+                    || std::ranges::find(after.section_frames, *request.section_frame)
+                        == after.section_frames.end())) {
+                throw std::runtime_error(
+                    "SDK object section creation did not satisfy the postcondition");
+            }
+            if (request.kind == sdk_object_edit_kind::delete_section
+                && after.section_frames.size() + 1U != before.section_frames.size()) {
+                throw std::runtime_error(
+                    "SDK object section deletion did not satisfy the postcondition");
+            }
+            if (request.kind == sdk_object_edit_kind::move_section
+                && (after.section_frames.size() != before.section_frames.size()
+                    || after.section_frames[static_cast<std::size_t>(*request.section_index)]
+                        != *request.section_frame)) {
+                throw std::runtime_error(
+                    "SDK object section movement did not satisfy the postcondition");
+            }
         }
         context->result->ok = true;
     } catch (const std::invalid_argument& exception) {
@@ -1894,6 +2018,7 @@ struct batch_planned_object final {
     OBJECT_LAYER_FRAME position;
     bool is_deleted = false;
     std::optional<std::string> name;
+    std::vector<int> section_frames;
 };
 
 struct batch_planned_effect final {
@@ -2140,6 +2265,10 @@ void fail_batch(
     } else {
         planned->name = before.candidate.name;
     }
+    if (planned->section_frames.empty()) {
+        planned->section_frames = before.section_frames;
+    }
+    before.section_frames = planned->section_frames;
 
     if (request.kind == sdk_object_edit_kind::move) {
         if (!request.destination_scene_id.has_value()
@@ -2177,6 +2306,10 @@ void fail_batch(
             return create_batch_failure<sdk_object_edit_result>(
                 "sdk_not_available", "SDK object movement is unavailable");
         }
+        const int frame_delta = destination_start - planned->position.start;
+        for (int& section_frame : planned->section_frames) {
+            section_frame += frame_delta;
+        }
         planned->position = {
             .layer = destination_layer,
             .start = destination_start,
@@ -2188,7 +2321,7 @@ void fail_batch(
                 "sdk_not_available", "SDK object deletion is unavailable");
         }
         planned->is_deleted = true;
-    } else {
+    } else if (request.kind == sdk_object_edit_kind::set_name) {
         if (!request.name.has_value()) {
             return create_batch_failure<sdk_object_edit_result>(
                 "invalid_argument", "The batch object name is required");
@@ -2198,6 +2331,62 @@ void fail_batch(
                 "sdk_not_available", "SDK object naming is unavailable");
         }
         planned->name = *request.name;
+    } else if (request.kind == sdk_object_edit_kind::create_section) {
+        if (!request.section_frame.has_value()
+            || *request.section_frame <= before.candidate.start_frame
+            || *request.section_frame > before.candidate.end_frame) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument",
+                "The batch section frame must be inside the object after its start");
+        }
+        const auto position = std::ranges::lower_bound(
+            planned->section_frames,
+            *request.section_frame);
+        if (position == planned->section_frames.end() || *position != *request.section_frame) {
+            if (edit.create_object_section == nullptr) {
+                return create_batch_failure<sdk_object_edit_result>(
+                    "sdk_not_available", "SDK object section creation is unavailable");
+            }
+            planned->section_frames.insert(position, *request.section_frame);
+        }
+    } else if (request.kind == sdk_object_edit_kind::delete_section) {
+        if (!request.section_index.has_value() || *request.section_index < 1
+            || static_cast<std::size_t>(*request.section_index)
+                >= planned->section_frames.size()) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument",
+                "The batch section index does not identify a middle point");
+        }
+        if (edit.delete_object_section == nullptr) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "sdk_not_available", "SDK object section deletion is unavailable");
+        }
+        planned->section_frames.erase(
+            planned->section_frames.begin() + *request.section_index);
+    } else {
+        if (!request.section_index.has_value() || !request.section_frame.has_value()
+            || *request.section_index < 1
+            || static_cast<std::size_t>(*request.section_index)
+                >= planned->section_frames.size()) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument", "The batch section move parameters are invalid");
+        }
+        const std::size_t section = static_cast<std::size_t>(*request.section_index);
+        const int previous_frame = planned->section_frames[section - 1U];
+        const int next_frame = section + 1U < planned->section_frames.size()
+            ? planned->section_frames[section + 1U]
+            : before.candidate.end_frame + 1;
+        if (*request.section_frame <= previous_frame || *request.section_frame >= next_frame) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument",
+                "The batch section move cannot cross an adjacent section or object boundary");
+        }
+        if (*request.section_frame != planned->section_frames[section]
+            && edit.move_object_section == nullptr) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "sdk_not_available", "SDK object section movement is unavailable");
+        }
+        planned->section_frames[section] = *request.section_frame;
     }
     return create_batch_operation_result(sdk_object_edit_result{
         .ok = true,
@@ -3806,7 +3995,14 @@ sdk_object_edit_result sdk_read_facade::edit_object(
                 || *request.destination_layer < 1
                 || *request.destination_start_frame < 1))
         || (request.kind == sdk_object_edit_kind::set_name
-            && (!request.name.has_value() || request.name->find('\0') != std::string::npos))) {
+            && (!request.name.has_value() || request.name->find('\0') != std::string::npos))
+        || (request.kind == sdk_object_edit_kind::create_section
+            && (!request.section_frame.has_value() || *request.section_frame < 1))
+        || (request.kind == sdk_object_edit_kind::delete_section
+            && (!request.section_index.has_value() || *request.section_index < 1))
+        || (request.kind == sdk_object_edit_kind::move_section
+            && (!request.section_index.has_value() || *request.section_index < 1
+                || !request.section_frame.has_value() || *request.section_frame < 1))) {
         return {
             .ok = false,
             .error_code = "invalid_argument",
@@ -4248,7 +4444,15 @@ sdk_batch_edit_result sdk_read_facade::edit_batch(
                         || *object->destination_start_frame < 1))
                 || (object->kind == sdk_object_edit_kind::set_name
                     && (!object->name.has_value()
-                        || object->name->find('\0') != std::string::npos))) {
+                        || object->name->find('\0') != std::string::npos))
+                || (object->kind == sdk_object_edit_kind::create_section
+                    && (!object->section_frame.has_value() || *object->section_frame < 1))
+                || (object->kind == sdk_object_edit_kind::delete_section
+                    && (!object->section_index.has_value() || *object->section_index < 1))
+                || (object->kind == sdk_object_edit_kind::move_section
+                    && (!object->section_index.has_value() || *object->section_index < 1
+                        || !object->section_frame.has_value()
+                        || *object->section_frame < 1))) {
                 return {.ok = false, .error_code = "invalid_argument",
                     .error_message = "Batch object edit parameters are invalid"};
             }

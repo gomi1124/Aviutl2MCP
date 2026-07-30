@@ -78,6 +78,39 @@ public sealed class AviUtlEditServiceTests
     }
 
     [TestMethod]
+    public async Task CreateObjectSectionPassesFrameAndLocator()
+    {
+        // Arrange
+        ObjectLocator locator = CreateLocator();
+        StubResolver resolver = new(CreateInstance());
+        CapturingEditGateway gateway = new(CreateSuccess(new UpdatedObjectData
+        {
+            PlannedChanges = [new Change("createObjectSection", "object")],
+        }));
+        AviUtlEditService service = new(resolver, gateway);
+        CreateObjectSectionInput input = new()
+        {
+            ExpectedRevision = EXPECTED_REVISION,
+            Locator = locator,
+            Frame = 15,
+            DryRun = true,
+        };
+        using RequestContext context = CreateContext();
+
+        // Act
+        QueryExecutionResult<UpdatedObjectData> result =
+            await service.CreateObjectSectionAsync(input, context);
+
+        // Assert
+        Assert.IsTrue(result.Result.IsSuccess);
+        Assert.AreEqual(locator, resolver.Locators.Single());
+        Assert.AreEqual("object.createSection", gateway.Operation);
+        CreateObjectSectionArgs args =
+            Assert.IsInstanceOfType<CreateObjectSectionArgs>(gateway.Parameters);
+        Assert.AreEqual(15, args.Frame);
+    }
+
+    [TestMethod]
     public async Task GatewayErrorPreservesRevisionAndDetails()
     {
         // Arrange

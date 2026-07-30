@@ -41,6 +41,9 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 | `aviutl_move_object` | 直接 | `move_object` | 編集セクション内で再解決し、移動先衝突を再確認する |
 | `aviutl_delete_object` | 直接 | `delete_object` | dry-run、リビジョン、対象再解決を必須にする |
 | `aviutl_set_object_name` | 直接 | `set_object_name` | UTF-16変換後の長さと空文字の既定名称化を扱う |
+| `aviutl_create_object_section` | 直接 | `create_object_section`、`get_object_section_num`、`get_object_section_frame` | object先頭と重複せず、object範囲内のframeだけを許可する |
+| `aviutl_delete_object_section` | 直接 | `delete_object_section`、`get_object_section_num` | 0番区間はobject先頭なので削除せず、1以上の既存indexだけを許可する |
+| `aviutl_move_object_section` | 直接 | `move_object_section`、`get_object_section_frame` | 前後の区間開始を跨がないframeだけを許可し、事後状態を再取得する |
 | `aviutl_set_effect_item` | 直接 | `get_effect_item_value`、`set_effect_item_value`、項目別トラック・チェック設定API | 列挙した項目型に応じて入力を検証する |
 | `aviutl_set_effect_state` | 直接 | `set_effect_enable`、`set_effect_lock` | 既存エフェクトだけを対象とし、追加・削除・並べ替えは行わない |
 | `aviutl_set_layer` | 直接 | `set_layer_name`、`set_layer_enable`、`set_layer_lock` | UI表示番号とSDKの0始まり番号を境界で変換する |
@@ -56,7 +59,7 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 | `aviutl_psd_create_voice` | 複合 | WAV/TXT/LAB検証、GCMZDrops外部APIによる直接WAV/TXTまたは中間`.object`投入、`セリフ準備@PSDToolKit`生成、字幕エイリアス作成 | `external_wav_txt_pair`または`external_object_audio_text`が必要。必須character IDを生成後にSDK設定し、各生成物を事後検証する |
 | `aviutl_psd_validate` | 複合 | タイムライン、エイリアス、エフェクト、項目、ファイル対応を読取り、サーバーで規則判定 | 目パチ、2方式の口パク、パーツ上書き、参照ID、初期化順序を個別結果として返す |
 
-結論として、列挙済み29 toolsはV1の実装候補として維持できる。ただし、バッチ編集、PSD投入、音声・字幕生成は完全な原子性を保証できないため、事前検証、相関ID、事後条件検証、部分適用エラーをAPI契約へ含める。
+結論として、列挙済み32 toolsはV1の実装候補として維持できる。ただし、バッチ編集、PSD投入、音声・字幕生成は完全な原子性を保証できないため、事前検証、相関ID、事後条件検証、部分適用エラーをAPI契約へ含める。
 
 ## 5. Resources と Prompts
 
@@ -72,7 +75,7 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 - プロジェクトの新規作成、任意ファイルを開く、別名保存
 - 再生開始、停止
 - 既存オブジェクトへのエフェクト追加、削除、並べ替え
-- オブジェクト分割、長さ変更、区間・キーフレーム編集
+- オブジェクト分割、長さ変更、トラック・キーフレーム編集
 - シーン追加、削除、切替
 - 出力開始、進捗取得、キャンセル
 

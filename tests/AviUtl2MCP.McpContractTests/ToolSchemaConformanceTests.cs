@@ -27,8 +27,8 @@ public sealed class ToolSchemaConformanceTests
         JsonArray tools = catalog["x-tools"]!.AsArray();
 
         // Act and Assert
-        Assert.HasCount(29, fixtures);
-        Assert.HasCount(29, tools);
+        Assert.HasCount(32, fixtures);
+        Assert.HasCount(32, tools);
         foreach (JsonNode? toolNode in tools)
         {
             JsonObject tool = toolNode!.AsObject();
@@ -69,6 +69,9 @@ public sealed class ToolSchemaConformanceTests
             ["aviutl_move_object"] = CreateFixture(typeof(MoveObjectInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"placement":{"sceneId":0,"layer":2,"startFrame":31}}"""),
             ["aviutl_delete_object"] = CreateFixture(typeof(DeleteObjectInput), """{"expectedRevision":"r1","locator":__LOCATOR__}"""),
             ["aviutl_set_object_name"] = CreateFixture(typeof(SetObjectNameInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"name":"renamed"}"""),
+            ["aviutl_create_object_section"] = CreateFixture(typeof(CreateObjectSectionInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"frame":15}"""),
+            ["aviutl_delete_object_section"] = CreateFixture(typeof(DeleteObjectSectionInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"section":1}"""),
+            ["aviutl_move_object_section"] = CreateFixture(typeof(MoveObjectSectionInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"section":1,"frame":16}"""),
             ["aviutl_set_effect_item"] = CreateFixture(typeof(SetEffectItemInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"effect":{"name":"standard"},"itemName":"opacity","value":100}"""),
             ["aviutl_set_effect_state"] = CreateFixture(typeof(SetEffectStateInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"effect":{"name":"standard"},"isEnabled":true}"""),
             ["aviutl_set_layer"] = new(typeof(SetLayerInput), """{"expectedRevision":"r1","layer":1,"name":"voice"}"""),

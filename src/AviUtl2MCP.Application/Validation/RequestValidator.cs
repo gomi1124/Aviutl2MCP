@@ -158,6 +158,19 @@ public static partial class RequestValidator
                 ValidateLocator(setName.Locator);
                 ValidateOptionalObjectName(setName.Name, nameof(setName.Name), isRequired: true);
                 break;
+            case CreateObjectSectionInput createSection:
+                ValidateLocator(createSection.Locator);
+                ArgumentOutOfRangeException.ThrowIfLessThan(createSection.Frame, 1);
+                break;
+            case DeleteObjectSectionInput deleteSection:
+                ValidateLocator(deleteSection.Locator);
+                ArgumentOutOfRangeException.ThrowIfLessThan(deleteSection.Section, 1);
+                break;
+            case MoveObjectSectionInput moveSection:
+                ValidateLocator(moveSection.Locator);
+                ArgumentOutOfRangeException.ThrowIfLessThan(moveSection.Section, 1);
+                ArgumentOutOfRangeException.ThrowIfLessThan(moveSection.Frame, 1);
+                break;
             case SetEffectItemInput setItem:
                 ValidateLocator(setItem.Locator);
                 ArgumentNullException.ThrowIfNull(setItem.Effect);
@@ -682,6 +695,34 @@ public static partial class RequestValidator
             DryRun = input.DryRun,
             Locator = value.Args.Locator,
             Name = value.Args.Name,
+        },
+        BatchCreateObjectSection value => new CreateObjectSectionInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Locator = value.Args.Locator,
+            Frame = value.Args.Frame,
+        },
+        BatchDeleteObjectSection value => new DeleteObjectSectionInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Locator = value.Args.Locator,
+            Section = value.Args.Section,
+        },
+        BatchMoveObjectSection value => new MoveObjectSectionInput
+        {
+            InstanceId = input.InstanceId,
+            TimeoutMs = input.TimeoutMs,
+            ExpectedRevision = input.ExpectedRevision,
+            DryRun = input.DryRun,
+            Locator = value.Args.Locator,
+            Section = value.Args.Section,
+            Frame = value.Args.Frame,
         },
         BatchSetEffectItem value => new SetEffectItemInput
         {

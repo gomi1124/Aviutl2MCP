@@ -179,6 +179,31 @@
       },
       "required": ["locator", "name"]
     },
+    "CreateObjectSectionArgs": {
+      "type": "object",
+      "properties": {
+        "locator": { "$ref": "#/$defs/ObjectLocator" },
+        "frame": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["locator", "frame"]
+    },
+    "DeleteObjectSectionArgs": {
+      "type": "object",
+      "properties": {
+        "locator": { "$ref": "#/$defs/ObjectLocator" },
+        "section": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["locator", "section"]
+    },
+    "MoveObjectSectionArgs": {
+      "type": "object",
+      "properties": {
+        "locator": { "$ref": "#/$defs/ObjectLocator" },
+        "section": { "type": "integer", "minimum": 1 },
+        "frame": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["locator", "section", "frame"]
+    },
     "SetEffectItemArgs": {
       "type": "object",
       "properties": {
@@ -220,6 +245,9 @@
         { "$ref": "#/$defs/BatchMoveObject" },
         { "$ref": "#/$defs/BatchDeleteObject" },
         { "$ref": "#/$defs/BatchSetObjectName" },
+        { "$ref": "#/$defs/BatchCreateObjectSection" },
+        { "$ref": "#/$defs/BatchDeleteObjectSection" },
+        { "$ref": "#/$defs/BatchMoveObjectSection" },
         { "$ref": "#/$defs/BatchSetEffectItem" },
         { "$ref": "#/$defs/BatchSetEffectState" },
         { "$ref": "#/$defs/BatchSetLayer" }
@@ -254,6 +282,21 @@
     "BatchSetObjectName": {
       "type": "object", "additionalProperties": false,
       "properties": { "op": { "const": "setObjectName" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/SetObjectNameArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchCreateObjectSection": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "createObjectSection" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/CreateObjectSectionArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchDeleteObjectSection": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "deleteObjectSection" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/DeleteObjectSectionArgs" }], "unevaluatedProperties": false } },
+      "required": ["op", "clientOperationId", "args"]
+    },
+    "BatchMoveObjectSection": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "op": { "const": "moveObjectSection" }, "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 }, "args": { "allOf": [{ "$ref": "#/$defs/MoveObjectSectionArgs" }], "unevaluatedProperties": false } },
       "required": ["op", "clientOperationId", "args"]
     },
     "BatchSetEffectItem": {
@@ -310,12 +353,20 @@
       "properties": { "name": { "type": "string" }, "occurrence": { "type": "integer", "minimum": 0 }, "isEnabled": { "type": "boolean" }, "isLocked": { "type": "boolean" } },
       "required": ["name", "occurrence", "isEnabled", "isLocked"]
     },
+    "ObjectSection": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "startFrame": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["index", "startFrame"]
+    },
     "ObjectSummary": {
       "type": "object", "additionalProperties": false,
       "properties": {
-        "locator": { "$ref": "#/$defs/ObjectLocator" }, "name": { "type": "string" }, "sceneId": { "type": "integer" }, "layer": { "type": "integer" }, "startFrame": { "type": "integer" }, "endFrame": { "type": "integer" }, "isSelected": { "type": "boolean" }, "mediaPath": { "type": "string" }, "effects": { "type": "array", "items": { "$ref": "#/$defs/EffectSummary" } }
+        "locator": { "$ref": "#/$defs/ObjectLocator" }, "name": { "type": "string" }, "sceneId": { "type": "integer" }, "layer": { "type": "integer" }, "startFrame": { "type": "integer" }, "endFrame": { "type": "integer" }, "isSelected": { "type": "boolean" }, "mediaPath": { "type": "string" }, "sections": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ObjectSection" } }, "effects": { "type": "array", "items": { "$ref": "#/$defs/EffectSummary" } }
       },
-      "required": ["locator", "name", "sceneId", "layer", "startFrame", "endFrame", "isSelected", "effects"]
+      "required": ["locator", "name", "sceneId", "layer", "startFrame", "endFrame", "isSelected", "sections", "effects"]
     },
     "LayerSummary": {
       "type": "object", "additionalProperties": false,
@@ -487,7 +538,7 @@
       "type": "object", "additionalProperties": false,
       "properties": {
         "clientOperationId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "op": { "enum": ["createObject", "createMediaObject", "createAliasObject", "moveObject", "deleteObject", "setObjectName", "setEffectItem", "setEffectState", "setLayer"] },
+        "op": { "enum": ["createObject", "createMediaObject", "createAliasObject", "moveObject", "deleteObject", "setObjectName", "createObjectSection", "deleteObjectSection", "moveObjectSection", "setEffectItem", "setEffectState", "setLayer"] },
         "status": { "enum": ["planned", "applied", "failed", "skipped"] },
         "object": { "$ref": "#/$defs/ObjectSummary" }, "objects": { "type": "array", "items": { "$ref": "#/$defs/ObjectSummary" } },
         "changes": { "type": "array", "items": { "$ref": "#/$defs/Change" } }, "error": { "$ref": "#/$defs/ToolError" }
@@ -595,6 +646,9 @@
     "MoveObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/MoveObjectArgs" }], "unevaluatedProperties": false },
     "DeleteObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/DeleteObjectArgs" }], "unevaluatedProperties": false },
     "SetObjectNameInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetObjectNameArgs" }], "unevaluatedProperties": false },
+    "CreateObjectSectionInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/CreateObjectSectionArgs" }], "unevaluatedProperties": false },
+    "DeleteObjectSectionInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/DeleteObjectSectionArgs" }], "unevaluatedProperties": false },
+    "MoveObjectSectionInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/MoveObjectSectionArgs" }], "unevaluatedProperties": false },
     "SetEffectItemInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetEffectItemArgs" }], "unevaluatedProperties": false },
     "SetEffectStateInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetEffectStateArgs" }], "unevaluatedProperties": false },
     "SetLayerInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetLayerArgs" }], "unevaluatedProperties": false },
@@ -626,6 +680,9 @@
     "aviutl_move_object": "objectのscene、layer、開始frameを変更します。",
     "aviutl_delete_object": "指定objectを削除します。",
     "aviutl_set_object_name": "指定objectの名前を変更します。",
+    "aviutl_create_object_section": "object内部の指定frameに中間点を作成します。",
+    "aviutl_delete_object_section": "objectの区間番号を指定して中間点を削除します。",
+    "aviutl_move_object_section": "objectの中間点を隣接区間内で移動します。",
     "aviutl_set_effect_item": "既存effect itemの値をcodecに従って変更します。",
     "aviutl_set_effect_state": "既存effectの有効・lock状態を変更します。",
     "aviutl_set_layer": "layerの名前、表示、lock状態を変更します。",
@@ -657,6 +714,9 @@
     { "name": "aviutl_move_object", "inputSchema": { "$ref": "#/$defs/MoveObjectInput" }, "outputSchema": { "$ref": "#/$defs/UpdatedObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_delete_object", "inputSchema": { "$ref": "#/$defs/DeleteObjectInput" }, "outputSchema": { "$ref": "#/$defs/DeleteOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_set_object_name", "inputSchema": { "$ref": "#/$defs/SetObjectNameInput" }, "outputSchema": { "$ref": "#/$defs/UpdatedObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_create_object_section", "inputSchema": { "$ref": "#/$defs/CreateObjectSectionInput" }, "outputSchema": { "$ref": "#/$defs/UpdatedObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
+    { "name": "aviutl_delete_object_section", "inputSchema": { "$ref": "#/$defs/DeleteObjectSectionInput" }, "outputSchema": { "$ref": "#/$defs/UpdatedObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_move_object_section", "inputSchema": { "$ref": "#/$defs/MoveObjectSectionInput" }, "outputSchema": { "$ref": "#/$defs/UpdatedObjectOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_set_effect_item", "inputSchema": { "$ref": "#/$defs/SetEffectItemInput" }, "outputSchema": { "$ref": "#/$defs/EffectItemUpdateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_set_effect_state", "inputSchema": { "$ref": "#/$defs/SetEffectStateInput" }, "outputSchema": { "$ref": "#/$defs/EffectStateUpdateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_set_layer", "inputSchema": { "$ref": "#/$defs/SetLayerInput" }, "outputSchema": { "$ref": "#/$defs/LayerUpdateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },

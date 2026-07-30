@@ -28,6 +28,9 @@ public sealed class DiagnosticsToolStdioTests
         "aviutl_move_object",
         "aviutl_delete_object",
         "aviutl_set_object_name",
+        "aviutl_create_object_section",
+        "aviutl_delete_object_section",
+        "aviutl_move_object_section",
         "aviutl_set_effect_item",
         "aviutl_set_effect_state",
         "aviutl_set_layer",
@@ -225,7 +228,7 @@ public sealed class DiagnosticsToolStdioTests
                 cancellationToken: timeout.Token);
 
             // Assert
-            Assert.AreEqual(29, tools.Count);
+            Assert.AreEqual(32, tools.Count);
             CollectionAssert.IsSubsetOf(
                 READ_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());

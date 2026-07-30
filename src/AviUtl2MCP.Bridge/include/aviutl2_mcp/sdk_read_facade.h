@@ -87,6 +87,7 @@ struct sdk_object_snapshot final {
     object_candidate candidate;
     bool is_selected;
     std::optional<std::string> media_path;
+    std::vector<int> section_frames;
     std::vector<sdk_effect_summary> effects;
 };
 
@@ -227,6 +228,9 @@ enum class sdk_object_edit_kind {
     move,
     delete_object,
     set_name,
+    create_section,
+    delete_section,
+    move_section,
 };
 
 struct sdk_object_edit_request final {
@@ -236,6 +240,8 @@ struct sdk_object_edit_request final {
     std::optional<int> destination_layer;
     std::optional<int> destination_start_frame;
     std::optional<std::string> name;
+    std::optional<int> section_index;
+    std::optional<int> section_frame;
 };
 
 struct sdk_object_edit_result final {

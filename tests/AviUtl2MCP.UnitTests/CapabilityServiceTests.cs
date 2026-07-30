@@ -16,8 +16,8 @@ public sealed class CapabilityServiceTests
         CapabilitiesData data = CapabilityService.GetCapabilities(environment);
 
         // Assert
-        Assert.HasCount(29, data.Operations);
-        Assert.HasCount(29, data.Operations.Select(operation => operation.Name).Distinct(StringComparer.Ordinal).ToArray());
+        Assert.HasCount(32, data.Operations);
+        Assert.HasCount(32, data.Operations.Select(operation => operation.Name).Distinct(StringComparer.Ordinal).ToArray());
         Assert.IsTrue(data.Operations.All(operation => operation.Available));
         Assert.AreEqual(100, data.Limits.BatchOperations);
     }

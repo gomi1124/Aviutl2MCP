@@ -163,6 +163,8 @@ public sealed record EffectSummary(
     bool IsEnabled,
     bool IsLocked);
 
+public sealed record ObjectSection(int Index, int StartFrame);
+
 public sealed record ObjectSummary(
     ObjectLocator Locator,
     string Name,
@@ -174,6 +176,8 @@ public sealed record ObjectSummary(
     IReadOnlyList<EffectSummary> Effects)
 {
     public string? MediaPath { get; init; }
+
+    public IReadOnlyList<ObjectSection> Sections { get; init; } = [];
 }
 
 public sealed record LayerSummary(

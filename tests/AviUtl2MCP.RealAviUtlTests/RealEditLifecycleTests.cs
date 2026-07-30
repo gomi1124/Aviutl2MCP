@@ -20,6 +20,7 @@ public sealed class RealEditLifecycleTests
     [TestCategory("RealAviUtl2")]
     [TestProperty("TestId", "real.object-create-three-ways")]
     [TestProperty("TestId", "real.object-edit-lifecycle")]
+    [TestProperty("TestId", "real.object-section-lifecycle")]
     [TestProperty("TestId", "app.dry-run-no-change")]
     [TestProperty("TestId", "app.revision-conflict")]
     [TestProperty("TestId", "real.batch-single-undo")]
@@ -48,6 +49,7 @@ public sealed class RealEditLifecycleTests
         harness.RecordAcceptanceTestIds(
             "real.object-create-three-ways",
             "real.object-edit-lifecycle",
+            "real.object-section-lifecycle",
             "app.dry-run-no-change",
             "app.revision-conflict",
             "real.batch-single-undo",
@@ -83,7 +85,7 @@ public sealed class RealEditLifecycleTests
             EffectDefinition textEffect = effects.Data!.Effects.Single(candidate =>
                 candidate.Name == "テキスト" && candidate.IsCreatable);
 
-            string setupAlias = await GetSetupAliasAsync(
+            string setupAlias = await GetFixtureAliasAsync(
                 query,
                 harness.InstanceId,
                 timeout.Token);
@@ -232,6 +234,70 @@ public sealed class RealEditLifecycleTests
             Assert.AreEqual(editFrame, move.Data.TimelineObject.StartFrame);
             lifecycleObject = move.Data.TimelineObject;
             revision = RequireChangedRevision(harness, revision, move.Revision);
+
+            Assert.HasCount(1, lifecycleObject.Sections);
+            Assert.AreEqual(editFrame, lifecycleObject.Sections[0].StartFrame);
+            CreateObjectSectionInput createSectionInput = new()
+            {
+                ExpectedRevision = revision,
+                Locator = lifecycleObject.Locator,
+                Frame = editFrame + 10,
+            };
+            GatewayResponse<UpdatedObjectData> createSection =
+                await edit.ExecuteEditAsync<CreateObjectSectionInput, UpdatedObjectData>(
+                    "object.createSection",
+                    CreateGatewayRequest(
+                        harness.InstanceId,
+                        createSectionInput,
+                        revision),
+                    timeout.Token);
+            Assert.IsTrue(createSection.Ok, createSection.Error?.Message);
+            Assert.HasCount(2, createSection.Data!.TimelineObject!.Sections);
+            Assert.AreEqual(1, createSection.Data.TimelineObject.Sections[1].Index);
+            Assert.AreEqual(editFrame + 10, createSection.Data.TimelineObject.Sections[1].StartFrame);
+            lifecycleObject = createSection.Data.TimelineObject;
+            revision = RequireChangedRevision(harness, revision, createSection.Revision);
+
+            MoveObjectSectionInput moveSectionInput = new()
+            {
+                ExpectedRevision = revision,
+                Locator = lifecycleObject.Locator,
+                Section = 1,
+                Frame = editFrame + 12,
+            };
+            GatewayResponse<UpdatedObjectData> moveSection =
+                await edit.ExecuteEditAsync<MoveObjectSectionInput, UpdatedObjectData>(
+                    "object.moveSection",
+                    CreateGatewayRequest(
+                        harness.InstanceId,
+                        moveSectionInput,
+                        revision),
+                    timeout.Token);
+            Assert.IsTrue(moveSection.Ok, moveSection.Error?.Message);
+            Assert.HasCount(2, moveSection.Data!.TimelineObject!.Sections);
+            Assert.AreEqual(editFrame + 12, moveSection.Data.TimelineObject.Sections[1].StartFrame);
+            lifecycleObject = moveSection.Data.TimelineObject;
+            revision = RequireChangedRevision(harness, revision, moveSection.Revision);
+
+            DeleteObjectSectionInput deleteSectionInput = new()
+            {
+                ExpectedRevision = revision,
+                Locator = lifecycleObject.Locator,
+                Section = 1,
+            };
+            GatewayResponse<UpdatedObjectData> deleteSection =
+                await edit.ExecuteEditAsync<DeleteObjectSectionInput, UpdatedObjectData>(
+                    "object.deleteSection",
+                    CreateGatewayRequest(
+                        harness.InstanceId,
+                        deleteSectionInput,
+                        revision),
+                    timeout.Token);
+            Assert.IsTrue(deleteSection.Ok, deleteSection.Error?.Message);
+            Assert.HasCount(1, deleteSection.Data!.TimelineObject!.Sections);
+            Assert.AreEqual(editFrame, deleteSection.Data.TimelineObject.Sections[0].StartFrame);
+            lifecycleObject = deleteSection.Data.TimelineObject;
+            revision = RequireChangedRevision(harness, revision, deleteSection.Revision);
 
             GatewayResponse<ObjectData> detail = await query.GetObjectAsync(
                 CreateGatewayRequest(
@@ -485,7 +551,7 @@ public sealed class RealEditLifecycleTests
         }
     }
 
-    private static async Task<string> GetSetupAliasAsync(
+    private static async Task<string> GetFixtureAliasAsync(
         BridgeQueryGateway query,
         Guid instanceId,
         CancellationToken cancellationToken)
@@ -500,13 +566,23 @@ public sealed class RealEditLifecycleTests
                 }),
             cancellationToken);
         Assert.IsTrue(setups.Ok, setups.Error?.Message);
-        ObjectSummary setup = setups.Data!.Objects.Single();
+        ObjectSummary? aliasSource = setups.Data!.Objects.SingleOrDefault();
+        if (aliasSource is null)
+        {
+            GatewayResponse<ObjectsPageData> objects = await query.FindObjectsAsync(
+                CreateGatewayRequest(
+                    instanceId,
+                    new FindObjectsInput { Limit = 1 }),
+                cancellationToken);
+            Assert.IsTrue(objects.Ok, objects.Error?.Message);
+            aliasSource = objects.Data!.Objects.Single();
+        }
         GatewayResponse<ObjectData> detail = await query.GetObjectAsync(
             CreateGatewayRequest(
                 instanceId,
                 new GetObjectInput
                 {
-                    Locator = setup.Locator,
+                    Locator = aliasSource.Locator,
                     IncludeAlias = true,
                     IncludeEffectItems = false,
                 }),

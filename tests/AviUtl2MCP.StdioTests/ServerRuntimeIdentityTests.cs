@@ -13,7 +13,7 @@ public sealed class ServerRuntimeIdentityTests
     public void RuntimeIdentityUsesCanonicalProductVersion()
     {
         // Arrange
-        const string expectedVersion = "0.1.1";
+        const string expectedVersion = "0.2.0";
 
         // Act
         string actualVersion = new ServerRuntimeIdentity().ServerVersion;

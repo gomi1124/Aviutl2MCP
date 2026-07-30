@@ -21,7 +21,7 @@ packageは`Plugin\AviUtl2MCP`だけを所有し、更新・uninstall時はこの
 1. `AviUtl2MCP-Server-win-x64-vX.Y.Z.zip`を任意の固定directoryへ展開する。
 2. `mcp-config.example.json`をMCP clientの形式へ合わせてコピーする。
 3. `command`を`AviUtl2MCP.Server.exe`の絶対pathへ変更する。
-4. MCP clientを再起動し、29 tools・5 resources・4 promptsを列挙する。
+4. MCP clientを再起動し、32 tools・5 resources・4 promptsを列挙する。
 
 複数のAviUtl2が起動している場合、編集toolへ対象の`instanceId`を明示します。指定がなければ曖昧な対象への編集は拒否されます。
 MCP server全体の既定対象を固定する場合は、環境変数`AVIUTL2_MCP_INSTANCE`へ対象の`instanceId`を指定します。旧実装名`AVIUTL2_MCP_INSTANCE_ID`も互換受付しますが、両方を指定する場合は同じ値にしてください。

@@ -148,6 +148,29 @@ public sealed record SetObjectNameInput : MutationInput
     public required string Name { get; init; }
 }
 
+public sealed record CreateObjectSectionInput : MutationInput
+{
+    public required ObjectLocator Locator { get; init; }
+
+    public required int Frame { get; init; }
+}
+
+public sealed record DeleteObjectSectionInput : MutationInput
+{
+    public required ObjectLocator Locator { get; init; }
+
+    public required int Section { get; init; }
+}
+
+public sealed record MoveObjectSectionInput : MutationInput
+{
+    public required ObjectLocator Locator { get; init; }
+
+    public required int Section { get; init; }
+
+    public required int Frame { get; init; }
+}
+
 public sealed record SetEffectItemInput : MutationInput
 {
     public required ObjectLocator Locator { get; init; }

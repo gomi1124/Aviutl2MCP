@@ -207,6 +207,98 @@ public sealed class EditToolSet(
             cancellationToken);
 
     [McpServerTool(
+        Name = "aviutl_create_object_section",
+        Title = "AviUtl2 object中間点作成",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = false,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<UpdatedObjectData>))]
+    [Description("object内部の指定frameに中間点（区間）を作成します。")]
+    public ValueTask<CallToolResult> CreateObjectSectionAsync(
+        Revision expectedRevision,
+        ObjectLocator locator,
+        int frame,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new CreateObjectSectionInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Locator = locator,
+                Frame = frame,
+            },
+            _editService.CreateObjectSectionAsync,
+            cancellationToken);
+
+    [McpServerTool(
+        Name = "aviutl_delete_object_section",
+        Title = "AviUtl2 object中間点削除",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<UpdatedObjectData>))]
+    [Description("objectの区間番号を指定して中間点を削除します。先頭区間は削除できません。")]
+    public ValueTask<CallToolResult> DeleteObjectSectionAsync(
+        Revision expectedRevision,
+        ObjectLocator locator,
+        int section,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new DeleteObjectSectionInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Locator = locator,
+                Section = section,
+            },
+            _editService.DeleteObjectSectionAsync,
+            cancellationToken);
+
+    [McpServerTool(
+        Name = "aviutl_move_object_section",
+        Title = "AviUtl2 object中間点移動",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<UpdatedObjectData>))]
+    [Description("objectの中間点を隣接区間を跨がないframeへ移動します。")]
+    public ValueTask<CallToolResult> MoveObjectSectionAsync(
+        Revision expectedRevision,
+        ObjectLocator locator,
+        int section,
+        int frame,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new MoveObjectSectionInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Locator = locator,
+                Section = section,
+                Frame = frame,
+            },
+            _editService.MoveObjectSectionAsync,
+            cancellationToken);
+
+    [McpServerTool(
         Name = "aviutl_set_effect_item",
         Title = "AviUtl2 effect item変更",
         ReadOnly = false,
@@ -342,7 +434,7 @@ public sealed class EditToolSet(
         OpenWorld = false,
         UseStructuredContent = true,
         OutputSchemaType = typeof(ToolEnvelope<BatchData>))]
-    [Description("9種類の編集を全件事前検証し、1つのUndo単位として順番に実行します。")]
+    [Description("12種類の編集を全件事前検証し、1つのUndo単位として順番に実行します。")]
     public ValueTask<CallToolResult> ExecuteBatchAsync(
         Revision expectedRevision,
         IReadOnlyList<BatchOperation> operations,

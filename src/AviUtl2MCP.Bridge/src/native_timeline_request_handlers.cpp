@@ -182,6 +182,10 @@ void validate_ranges(const sdk_timeline_query& query) {
     for (const sdk_effect_summary& effect : object.effects) {
         effects.push_back(serialize_effect(effect));
     }
+    nlohmann::json sections = nlohmann::json::array();
+    for (std::size_t index = 0U; index < object.section_frames.size(); ++index) {
+        sections.push_back({{"index", index}, {"startFrame", object.section_frames[index]}});
+    }
     nlohmann::json result = {
         {"locator", serialize_locator(create_object_locator(
             identity.instance_id,
@@ -193,6 +197,7 @@ void validate_ranges(const sdk_timeline_query& query) {
         {"startFrame", object.candidate.start_frame},
         {"endFrame", object.candidate.end_frame},
         {"isSelected", object.is_selected},
+        {"sections", std::move(sections)},
         {"effects", std::move(effects)},
     };
     if (object.media_path.has_value()) {
