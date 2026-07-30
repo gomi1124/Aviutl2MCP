@@ -102,6 +102,7 @@ public sealed class DiagnosticsServiceTests
         CapabilitiesData unavailable = CapabilityService.GetCapabilities(new CapabilityEnvironment(
             IsBridgeReady: true,
             IsProjectOpen: true,
+            IsProjectSaved: true,
             CanEdit: true,
             HasPsdToolKit: false,
             HasGcmzDrops: false,
@@ -141,6 +142,7 @@ public sealed class DiagnosticsServiceTests
         CapabilitiesData capabilities = CapabilityService.GetCapabilities(new CapabilityEnvironment(
             IsBridgeReady: true,
             IsProjectOpen: true,
+            IsProjectSaved: true,
             CanEdit: true,
             HasPsdToolKit: false,
             HasGcmzDrops: true,
@@ -374,6 +376,7 @@ public sealed class DiagnosticsServiceTests
         CapabilitiesData capabilities = CapabilityService.GetCapabilities(new CapabilityEnvironment(
             IsBridgeReady: true,
             IsProjectOpen: true,
+            IsProjectSaved: true,
             CanEdit: true,
             HasPsdToolKit: true,
             HasGcmzDrops: true,

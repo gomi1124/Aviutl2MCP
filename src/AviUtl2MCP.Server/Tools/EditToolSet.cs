@@ -207,6 +207,98 @@ public sealed class EditToolSet(
             cancellationToken);
 
     [McpServerTool(
+        Name = "aviutl_create_object_section",
+        Title = "AviUtl2 object中間点作成",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = false,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<UpdatedObjectData>))]
+    [Description("object内部の指定frameに中間点（区間）を作成します。")]
+    public ValueTask<CallToolResult> CreateObjectSectionAsync(
+        Revision expectedRevision,
+        ObjectLocator locator,
+        int frame,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new CreateObjectSectionInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Locator = locator,
+                Frame = frame,
+            },
+            _editService.CreateObjectSectionAsync,
+            cancellationToken);
+
+    [McpServerTool(
+        Name = "aviutl_delete_object_section",
+        Title = "AviUtl2 object中間点削除",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<UpdatedObjectData>))]
+    [Description("objectの区間番号を指定して中間点を削除します。先頭区間は削除できません。")]
+    public ValueTask<CallToolResult> DeleteObjectSectionAsync(
+        Revision expectedRevision,
+        ObjectLocator locator,
+        int section,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new DeleteObjectSectionInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Locator = locator,
+                Section = section,
+            },
+            _editService.DeleteObjectSectionAsync,
+            cancellationToken);
+
+    [McpServerTool(
+        Name = "aviutl_move_object_section",
+        Title = "AviUtl2 object中間点移動",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<UpdatedObjectData>))]
+    [Description("objectの中間点を隣接区間を跨がないframeへ移動します。")]
+    public ValueTask<CallToolResult> MoveObjectSectionAsync(
+        Revision expectedRevision,
+        ObjectLocator locator,
+        int section,
+        int frame,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new MoveObjectSectionInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Locator = locator,
+                Section = section,
+                Frame = frame,
+            },
+            _editService.MoveObjectSectionAsync,
+            cancellationToken);
+
+    [McpServerTool(
         Name = "aviutl_set_effect_item",
         Title = "AviUtl2 effect item変更",
         ReadOnly = false,
@@ -221,7 +313,7 @@ public sealed class EditToolSet(
         ObjectLocator locator,
         EffectInstanceSelector effect,
         string itemName,
-        System.Text.Json.JsonElement value,
+        [EffectItemValue] System.Text.Json.JsonElement value,
         Guid? instanceId = null,
         int? timeoutMs = null,
         bool dryRun = false,
@@ -238,6 +330,29 @@ public sealed class EditToolSet(
                 Value = value,
             },
             _editService.SetEffectItemAsync,
+            cancellationToken);
+
+    [McpServerTool(
+        Name = "aviutl_save_project",
+        Title = "AviUtl2 project保存",
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<SaveProjectData>))]
+    [Description("現在開いている名前付きprojectを保存します。別名保存dialogは開きません。")]
+    public ValueTask<CallToolResult> SaveProjectAsync(
+        Revision expectedRevision,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        CancellationToken cancellationToken = default) => ExecuteSaveProjectAsync(
+            new SaveProjectInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+            },
             cancellationToken);
 
     [McpServerTool(
@@ -319,7 +434,7 @@ public sealed class EditToolSet(
         OpenWorld = false,
         UseStructuredContent = true,
         OutputSchemaType = typeof(ToolEnvelope<BatchData>))]
-    [Description("9種類の編集を全件事前検証し、1つのUndo単位として順番に実行します。")]
+    [Description("12種類の編集を全件事前検証し、1つのUndo単位として順番に実行します。")]
     public ValueTask<CallToolResult> ExecuteBatchAsync(
         Revision expectedRevision,
         IReadOnlyList<BatchOperation> operations,
@@ -445,6 +560,47 @@ public sealed class EditToolSet(
                 input,
                 context).ConfigureAwait(false);
             ToolEnvelope<CursorData> envelope = ToolResultFactory.CreateEnvelope(
+                execution.Result,
+                context,
+                execution.InstanceId,
+                execution.Revision,
+                execution.ViewRevision);
+            return McpToolResultFactory.Create(envelope);
+        }
+    }
+
+    private async ValueTask<CallToolResult> ExecuteSaveProjectAsync(
+        SaveProjectInput input,
+        CancellationToken cancellationToken)
+    {
+        RequestContext context;
+        try
+        {
+            context = _requestContextFactory.CreateContext(
+                input.InstanceId,
+                input.TimeoutMs,
+                EDIT_DEFAULT_TIMEOUT_MS,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is ArgumentException or OverflowException)
+        {
+            return CreateInvalidArgument<SaveProjectData>(exception.Message, cancellationToken);
+        }
+        using (context)
+        {
+            input = input with { TimeoutMs = context.TimeoutMs };
+            try
+            {
+                RequestValidator.ValidateSaveProjectInput(input);
+            }
+            catch (Exception exception) when (exception is ArgumentException or OverflowException)
+            {
+                return CreateInvalidArgument<SaveProjectData>(context, exception.Message);
+            }
+            QueryExecutionResult<SaveProjectData> execution = await _editService.SaveProjectAsync(
+                input,
+                context).ConfigureAwait(false);
+            ToolEnvelope<SaveProjectData> envelope = ToolResultFactory.CreateEnvelope(
                 execution.Result,
                 context,
                 execution.InstanceId,

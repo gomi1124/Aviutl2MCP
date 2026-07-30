@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cmath>
 #include <chrono>
+#include <cwctype>
 #include <exception>
 #include <limits>
 #include <span>
@@ -26,6 +27,111 @@ namespace {
 
 constexpr wchar_t SDK_DISPATCH_WINDOW_CLASS[] = L"AviUtl2MCP.SdkDispatchWindow";
 constexpr UINT SDK_DISPATCH_MESSAGE = WM_APP + 0x4D43U;
+constexpr wchar_t PROJECT_SAVE_MENU_LABEL[] = L"プロジェクトを保存";
+constexpr wchar_t PROJECT_SAVE_MENU_LABEL_ENGLISH[] = L"Save Project";
+
+struct project_save_menu_match final {
+    UINT command_id = 0U;
+    bool is_enabled = false;
+    std::size_t count = 0U;
+};
+
+[[nodiscard]] std::wstring normalize_menu_label(std::wstring label) {
+    if (const std::size_t shortcut = label.find(L'\t'); shortcut != std::wstring::npos) {
+        label.erase(shortcut);
+    }
+    std::erase(label, L'&');
+    while (!label.empty() && std::iswspace(label.front()) != 0) {
+        label.erase(label.begin());
+    }
+    while (!label.empty() && std::iswspace(label.back()) != 0) {
+        label.pop_back();
+    }
+    return label;
+}
+
+void find_project_save_menu_command(
+    const HMENU menu,
+    project_save_menu_match& result) {
+    if (menu == nullptr) {
+        return;
+    }
+    const int count = GetMenuItemCount(menu);
+    for (int position = 0; position < count; ++position) {
+        MENUITEMINFOW info{};
+        info.cbSize = sizeof(info);
+        info.fMask = MIIM_ID | MIIM_STATE | MIIM_SUBMENU | MIIM_STRING;
+        if (GetMenuItemInfoW(menu, static_cast<UINT>(position), TRUE, &info) == FALSE) {
+            continue;
+        }
+        std::vector<wchar_t> text(static_cast<std::size_t>(info.cch) + 1U, L'\0');
+        info.dwTypeData = text.data();
+        info.cch = static_cast<UINT>(text.size());
+        if (GetMenuItemInfoW(menu, static_cast<UINT>(position), TRUE, &info) != FALSE) {
+            const std::wstring label = normalize_menu_label(text.data());
+            if (label == PROJECT_SAVE_MENU_LABEL || label == PROJECT_SAVE_MENU_LABEL_ENGLISH) {
+                ++result.count;
+                result.command_id = info.wID;
+                result.is_enabled = (info.fState & (MFS_DISABLED | MFS_GRAYED)) == 0U;
+            }
+        }
+        find_project_save_menu_command(info.hSubMenu, result);
+    }
+}
+
+[[nodiscard]] sdk_project_save_command_result dispatch_project_save_command(
+    void* raw_host_window,
+    const std::uint32_t timeout_ms) {
+    const HWND host_window = static_cast<HWND>(raw_host_window);
+    if (host_window == nullptr || IsWindow(host_window) == FALSE) {
+        return {
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 host application window is unavailable",
+        };
+    }
+    project_save_menu_match match;
+    find_project_save_menu_command(GetMenu(host_window), match);
+    if (match.count == 0U) {
+        return {
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 project save command was not found",
+        };
+    }
+    if (match.count != 1U) {
+        return {
+            .error_code = "sdk_query_failed",
+            .error_message = "AviUtl2 project save command was ambiguous",
+        };
+    }
+    if (!match.is_enabled) {
+        return {
+            .error_code = "edit_not_available",
+            .error_message = "AviUtl2 project save command is disabled",
+        };
+    }
+    DWORD_PTR command_result = 0U;
+    if (SendMessageTimeoutW(
+            host_window,
+            WM_COMMAND,
+            MAKEWPARAM(match.command_id, 0),
+            0,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            timeout_ms,
+            &command_result)
+        == 0) {
+        return {
+            .command_was_dispatched = true,
+            .error_code = GetLastError() == ERROR_TIMEOUT
+                ? "operation_timeout"
+                : "sdk_query_failed",
+            .error_message = "AviUtl2 project save command did not complete",
+        };
+    }
+    return {
+        .ok = true,
+        .command_was_dispatched = true,
+    };
+}
 
 struct sdk_dispatch_request final {
     const std::function<void()>* operation = nullptr;
@@ -388,6 +494,27 @@ void copy_effect_item(void* raw_context, const LPCWSTR name, const int type) noe
     if (!include_effects) {
         effects.clear();
     }
+    std::vector<int> section_frames;
+    if (edit.get_object_section_num == nullptr || edit.get_object_section_frame == nullptr) {
+        throw std::runtime_error("SDK object section query is unavailable");
+    }
+    const int section_count = edit.get_object_section_num(object);
+    if (section_count < 1) {
+        throw std::runtime_error("SDK object section count was invalid");
+    }
+    section_frames.reserve(static_cast<std::size_t>(section_count));
+    int previous_frame = -1;
+    for (int section = 0; section < section_count; ++section) {
+        const int frame = edit.get_object_section_frame(object, section);
+        if (frame < position.start || frame > position.end || frame <= previous_frame) {
+            throw std::runtime_error("SDK object section frame was invalid");
+        }
+        section_frames.push_back(frame + 1);
+        previous_frame = frame;
+    }
+    if (section_frames.front() != position.start + 1) {
+        throw std::runtime_error("SDK first object section did not start with the object");
+    }
     return sdk_object_snapshot{
         .candidate = object_candidate{
             .scene_id = info.scene_id,
@@ -400,6 +527,7 @@ void copy_effect_item(void* raw_context, const LPCWSTR name, const int type) noe
         },
         .is_selected = is_selected_object(object, selected_objects),
         .media_path = find_media_path(alias),
+        .section_frames = std::move(section_frames),
         .effects = std::move(effects),
     };
 }
@@ -1345,6 +1473,64 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
                 return;
             }
             is_noop = before.candidate.name == *request.name;
+        } else if (request.kind == sdk_object_edit_kind::create_section) {
+            if (!request.section_frame.has_value()
+                || *request.section_frame <= before.candidate.start_frame
+                || *request.section_frame > before.candidate.end_frame) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message =
+                    "The section frame must be inside the object after its start";
+                return;
+            }
+            is_noop = std::ranges::find(
+                before.section_frames,
+                *request.section_frame) != before.section_frames.end();
+            if (!is_noop && edit->create_object_section == nullptr) {
+                context->result->error_code = "sdk_not_available";
+                context->result->error_message = "SDK object section creation is unavailable";
+                return;
+            }
+        } else if (request.kind == sdk_object_edit_kind::delete_section) {
+            if (!request.section_index.has_value()
+                || *request.section_index < 1
+                || static_cast<std::size_t>(*request.section_index)
+                    >= before.section_frames.size()) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message = "The section index does not identify a middle point";
+                return;
+            }
+            if (edit->delete_object_section == nullptr) {
+                context->result->error_code = "sdk_not_available";
+                context->result->error_message = "SDK object section deletion is unavailable";
+                return;
+            }
+        } else if (request.kind == sdk_object_edit_kind::move_section) {
+            if (!request.section_index.has_value() || !request.section_frame.has_value()
+                || *request.section_index < 1
+                || static_cast<std::size_t>(*request.section_index)
+                    >= before.section_frames.size()) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message = "The section move parameters are invalid";
+                return;
+            }
+            const std::size_t section = static_cast<std::size_t>(*request.section_index);
+            const int previous_frame = before.section_frames[section - 1U];
+            const int next_frame = section + 1U < before.section_frames.size()
+                ? before.section_frames[section + 1U]
+                : before.candidate.end_frame + 1;
+            if (*request.section_frame <= previous_frame
+                || *request.section_frame >= next_frame) {
+                context->result->error_code = "invalid_argument";
+                context->result->error_message =
+                    "The section move cannot cross an adjacent section or object boundary";
+                return;
+            }
+            is_noop = before.section_frames[section] == *request.section_frame;
+            if (!is_noop && edit->move_object_section == nullptr) {
+                context->result->error_code = "sdk_not_available";
+                context->result->error_message = "SDK object section movement is unavailable";
+                return;
+            }
         }
         if (context->dry_run || is_noop) {
             context->result->ok = true;
@@ -1378,6 +1564,30 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
                 edit->set_object_name(object, wide_name.c_str());
                 break;
             }
+            case sdk_object_edit_kind::create_section:
+                if (!edit->create_object_section(object, *request.section_frame - 1)) {
+                    context->result->error_code = "invalid_argument";
+                    context->result->error_message = "AviUtl2 rejected the object section creation";
+                    return;
+                }
+                break;
+            case sdk_object_edit_kind::delete_section:
+                if (!edit->delete_object_section(object, *request.section_index)) {
+                    context->result->error_code = "invalid_argument";
+                    context->result->error_message = "AviUtl2 rejected the object section deletion";
+                    return;
+                }
+                break;
+            case sdk_object_edit_kind::move_section:
+                if (!edit->move_object_section(
+                        object,
+                        *request.section_index,
+                        *request.section_frame - 1)) {
+                    context->result->error_code = "invalid_argument";
+                    context->result->error_message = "AviUtl2 rejected the object section move";
+                    return;
+                }
+                break;
         }
         context->result->has_changed = true;
         if (request.kind == sdk_object_edit_kind::delete_object) {
@@ -1392,6 +1602,26 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
                 after_position,
                 selected_objects,
                 true);
+            const sdk_object_snapshot& after = *context->result->object;
+            if (request.kind == sdk_object_edit_kind::create_section
+                && (after.section_frames.size() != before.section_frames.size() + 1U
+                    || std::ranges::find(after.section_frames, *request.section_frame)
+                        == after.section_frames.end())) {
+                throw std::runtime_error(
+                    "SDK object section creation did not satisfy the postcondition");
+            }
+            if (request.kind == sdk_object_edit_kind::delete_section
+                && after.section_frames.size() + 1U != before.section_frames.size()) {
+                throw std::runtime_error(
+                    "SDK object section deletion did not satisfy the postcondition");
+            }
+            if (request.kind == sdk_object_edit_kind::move_section
+                && (after.section_frames.size() != before.section_frames.size()
+                    || after.section_frames[static_cast<std::size_t>(*request.section_index)]
+                        != *request.section_frame)) {
+                throw std::runtime_error(
+                    "SDK object section movement did not satisfy the postcondition");
+            }
         }
         context->result->ok = true;
     } catch (const std::invalid_argument& exception) {
@@ -1404,6 +1634,30 @@ void edit_sdk_object(void* raw_context, EDIT_SECTION* edit) noexcept {
         context->result->error_code = "sdk_query_failed";
         context->result->error_message = "SDK object edit failed with an unknown exception";
     }
+}
+
+[[nodiscard]] sdk_effect_item_value normalize_effect_item_value(
+    const sdk_effect_item_snapshot& item,
+    const sdk_effect_item_value& value) {
+    if (item.codec != "number") {
+        return value;
+    }
+    if (const auto* number = std::get_if<double>(&value)) {
+        if (!std::isfinite(*number)) {
+            throw std::invalid_argument("The effect item requires a finite number value");
+        }
+        return *number;
+    }
+    if (const auto* integer = std::get_if<std::int64_t>(&value)) {
+        constexpr std::int64_t MAXIMUM_EXACT_DOUBLE_INTEGER = 9'007'199'254'740'991LL;
+        if (*integer < -MAXIMUM_EXACT_DOUBLE_INTEGER
+            || *integer > MAXIMUM_EXACT_DOUBLE_INTEGER) {
+            throw std::invalid_argument(
+                "The effect item integer cannot be represented exactly as a number");
+        }
+        return static_cast<double>(*integer);
+    }
+    throw std::invalid_argument("The effect item requires a finite number value");
 }
 
 [[nodiscard]] std::string encode_effect_item_value(
@@ -1585,8 +1839,11 @@ void edit_sdk_effect(void* raw_context, EDIT_SECTION* edit) noexcept {
                 context->result->error_message = "The selected effect item is missing or read-only";
                 return;
             }
-            const std::string encoded = encode_effect_item_value(*item_before, *request.item_value);
-            const bool is_noop = item_before->value == request.item_value;
+            const sdk_effect_item_value normalized_value = normalize_effect_item_value(
+                *item_before,
+                *request.item_value);
+            const std::string encoded = encode_effect_item_value(*item_before, normalized_value);
+            const bool is_noop = item_before->value == normalized_value;
             if (context->dry_run || is_noop) {
                 context->result->ok = true;
                 context->result->item = std::move(item_before);
@@ -1606,7 +1863,7 @@ void edit_sdk_effect(void* raw_context, EDIT_SECTION* edit) noexcept {
             context->result->item = find_effect_item_snapshot(
                 *context->edit_handle, *edit, effect_handle, effect_before, *request.item_name);
             if (!context->result->item.has_value()
-                || context->result->item->value != request.item_value) {
+                || context->result->item->value != normalized_value) {
                 throw std::runtime_error("SDK effect item postcondition was unavailable");
             }
         } else {
@@ -1761,6 +2018,7 @@ struct batch_planned_object final {
     OBJECT_LAYER_FRAME position;
     bool is_deleted = false;
     std::optional<std::string> name;
+    std::vector<int> section_frames;
 };
 
 struct batch_planned_effect final {
@@ -2007,6 +2265,10 @@ void fail_batch(
     } else {
         planned->name = before.candidate.name;
     }
+    if (planned->section_frames.empty()) {
+        planned->section_frames = before.section_frames;
+    }
+    before.section_frames = planned->section_frames;
 
     if (request.kind == sdk_object_edit_kind::move) {
         if (!request.destination_scene_id.has_value()
@@ -2044,6 +2306,10 @@ void fail_batch(
             return create_batch_failure<sdk_object_edit_result>(
                 "sdk_not_available", "SDK object movement is unavailable");
         }
+        const int frame_delta = destination_start - planned->position.start;
+        for (int& section_frame : planned->section_frames) {
+            section_frame += frame_delta;
+        }
         planned->position = {
             .layer = destination_layer,
             .start = destination_start,
@@ -2055,7 +2321,7 @@ void fail_batch(
                 "sdk_not_available", "SDK object deletion is unavailable");
         }
         planned->is_deleted = true;
-    } else {
+    } else if (request.kind == sdk_object_edit_kind::set_name) {
         if (!request.name.has_value()) {
             return create_batch_failure<sdk_object_edit_result>(
                 "invalid_argument", "The batch object name is required");
@@ -2065,6 +2331,62 @@ void fail_batch(
                 "sdk_not_available", "SDK object naming is unavailable");
         }
         planned->name = *request.name;
+    } else if (request.kind == sdk_object_edit_kind::create_section) {
+        if (!request.section_frame.has_value()
+            || *request.section_frame <= before.candidate.start_frame
+            || *request.section_frame > before.candidate.end_frame) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument",
+                "The batch section frame must be inside the object after its start");
+        }
+        const auto position = std::ranges::lower_bound(
+            planned->section_frames,
+            *request.section_frame);
+        if (position == planned->section_frames.end() || *position != *request.section_frame) {
+            if (edit.create_object_section == nullptr) {
+                return create_batch_failure<sdk_object_edit_result>(
+                    "sdk_not_available", "SDK object section creation is unavailable");
+            }
+            planned->section_frames.insert(position, *request.section_frame);
+        }
+    } else if (request.kind == sdk_object_edit_kind::delete_section) {
+        if (!request.section_index.has_value() || *request.section_index < 1
+            || static_cast<std::size_t>(*request.section_index)
+                >= planned->section_frames.size()) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument",
+                "The batch section index does not identify a middle point");
+        }
+        if (edit.delete_object_section == nullptr) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "sdk_not_available", "SDK object section deletion is unavailable");
+        }
+        planned->section_frames.erase(
+            planned->section_frames.begin() + *request.section_index);
+    } else {
+        if (!request.section_index.has_value() || !request.section_frame.has_value()
+            || *request.section_index < 1
+            || static_cast<std::size_t>(*request.section_index)
+                >= planned->section_frames.size()) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument", "The batch section move parameters are invalid");
+        }
+        const std::size_t section = static_cast<std::size_t>(*request.section_index);
+        const int previous_frame = planned->section_frames[section - 1U];
+        const int next_frame = section + 1U < planned->section_frames.size()
+            ? planned->section_frames[section + 1U]
+            : before.candidate.end_frame + 1;
+        if (*request.section_frame <= previous_frame || *request.section_frame >= next_frame) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "invalid_argument",
+                "The batch section move cannot cross an adjacent section or object boundary");
+        }
+        if (*request.section_frame != planned->section_frames[section]
+            && edit.move_object_section == nullptr) {
+            return create_batch_failure<sdk_object_edit_result>(
+                "sdk_not_available", "SDK object section movement is unavailable");
+        }
+        planned->section_frames[section] = *request.section_frame;
     }
     return create_batch_operation_result(sdk_object_edit_result{
         .ok = true,
@@ -2154,18 +2476,21 @@ void fail_batch(
                 std::move(*actual_item)).first;
         }
         try {
-            static_cast<void>(encode_effect_item_value(item_match->second, *request.item_value));
+            const sdk_effect_item_value normalized_value = normalize_effect_item_value(
+                item_match->second,
+                *request.item_value);
+            static_cast<void>(encode_effect_item_value(item_match->second, normalized_value));
+            result.item = item_match->second;
+            const bool is_noop = item_match->second.value == normalized_value;
+            if (!is_noop && edit.set_effect_item_value == nullptr) {
+                return create_batch_failure<sdk_effect_edit_result>(
+                    "sdk_not_available", "SDK effect item editing is unavailable");
+            }
+            item_match->second.value = normalized_value;
         } catch (const std::invalid_argument& exception) {
             return create_batch_failure<sdk_effect_edit_result>(
                 "invalid_effect_item", exception.what());
         }
-        result.item = item_match->second;
-        const bool is_noop = item_match->second.value == request.item_value;
-        if (!is_noop && edit.set_effect_item_value == nullptr) {
-            return create_batch_failure<sdk_effect_edit_result>(
-                "sdk_not_available", "SDK effect item editing is unavailable");
-        }
-        item_match->second.value = request.item_value;
     } else {
         if (!request.is_enabled.has_value() && !request.is_locked.has_value()) {
             return create_batch_failure<sdk_effect_edit_result>(
@@ -2656,6 +2981,11 @@ const char* sdk_edit_state_error_message(const sdk_edit_state state) noexcept {
     }
 }
 
+sdk_read_facade::sdk_read_facade(sdk_project_save_command project_save_command)
+    : project_save_command_(project_save_command
+        ? std::move(project_save_command)
+        : sdk_project_save_command(dispatch_project_save_command)) {}
+
 sdk_read_facade::~sdk_read_facade() {
     detach();
 }
@@ -2679,12 +3009,17 @@ bool sdk_read_facade::register_host(HOST_APP_TABLE* host) noexcept {
         if (!initialize_sdk_dispatcher(edit_handle)) {
             return false;
         }
+        void* host_app_window = edit_handle->get_host_app_window != nullptr
+            ? static_cast<void*>(edit_handle->get_host_app_window())
+            : nullptr;
         {
             std::scoped_lock lock(mutex_);
             edit_handle_ = edit_handle;
+            host_app_window_ = host_app_window;
             project_state_ = sdk_project_state::unknown;
             project_path_.reset();
             project_cache_error_.clear();
+            project_save_sequence_ = 0U;
         }
         REGISTERED_FACADE.store(this);
         host->register_project_load_handler(&capture_loaded_project);
@@ -2702,10 +3037,13 @@ void sdk_read_facade::detach() noexcept {
     {
         std::scoped_lock lock(mutex_);
         edit_handle_ = nullptr;
+        host_app_window_ = nullptr;
         project_state_ = sdk_project_state::unknown;
         project_path_.reset();
         project_cache_error_.clear();
+        project_save_sequence_ = 0U;
     }
+    project_saved_cv_.notify_all();
     release_sdk_dispatcher();
 }
 
@@ -3657,7 +3995,14 @@ sdk_object_edit_result sdk_read_facade::edit_object(
                 || *request.destination_layer < 1
                 || *request.destination_start_frame < 1))
         || (request.kind == sdk_object_edit_kind::set_name
-            && (!request.name.has_value() || request.name->find('\0') != std::string::npos))) {
+            && (!request.name.has_value() || request.name->find('\0') != std::string::npos))
+        || (request.kind == sdk_object_edit_kind::create_section
+            && (!request.section_frame.has_value() || *request.section_frame < 1))
+        || (request.kind == sdk_object_edit_kind::delete_section
+            && (!request.section_index.has_value() || *request.section_index < 1))
+        || (request.kind == sdk_object_edit_kind::move_section
+            && (!request.section_index.has_value() || *request.section_index < 1
+                || !request.section_frame.has_value() || *request.section_frame < 1))) {
         return {
             .ok = false,
             .error_code = "invalid_argument",
@@ -4099,7 +4444,15 @@ sdk_batch_edit_result sdk_read_facade::edit_batch(
                         || *object->destination_start_frame < 1))
                 || (object->kind == sdk_object_edit_kind::set_name
                     && (!object->name.has_value()
-                        || object->name->find('\0') != std::string::npos))) {
+                        || object->name->find('\0') != std::string::npos))
+                || (object->kind == sdk_object_edit_kind::create_section
+                    && (!object->section_frame.has_value() || *object->section_frame < 1))
+                || (object->kind == sdk_object_edit_kind::delete_section
+                    && (!object->section_index.has_value() || *object->section_index < 1))
+                || (object->kind == sdk_object_edit_kind::move_section
+                    && (!object->section_index.has_value() || *object->section_index < 1
+                        || !object->section_frame.has_value()
+                        || *object->section_frame < 1))) {
                 return {.ok = false, .error_code = "invalid_argument",
                     .error_message = "Batch object edit parameters are invalid"};
             }
@@ -4264,6 +4617,123 @@ sdk_preview_render_result sdk_read_facade::render_preview(
     }
 }
 
+sdk_project_save_result sdk_read_facade::save_project(
+    const std::uint32_t timeout_ms) const noexcept {
+    try {
+        if (timeout_ms == 0U) {
+            return {
+                .error_code = "invalid_argument",
+                .error_message = "Project save timeout must be positive",
+            };
+        }
+        const sdk_status_snapshot status = query_status();
+        if (!status.is_sdk_ready) {
+            return {
+                .error_code = "sdk_not_available",
+                .error_message = "AviUtl2 SDK edit handle is not available",
+            };
+        }
+        if (status.has_query_error) {
+            return {
+                .error_code = "sdk_query_failed",
+                .error_message = status.query_error,
+            };
+        }
+        if (status.project_state == sdk_project_state::unsaved) {
+            return {
+                .error_code = "project_path_required",
+                .error_message = "The current project must be saved with a name before MCP can save it",
+            };
+        }
+        if (status.project_state != sdk_project_state::saved
+            || !status.project_path.has_value()) {
+            return {
+                .error_code = "project_not_open",
+                .error_message = "No named AviUtl2 project is open",
+            };
+        }
+        if (status.edit_state != sdk_edit_state::edit) {
+            return {
+                .error_code = sdk_edit_state_error_code(status.edit_state),
+                .error_message = sdk_edit_state_error_message(status.edit_state),
+            };
+        }
+
+        void* host_app_window = nullptr;
+        std::uint64_t save_sequence = 0U;
+        sdk_project_save_command save_command;
+        {
+            std::scoped_lock lock(mutex_);
+            host_app_window = host_app_window_;
+            save_sequence = project_save_sequence_;
+            save_command = project_save_command_;
+        }
+        if (!save_command) {
+            return {
+                .error_code = "sdk_not_available",
+                .error_message = "AviUtl2 project save command is unavailable",
+            };
+        }
+
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(timeout_ms);
+        const sdk_project_save_command_result command = save_command(
+            host_app_window,
+            timeout_ms);
+        if (!command.ok) {
+            return {
+                .command_was_dispatched = command.command_was_dispatched,
+                .error_code = command.error_code,
+                .error_message = command.error_message,
+            };
+        }
+
+        std::unique_lock lock(mutex_);
+        const bool was_saved = project_saved_cv_.wait_until(
+            lock,
+            deadline,
+            [this, save_sequence]() {
+                return edit_handle_ == nullptr || project_save_sequence_ > save_sequence;
+            });
+        if (!was_saved) {
+            return {
+                .command_was_dispatched = true,
+                .error_code = "operation_timeout",
+                .error_message = "AviUtl2 did not confirm project save before the timeout",
+            };
+        }
+        if (edit_handle_ == nullptr) {
+            return {
+                .command_was_dispatched = true,
+                .error_code = "sdk_not_available",
+                .error_message = "AviUtl2 detached while saving the project",
+            };
+        }
+        if (project_state_ != sdk_project_state::saved || !project_path_.has_value()) {
+            return {
+                .command_was_dispatched = true,
+                .error_code = "sdk_query_failed",
+                .error_message = "AviUtl2 save callback did not report a named project",
+            };
+        }
+        return {
+            .ok = true,
+            .command_was_dispatched = true,
+            .path = project_path_,
+        };
+    } catch (const std::exception& exception) {
+        return {
+            .error_code = "sdk_query_failed",
+            .error_message = exception.what(),
+        };
+    } catch (...) {
+        return {
+            .error_code = "sdk_query_failed",
+            .error_message = "Project save failed with an unknown exception",
+        };
+    }
+}
+
 void sdk_read_facade::capture_project(PROJECT_FILE* project, const bool is_load) noexcept {
     sdk_project_state state = sdk_project_state::not_open;
     std::optional<std::string> path;
@@ -4298,7 +4768,12 @@ void sdk_read_facade::capture_project(PROJECT_FILE* project, const bool is_load)
         if (is_load) {
             sdk_call_not_before_ms_ = GetTickCount64() + 500U;
             callback = project_loaded_callback_;
+        } else {
+            ++project_save_sequence_;
         }
+    }
+    if (!is_load) {
+        project_saved_cv_.notify_all();
     }
     if (callback) {
         try {

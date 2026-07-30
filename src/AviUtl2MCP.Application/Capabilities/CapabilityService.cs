@@ -36,6 +36,9 @@ public static class CapabilityService
         "aviutl_move_object",
         "aviutl_delete_object",
         "aviutl_set_object_name",
+        "aviutl_create_object_section",
+        "aviutl_delete_object_section",
+        "aviutl_move_object_section",
         "aviutl_set_effect_item",
         "aviutl_set_effect_state",
         "aviutl_set_layer",
@@ -73,6 +76,13 @@ public static class CapabilityService
             editOperations,
             canEdit,
             GetEditReason(environment));
+
+        bool canSaveProject = canEdit && environment.IsProjectSaved;
+        AddOperations(
+            operations,
+            ["aviutl_save_project"],
+            canSaveProject,
+            GetSaveProjectReason(environment));
 
         bool canUsePsdToolKit = canEdit && environment.HasPsdToolKit;
         AddOperations(
@@ -135,6 +145,12 @@ public static class CapabilityService
     private static string? GetPsdToolKitReason(CapabilityEnvironment environment)
     {
         return GetEditReason(environment) ?? (!environment.HasPsdToolKit ? "psdtoolkit_not_available" : null);
+    }
+
+    private static string? GetSaveProjectReason(CapabilityEnvironment environment)
+    {
+        return GetEditReason(environment)
+            ?? (!environment.IsProjectSaved ? "project_path_required" : null);
     }
 
     private static string? GetGcmzDropsReason(CapabilityEnvironment environment)

@@ -16,6 +16,9 @@ public sealed class ContractRoundTripTests
         "moveObject",
         "deleteObject",
         "setObjectName",
+        "createObjectSection",
+        "deleteObjectSection",
+        "moveObjectSection",
         "setEffectItem",
         "setEffectState",
         "setLayer",
@@ -55,9 +58,12 @@ public sealed class ContractRoundTripTests
             new BatchMoveObject("4", new MoveObjectArgs(CreateLocator(), new MovePlacement(0, 2, 31))),
             new BatchDeleteObject("5", new DeleteObjectArgs(CreateLocator())),
             new BatchSetObjectName("6", new SetObjectNameArgs(CreateLocator(), "renamed")),
-            new BatchSetEffectItem("7", new SetEffectItemArgs(CreateLocator(), new EffectInstanceSelector("effect"), "opacity", JsonSerializer.SerializeToElement(100))),
-            new BatchSetEffectState("8", new SetEffectStateArgs(CreateLocator(), new EffectInstanceSelector("effect")) { IsEnabled = true }),
-            new BatchSetLayer("9", new SetLayerArgs(1) { Name = "voice" }),
+            new BatchCreateObjectSection("7", new CreateObjectSectionArgs(CreateLocator(), 15)),
+            new BatchDeleteObjectSection("8", new DeleteObjectSectionArgs(CreateLocator(), 1)),
+            new BatchMoveObjectSection("9", new MoveObjectSectionArgs(CreateLocator(), 1, 16)),
+            new BatchSetEffectItem("10", new SetEffectItemArgs(CreateLocator(), new EffectInstanceSelector("effect"), "opacity", JsonSerializer.SerializeToElement(100))),
+            new BatchSetEffectState("11", new SetEffectStateArgs(CreateLocator(), new EffectInstanceSelector("effect")) { IsEnabled = true }),
+            new BatchSetLayer("12", new SetLayerArgs(1) { Name = "voice" }),
         ];
         ExecuteBatchInput input = new()
         {

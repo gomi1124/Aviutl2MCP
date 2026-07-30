@@ -2,7 +2,7 @@
 
 ## 1. 適用範囲
 
-本書はV1で公開する28 tools、5 resources、4 promptsの名前、入力、構造化出力、エラー、annotationsを固定する。機械可読な必須、enum、条件、nested DTO、tool別input/outputは [V1 Schema catalog](../schemas/mcp/v1/catalog.json) を正とする。
+本書はV1で公開する32 tools、5 resources、4 promptsの名前、入力、構造化出力、エラー、annotationsを固定する。機械可読な必須、enum、条件、nested DTO、tool別input/outputは [V1 Schema catalog](../schemas/mcp/v1/catalog.json) を正とする。
 
 - MCP SDK: 公式C# SDK `ModelContextProtocol` 1.4.1
 - transport: stdio
@@ -77,12 +77,16 @@ SDKハンドルを公開・保存せず、次の複合ロケーターを使う�
 
 `MovePlacement`は`sceneId`、`layer`、`startFrame`だけを持つ。公開SDKのmoveは長さを変更しないため、V1のmoveへ`endFrame`や`durationFrames`を指定できない。
 
+#### ObjectSection
+
+すべてのobject応答は`sections[]`を持ち、各要素を`{index,startFrame}`で返す。`index`は0始まりで、`index=0`はobject先頭を表す。作成・移動・削除の対象にできる中間点は`section >= 1`とし、作成frameはobject先頭より後かつ終了frame以下、移動frameは前後の区間開始を跨がない値に制限する。
+
 #### EffectDefinitionSelector / EffectInstanceSelector / EffectItemValue
 
 - `EffectDefinitionSelector`: `name`（1～4096文字）。`enum_effect_name`と`create_object`が公開する名称だけを使う。
 - `EffectInstanceSelector`: `name`（1～4096文字）と`occurrence`（0以上、既定0）。object内の同名effectを順序で選ぶ。
 - `EffectItemValue`: JSON `boolean`、範囲内`integer`、有限`number`、最大64 KiBの`string`のいずれか。`NaN`と無限値は不可。
-- codecはitem typeが`integer`なら10進integer、`number`ならinvariant有限小数、`check`なら`0/1`、その他ならSDK alias形式のUTF-8 stringとする。
+- codecはitem typeが`integer`なら10進integer、`number`ならinvariant有限小数、`check`なら`0/1`、その他ならSDK alias形式のUTF-8 stringとする。`number` codecへJSON integerを渡した場合は正確に表現できる範囲で実数へ正規化し、`0`も有効な更新値として扱う。
 - `data`、`folder`、未知item typeはV1で読取専用とし、それ以外もSDKが返したtypeと値のround-tripをfixtureで確認できた場合だけ`isWritable=true`にする。
 - effect/item名の比較はSDKが返すUTF-8名との完全一致を基本とし、候補一覧をエラー詳細へ含められる。
 
@@ -124,8 +128,9 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 | Tool | 固有入力 | `data` |
 |---|---|---|
 | `aviutl_get_status` | なし | `connectionState`、各componentの`version/status`、`projectState`、`editState`、`selectedInstance`、候補`instances[]` |
-| `aviutl_get_capabilities` | なし | 28操作ごとの`available/reason/constraints`、protocol/schema/bridge版、V1制限値 |
+| `aviutl_get_capabilities` | なし | 32操作ごとの`available/reason/constraints`、protocol/schema/bridge版、V1制限値 |
 | `aviutl_get_project` | `includeScenes?: boolean=true` | `path?`、`isSaved`、解像度、frame/sample rate、current scene/frame、選択・表示範囲、`scenes[]` |
+| `aviutl_save_project` | `expectedRevision: string` | `path`、`saved: true`。名前付きの現在projectだけを保存し、`dryRun`と別名保存dialogは提供しない |
 | `aviutl_get_timeline` | `sceneId?`、`layerStart?`、`layerEnd?`、`startFrame?`、`endFrame?`、`detail?: "summary"|"effects"="summary"`、Page | `layers[]`、`objects[]`、Page、`coordinateSystem` |
 | `aviutl_find_objects` | `sceneId?`、`layerStart?`、`layerEnd?`、`startFrame?`、`endFrame?`、`nameContains?`、`effectName?`、`mediaPath?`、Page | 条件に一致する`objects[]`とPage |
 | `aviutl_get_object` | `locator: Locator`、`includeAlias?: boolean=false`、`includeEffectItems?: boolean=true` | `object`、effectごとの`effectItems[]`、選択状態、任意のUTF-8 `alias` |
@@ -138,7 +143,7 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 
 ### 3.2 タイムライン編集
 
-次のtoolは `aviutl_set_cursor` を除き、すべて `expectedRevision` と任意の `dryRun` を持つ。
+次のtoolは `aviutl_set_cursor` と `aviutl_save_project` を除き、すべて `expectedRevision` と任意の `dryRun` を持つ。`aviutl_save_project`は`expectedRevision`だけを持ち、保存完了後もcontent revisionを変更しない。
 
 | Tool | 固有入力 | `data` |
 |---|---|---|
@@ -148,6 +153,9 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 | `aviutl_move_object` | `locator: Locator`、`placement: MovePlacement` | 更新後`object`、移動前後。長さは不変 |
 | `aviutl_delete_object` | `locator: Locator` | 削除前の`object`、`deleted: true` |
 | `aviutl_set_object_name` | `locator: Locator`、`name: string`（0～4096文字） | 更新後`object` |
+| `aviutl_create_object_section` | `locator: Locator`、`frame: integer` | 中間点作成後の`object`と`sections[]` |
+| `aviutl_delete_object_section` | `locator: Locator`、`section: integer`（1以上） | 中間点削除後の`object`と`sections[]` |
+| `aviutl_move_object_section` | `locator: Locator`、`section: integer`（1以上）、`frame: integer` | 中間点移動後の`object`と`sections[]` |
 | `aviutl_set_effect_item` | `locator: Locator`、`effect: EffectInstanceSelector`、`itemName: string`、`value: EffectItemValue` | codec正規化後value、更新後effect item |
 | `aviutl_set_effect_state` | `locator: Locator`、`effect: EffectInstanceSelector`、`isEnabled?`、`isLocked?` | 更新後effect state。少なくとも一方必須 |
 | `aviutl_set_layer` | `sceneId?`、`layer: integer`、`name?`、`isVisible?`、`isLocked?` | 更新後layer。変更propertyを1つ以上必須 |
@@ -164,11 +172,11 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 | `expectedRevision` | string | はい | batch開始直前に再照合 |
 | `dryRun` | boolean | いいえ | 既定`false` |
 | `operations` | array | はい | 1～100件 |
-| `operations[].op` | enum | はい | 下記9種類 |
+| `operations[].op` | enum | はい | 下記12種類 |
 | `operations[].clientOperationId` | string | はい | batch内一意、1～128文字 |
 | `operations[].args` | object | はい | 対応する単体toolの固有入力 |
 
-許可する`op`は `createObject`、`createMediaObject`、`createAliasObject`、`moveObject`、`deleteObject`、`setObjectName`、`setEffectItem`、`setEffectState`、`setLayer` とする。batch、cursor、preview、logs、diagnose、PSD/GCMZDrops操作は入れない。
+許可する`op`は `createObject`、`createMediaObject`、`createAliasObject`、`moveObject`、`deleteObject`、`setObjectName`、`createObjectSection`、`deleteObjectSection`、`moveObjectSection`、`setEffectItem`、`setEffectState`、`setLayer` とする。batch、cursor、preview、logs、diagnose、PSD/GCMZDrops操作は入れない。
 
 V1は前操作の結果を後続`args`から参照する式を持たず、Locatorはbatch開始前に存在する対象だけを指す。全件を計画状態上で事前検証し、1回のSDK edit section、1 Undo単位で順に実行する。`data`は `results[]`、`appliedOperationIds[]`、`undoRecommended` を返す。`results[]`は`clientOperationId/op/status/changes`を必須とし、必要な場合だけ`object`、`objects`、`error`を持つ閉じたDTOとする。開始後の失敗は成功扱いせず `partial_operation` と現在状態を返す。
 
@@ -287,7 +295,7 @@ Phase 1の共通エラーに加えて、設計で確定した次を使う。
 
 - 入力DTOはDataAnnotationsとApplicationの実行時検証を併用する。
 - JSON deserializationは未知propertyを拒否し、整数overflow、無効enum、非有限numberを拒否する。
-- DTOから生成した28 input/output schemasを `schemas/mcp/v1/catalog.json` の参照解決済みschemaと比較する。
+- DTOから生成した32 input/output schemasを `schemas/mcp/v1/catalog.json` の参照解決済みschemaと比較する。
 - `tools/list`のname、description、inputSchema、outputSchema、annotationsをcatalogに対してsnapshot testする。
 - schemaの破壊的変更はprotocol/schema major変更なしに行わない。
 - 各toolの正常、入力不正、未接続、能力不足、timeoutをMCP contract testで確認する。

@@ -79,6 +79,33 @@ public sealed class AviUtlEditService(
             new SetObjectNameArgs(input.Locator, input.Name),
             context);
 
+    public ValueTask<QueryExecutionResult<UpdatedObjectData>> CreateObjectSectionAsync(
+        CreateObjectSectionInput input,
+        RequestContext context) => ExecuteAsync<CreateObjectSectionArgs, UpdatedObjectData>(
+            "object.createSection",
+            input,
+            [input.Locator],
+            new CreateObjectSectionArgs(input.Locator, input.Frame),
+            context);
+
+    public ValueTask<QueryExecutionResult<UpdatedObjectData>> DeleteObjectSectionAsync(
+        DeleteObjectSectionInput input,
+        RequestContext context) => ExecuteAsync<DeleteObjectSectionArgs, UpdatedObjectData>(
+            "object.deleteSection",
+            input,
+            [input.Locator],
+            new DeleteObjectSectionArgs(input.Locator, input.Section),
+            context);
+
+    public ValueTask<QueryExecutionResult<UpdatedObjectData>> MoveObjectSectionAsync(
+        MoveObjectSectionInput input,
+        RequestContext context) => ExecuteAsync<MoveObjectSectionArgs, UpdatedObjectData>(
+            "object.moveSection",
+            input,
+            [input.Locator],
+            new MoveObjectSectionArgs(input.Locator, input.Section, input.Frame),
+            context);
+
     public ValueTask<QueryExecutionResult<EffectItemUpdateData>> SetEffectItemAsync(
         SetEffectItemInput input,
         RequestContext context) => ExecuteAsync<SetEffectItemArgs, EffectItemUpdateData>(
@@ -87,6 +114,23 @@ public sealed class AviUtlEditService(
             [input.Locator],
             new SetEffectItemArgs(input.Locator, input.Effect, input.ItemName, input.Value),
             context);
+
+    public ValueTask<QueryExecutionResult<SaveProjectData>> SaveProjectAsync(
+        SaveProjectInput input,
+        RequestContext context) => ExecuteCoreAsync(
+            input,
+            [],
+            context,
+            (instance, cancellationToken) => _editGateway.SaveProjectAsync(
+                new GatewayRequest<SaveProjectArgs>(
+                    instance.InstanceId,
+                    context.CorrelationId,
+                    context.Deadline,
+                    context.TimeoutMs,
+                    input.ExpectedRevision,
+                    false,
+                    new SaveProjectArgs()),
+                cancellationToken));
 
     public ValueTask<QueryExecutionResult<EffectStateUpdateData>> SetEffectStateAsync(
         SetEffectStateInput input,
@@ -295,6 +339,9 @@ public sealed class AviUtlEditService(
         BatchMoveObject value => value.Args.Locator,
         BatchDeleteObject value => value.Args.Locator,
         BatchSetObjectName value => value.Args.Locator,
+        BatchCreateObjectSection value => value.Args.Locator,
+        BatchDeleteObjectSection value => value.Args.Locator,
+        BatchMoveObjectSection value => value.Args.Locator,
         BatchSetEffectItem value => value.Args.Locator,
         BatchSetEffectState value => value.Args.Locator,
         _ => null,

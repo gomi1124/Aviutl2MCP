@@ -3,6 +3,7 @@
 #include "aviutl2_mcp/native_environment_probe.h"
 #include "aviutl2_mcp/native_operation_result.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
+#include "aviutl2_mcp/version.h"
 
 #include <nlohmann/json.hpp>
 
@@ -83,12 +84,14 @@ operation_result native_status_request_handler::execute(
             ? "unavailable"
             : status.has_query_error ? "faulted" : "ready";
         nlohmann::json components = nlohmann::json::array({
-            create_component("bridge", "ready", "0.1.0"),
+            create_component("bridge", "ready", PRODUCT_VERSION),
             create_component("aviutl", "ready", host_version_),
             create_component(
                 "sdk",
                 sdk_component_status,
-                status.is_sdk_ready ? nlohmann::json("2003300") : nlohmann::json(nullptr)),
+                status.is_sdk_ready
+                    ? nlohmann::json(MINIMUM_AVIUTL_VERSION_TEXT)
+                    : nlohmann::json(nullptr)),
         });
         for (const native_component_probe& component : describe_native_environment(environment)) {
             components.push_back(create_component(
@@ -111,7 +114,7 @@ operation_result native_status_request_handler::execute(
             {"instances", nlohmann::json::array({{
                 {"instanceId", identity_.instance_id},
                 {"processId", identity_.process_id},
-                {"bridgeVersion", "0.1.0"},
+                {"bridgeVersion", PRODUCT_VERSION},
                 {"state", "ready"},
             }})},
         };

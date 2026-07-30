@@ -105,8 +105,33 @@ namespace {
         request.destination_start_frame = parse_integer(*placement, "startFrame", 1);
     } else if (kind == sdk_object_edit_kind::set_name) {
         request.name = parse_string(params, "name", true);
+    } else if (kind == sdk_object_edit_kind::create_section) {
+        request.section_frame = parse_integer(params, "frame", 1);
+    } else if (kind == sdk_object_edit_kind::delete_section) {
+        request.section_index = parse_integer(params, "section", 1);
+    } else if (kind == sdk_object_edit_kind::move_section) {
+        request.section_index = parse_integer(params, "section", 1);
+        request.section_frame = parse_integer(params, "frame", 1);
     }
     return request;
+}
+
+[[nodiscard]] const char* get_change_kind(const sdk_object_edit_kind kind) noexcept {
+    switch (kind) {
+        case sdk_object_edit_kind::move:
+            return "move";
+        case sdk_object_edit_kind::delete_object:
+            return "delete";
+        case sdk_object_edit_kind::set_name:
+            return "setName";
+        case sdk_object_edit_kind::create_section:
+            return "createObjectSection";
+        case sdk_object_edit_kind::delete_section:
+            return "deleteObjectSection";
+        case sdk_object_edit_kind::move_section:
+            return "moveObjectSection";
+    }
+    return "unknown";
 }
 
 [[nodiscard]] nlohmann::json serialize_effect(const sdk_effect_summary& effect) {
@@ -130,6 +155,10 @@ namespace {
     for (const sdk_effect_summary& effect : object.effects) {
         effects.push_back(serialize_effect(effect));
     }
+    nlohmann::json sections = nlohmann::json::array();
+    for (std::size_t index = 0U; index < object.section_frames.size(); ++index) {
+        sections.push_back({{"index", index}, {"startFrame", object.section_frames[index]}});
+    }
     nlohmann::json result = {
         {"locator", {
             {"instanceId", locator.instance_id},
@@ -148,6 +177,7 @@ namespace {
         {"startFrame", object.candidate.start_frame},
         {"endFrame", object.candidate.end_frame},
         {"isSelected", object.is_selected},
+        {"sections", std::move(sections)},
         {"effects", std::move(effects)},
     };
     if (object.media_path.has_value()) {
@@ -160,9 +190,7 @@ namespace {
     const sdk_object_edit_request& request,
     const sdk_object_snapshot& before) {
     nlohmann::json change{
-        {"kind", request.kind == sdk_object_edit_kind::move ? "move"
-            : request.kind == sdk_object_edit_kind::delete_object ? "delete"
-            : "setName"},
+        {"kind", get_change_kind(request.kind)},
         {"target", "object:" + std::to_string(before.candidate.scene_id)
             + "/" + std::to_string(before.candidate.layer)
             + "/" + std::to_string(before.candidate.start_frame)},
@@ -181,6 +209,17 @@ namespace {
     } else if (request.kind == sdk_object_edit_kind::set_name) {
         change["before"] = before.candidate.name;
         change["after"] = *request.name;
+    } else if (request.kind == sdk_object_edit_kind::create_section) {
+        change["before"] = "absent";
+        change["after"] = *request.section_frame;
+    } else if (request.kind == sdk_object_edit_kind::delete_section) {
+        change["before"] = before.section_frames[static_cast<std::size_t>(
+            *request.section_index)];
+        change["after"] = "deleted";
+    } else if (request.kind == sdk_object_edit_kind::move_section) {
+        change["before"] = before.section_frames[static_cast<std::size_t>(
+            *request.section_index)];
+        change["after"] = *request.section_frame;
     } else {
         change["before"] = "present";
         change["after"] = "deleted";
@@ -211,8 +250,16 @@ namespace {
             && request.destination_layer == before.candidate.layer
             && request.destination_start_frame == before.candidate.start_frame;
     }
-    return request.kind == sdk_object_edit_kind::set_name
-        && request.name == before.candidate.name;
+    if (request.kind == sdk_object_edit_kind::set_name) {
+        return request.name == before.candidate.name;
+    }
+    if (request.kind == sdk_object_edit_kind::create_section) {
+        return std::ranges::find(before.section_frames, *request.section_frame)
+            != before.section_frames.end();
+    }
+    return request.kind == sdk_object_edit_kind::move_section
+        && before.section_frames[static_cast<std::size_t>(*request.section_index)]
+            == *request.section_frame;
 }
 
 }  // namespace

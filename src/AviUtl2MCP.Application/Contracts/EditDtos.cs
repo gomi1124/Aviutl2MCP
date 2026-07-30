@@ -28,11 +28,19 @@ public sealed record DeleteObjectArgs(ObjectLocator Locator);
 
 public sealed record SetObjectNameArgs(ObjectLocator Locator, string Name);
 
+public sealed record CreateObjectSectionArgs(ObjectLocator Locator, int Frame);
+
+public sealed record DeleteObjectSectionArgs(ObjectLocator Locator, int Section);
+
+public sealed record MoveObjectSectionArgs(ObjectLocator Locator, int Section, int Frame);
+
+public sealed record SaveProjectArgs;
+
 public sealed record SetEffectItemArgs(
     ObjectLocator Locator,
     EffectInstanceSelector Effect,
     string ItemName,
-    JsonElement Value);
+    [property: EffectItemValue] JsonElement Value);
 
 public sealed record SetEffectStateArgs(ObjectLocator Locator, EffectInstanceSelector Effect)
 {
@@ -59,6 +67,9 @@ public sealed record SetLayerArgs(int Layer)
 [JsonDerivedType(typeof(BatchMoveObject), "moveObject")]
 [JsonDerivedType(typeof(BatchDeleteObject), "deleteObject")]
 [JsonDerivedType(typeof(BatchSetObjectName), "setObjectName")]
+[JsonDerivedType(typeof(BatchCreateObjectSection), "createObjectSection")]
+[JsonDerivedType(typeof(BatchDeleteObjectSection), "deleteObjectSection")]
+[JsonDerivedType(typeof(BatchMoveObjectSection), "moveObjectSection")]
 [JsonDerivedType(typeof(BatchSetEffectItem), "setEffectItem")]
 [JsonDerivedType(typeof(BatchSetEffectState), "setEffectState")]
 [JsonDerivedType(typeof(BatchSetLayer), "setLayer")]
@@ -80,6 +91,21 @@ public sealed record BatchDeleteObject(string ClientOperationId, DeleteObjectArg
     : BatchOperation(ClientOperationId);
 
 public sealed record BatchSetObjectName(string ClientOperationId, SetObjectNameArgs Args)
+    : BatchOperation(ClientOperationId);
+
+public sealed record BatchCreateObjectSection(
+    string ClientOperationId,
+    CreateObjectSectionArgs Args)
+    : BatchOperation(ClientOperationId);
+
+public sealed record BatchDeleteObjectSection(
+    string ClientOperationId,
+    DeleteObjectSectionArgs Args)
+    : BatchOperation(ClientOperationId);
+
+public sealed record BatchMoveObjectSection(
+    string ClientOperationId,
+    MoveObjectSectionArgs Args)
     : BatchOperation(ClientOperationId);
 
 public sealed record BatchSetEffectItem(string ClientOperationId, SetEffectItemArgs Args)
@@ -141,6 +167,8 @@ public sealed record EffectItemUpdateData
     public IReadOnlyList<Change>? AppliedChanges { get; init; }
 }
 
+public sealed record SaveProjectData(string Path, bool Saved);
+
 public sealed record EffectStateUpdateData
 {
     public EffectSummary? Effect { get; init; }
@@ -174,6 +202,9 @@ public enum BatchOperationKind
     MoveObject,
     DeleteObject,
     SetObjectName,
+    CreateObjectSection,
+    DeleteObjectSection,
+    MoveObjectSection,
     SetEffectItem,
     SetEffectState,
     SetLayer,

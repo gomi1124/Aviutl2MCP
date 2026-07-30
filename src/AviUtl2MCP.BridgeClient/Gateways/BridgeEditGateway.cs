@@ -15,6 +15,9 @@ public sealed class BridgeEditGateway(BridgeConnectionRegistry connectionRegistr
         "object.move",
         "object.delete",
         "object.setName",
+        "object.createSection",
+        "object.deleteSection",
+        "object.moveSection",
         "effect.setItem",
         "effect.setState",
         "layer.set",
@@ -37,6 +40,14 @@ public sealed class BridgeEditGateway(BridgeConnectionRegistry connectionRegistr
         GatewayRequest<ExecuteBatchInput> request,
         CancellationToken cancellationToken) =>
         SendOperationAsync<ExecuteBatchInput, BatchData>("batch.execute", request, cancellationToken);
+
+    public ValueTask<GatewayResponse<SaveProjectData>> SaveProjectAsync(
+        GatewayRequest<SaveProjectArgs> request,
+        CancellationToken cancellationToken) =>
+        SendOperationAsync<SaveProjectArgs, SaveProjectData>(
+            "project.save",
+            request,
+            cancellationToken);
 
     public ValueTask<GatewayResponse<CursorData>> SetCursorAsync(
         GatewayRequest<SetCursorInput> request,

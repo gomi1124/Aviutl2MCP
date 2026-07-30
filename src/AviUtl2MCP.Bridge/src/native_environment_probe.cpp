@@ -20,11 +20,16 @@ constexpr std::uintmax_t MAXIMUM_ALIAS_BYTES = 64U * 1024U;
 [[nodiscard]] std::optional<std::string> extract_psdtoolkit_version(
     const std::vector<sdk_module_summary>& modules) {
     for (const sdk_module_summary& module : modules) {
-        if (module.name.find("PSDToolKit") == std::string::npos
-            && module.information.find("PSDToolKit") == std::string::npos) {
+        if (!std::string_view(module.type).starts_with("plugin")) {
             continue;
         }
-        const std::size_t version_start = module.information.find_first_of("0123456789");
+        const std::size_t marker = module.information.find("PSDToolKit");
+        if (marker == std::string::npos) {
+            continue;
+        }
+        const std::size_t version_start = module.information.find_first_of(
+            "0123456789",
+            marker + std::string_view("PSDToolKit").size());
         if (version_start == std::string::npos) {
             continue;
         }

@@ -202,6 +202,10 @@ template <typename TResult, typename TProbe>
     for (const sdk_effect_summary& effect : object.effects) {
         effects.push_back(serialize_effect(effect));
     }
+    nlohmann::json sections = nlohmann::json::array();
+    for (std::size_t index = 0U; index < object.section_frames.size(); ++index) {
+        sections.push_back({{"index", index}, {"startFrame", object.section_frames[index]}});
+    }
     nlohmann::json result{
         {"locator", {
             {"instanceId", locator.instance_id},
@@ -220,6 +224,7 @@ template <typename TResult, typename TProbe>
         {"startFrame", object.candidate.start_frame},
         {"endFrame", object.candidate.end_frame},
         {"isSelected", object.is_selected},
+        {"sections", std::move(sections)},
         {"effects", std::move(effects)},
     };
     if (object.media_path.has_value()) {
@@ -322,11 +327,16 @@ template <typename TResult, typename TProbe>
 [[nodiscard]] std::optional<std::string> extract_psdtoolkit_version(
     const std::vector<sdk_module_summary>& modules) {
     for (const sdk_module_summary& module : modules) {
-        if (module.name.find("PSDToolKit") == std::string::npos
-            && module.information.find("PSDToolKit") == std::string::npos) {
+        if (!std::string_view(module.type).starts_with("plugin")) {
             continue;
         }
-        const std::size_t start = module.information.find_first_of("0123456789");
+        const std::size_t marker = module.information.find("PSDToolKit");
+        if (marker == std::string::npos) {
+            continue;
+        }
+        const std::size_t start = module.information.find_first_of(
+            "0123456789",
+            marker + std::string_view("PSDToolKit").size());
         if (start == std::string::npos) {
             continue;
         }

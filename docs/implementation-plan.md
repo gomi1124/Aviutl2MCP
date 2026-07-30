@@ -4,13 +4,13 @@
 
 - 作成フェーズ: Phase 3
 - 対象フェーズ: Phase 4 実装・テスト・自動デバッグ
-- 状態: Phase 4完了（2026-07-19、33 AC合格・配布package生成・GitHub CI成功）
+- 状態: Phase 4完了（2026-07-27、34 AC合格・配布package生成・GitHub CI成功）
 - 設計入力: [Phase 2設計書](design.md)、[Phase 3クラス図](class-diagram.md)
-- 完了証拠: [受け入れテスト対応表](acceptance-test-matrix.md)の33 AC
-- M1証拠: locked restore、C# 8 project build、native `.aux2` build、28 tool schema conformance、C#/C++ 40-byte header golden vector
+- 完了証拠: [受け入れテスト対応表](acceptance-test-matrix.md)の34 AC
+- M1証拠: locked restore、C# 8 project build、native `.aux2` build、32 tool schema conformance、C#/C++ 40-byte header golden vector
 - M2進捗: 2026-07-19 WP2～WP4完了。plugin lifecycle、atomic descriptor、logon SID＋SYSTEM pipe ACL、frame/handshake、dispatcher、Command gate、cancel、at-most-once、revision、locatorを実装。Native 16 checkと.NET 61 test（実`.aux2` load/C# named-pipe相互運用を含む）で検証済み
-- WP5進捗: W5.1～W5.9完了。必須`RegisterPlugin` export、SDK read facade、load/save callback内project path copy、例外境界、project load時generation reset、`status.get`・`capabilities.get`・`project.get`・`timeline.get`・`object.find`・`object.get`・`effect.list`・`effect.items.list`を実装。保存済み/未保存/notOpen、1-based座標、範囲・page・選択・effect fingerprint・28操作能力、locator再解決、alias上限、effect/module/font/palette独立catalog、同名effect曖昧性、item型付きdecodeと未検証codecの読取専用化、catalog文字列予算、instance選択、revision拘束付き署名page cursor、gateway error変換、read 8 tool、5 resource、未接続stdio契約、最新診断resourceをNative 21 checkと.NET 105 test（実`.aux2` load/C# named-pipe相互運用を含む）で検証済み
-- WP6進捗: W6.1～W6.9完了。単体編集10操作に加えて`batch.execute`の9 discriminator、1～100件・一意client operation ID、開始時Locator解決、計画状態上の衝突・layer lock・delete順序、全件preflight、dry-run無変更、1回のSDK edit section/Undo、at-most-once再送、途中失敗時のapplied/failed/skipped・現在状態・`partial_operation`・Undo推奨を実装。11操作をApplication edit serviceとMCP toolへ公開し、partial dataのIPC伝搬、instance/Locator選択、入力上限、offline error、21 tool/5 resource列挙をNative 25 checkと.NET 119 test（実`.aux2` handler相互運用を含む。実AviUtl2 E2EはWP11で実施）で検証済み
+- WP5進捗: W5.1～W5.9完了。必須`RegisterPlugin` export、SDK read facade、load/save callback内project path copy、例外境界、project load時generation reset、`status.get`・`capabilities.get`・`project.get`・`project.save`・`timeline.get`・`object.find`・`object.get`・`effect.list`・`effect.items.list`を実装。保存済み/未保存/notOpen、1-based座標、範囲・page・選択・effect fingerprint・32操作能力、locator再解決、alias上限、effect/module/font/palette独立catalog、同名effect曖昧性、item型付きdecodeと未検証codecの読取専用化、catalog文字列予算、instance選択、revision拘束付き署名page cursor、gateway error変換、read 8 tool、5 resource、未接続stdio契約、最新診断resourceを自動テストと実機reportで検証する
+- WP6進捗: W6.1～W6.9完了。単体編集13操作に加えて`batch.execute`の12 discriminator、1～100件・一意client operation ID、開始時Locator解決、計画状態上の衝突・layer lock・delete順序、全件preflight、dry-run無変更、1回のSDK edit section/Undo、at-most-once再送、途中失敗時のapplied/failed/skipped・現在状態・`partial_operation`・Undo推奨を実装。14操作をApplication edit serviceとMCP toolへ公開し、partial dataのIPC伝搬、instance/Locator選択、入力上限、offline error、24 tool/5 resource列挙をNativeと.NET test（実`.aux2` handler相互運用を含む）で検証済み
 - WP7進捗: W7.1～W7.6完了。SDK非同期render callbackの所有権、遅延完了後cleanup、正負padded pitch RGBA copy、aspect維持・no-upscale・alpha/黒背景composite付きWIC PNG、16 MiB上限、IPC binary/hash/byteLength、Application側PNG契約検証、MCP ImageContent、実read/preview diagnostic smokeを実装。22 tool/5 resource列挙をNative 26 checkと.NET 127 testで検証済み（実AviUtl2 preview/診断E2EはW11.4で実施）
 - WP9進捗: W9.1～W9.3 logging基盤・3ログ源統合完了。serverのPID別stderr/JSONL、native制限ring/AviUtl `LOG_HANDLE`、共通診断項目、相関ID、秘密値mask、server→bridge→aviutlの安定順page、HMAC-SHA256署名cursor、期限・query・世代照合、部分障害warningをNative 18 checkと.NET 84 testで検証済み
 - WP9 diagnostics進捗: W9.4 context/rules完了。接続・process identity、project/edit state、core version、GCMZDrops Mutex/FMO/API v3/HWND-PID、PSDToolKit2 effect/alias、既知log、read/preview smokeを独立評価し、rule例外隔離・子UUIDv7相関ID・根拠件数/長さ制限を.NET 95 testで検証済み
@@ -18,7 +18,7 @@
 - WP9 report進捗: W9.9 generatorを先行実装。component別相関log、revision、preview/artifact SHA-256、versions、checks、起動PIDを相関directory内のJSONへ安全に集約し、非UUIDv7拒否と秘密値maskを自動testで検証済み
 - WP9 verification進捗: W9.8 before/after verifier完了。revision差とRGBA PNGのCRC/zlib/filter復号後pixel差を検証し、変更pixel数・比率・最大/平均channel差を返す
 
-V1の28 tools、5 resources、4 promptsを削減せず実装する。各末端taskは原則15～60分の検証可能な単位とし、失敗時に層を特定できる順で進める。
+V1の32 tools、5 resources、4 promptsを削減せず実装する。各末端taskは原則15～60分の検証可能な単位とし、失敗時に層を特定できる順で進める。
 
 ## 2. 問題分解
 
@@ -39,7 +39,7 @@ Level 0: AviUtl2 MCP V1を実装・検証・配布する
 │  ├─ Level 2: PSDToolKit2/GCMZDrops
 │  └─ Level 2: logs/diagnostics
 ├─ Level 1: MCP公開面
-│  ├─ Level 2: 28 tools
+│  ├─ Level 2: 32 tools
 │  ├─ Level 2: 5 resources
 │  └─ Level 2: 4 prompts
 └─ Level 1: 品質と配布
@@ -68,11 +68,11 @@ Level 0: AviUtl2 MCP V1を実装・検証・配布する
 |---|---|---|---|---:|
 | W1.1 | primitive DTOを実装 | UUID、revision、path、placement、locatorがschema境界を検証 | W0.3 | 45分 |
 | W1.2 | query DTOを実装 | status/project/timeline/effect/object DTOがJSON round-trip | W1.1 | 45分 |
-| W1.3 | edit/batch DTOを実装 | 9 batch discriminatorとclosed argsがround-trip | W1.1 | 60分 |
+| W1.3 | edit/batch DTOを実装 | 12 batch discriminatorとclosed argsがround-trip | W1.1 | 60分 |
 | W1.4 | preview/log/diagnose DTOを実装 | PNG metadataと閉じたdiagnostic DTOがround-trip | W1.1 | 40分 |
 | W1.5 | PSD DTOを実装 | profile、layerState、voice、validation DTOがround-trip | W1.1 | 45分 |
 | W1.6 | IPC header/message DTOを実装 | 40-byte header layoutとmessage enumが両言語fixture一致 | W0.3,W0.4 | 60分 |
-| W1.7 | Schema conformance testを作成 | 28 input/output schemaとC# DTOの代表値・拒否値を検証 | W1.2-W1.6 | 60分 |
+| W1.7 | Schema conformance testを作成 | 32 input/output schemaとC# DTOの代表値・拒否値を検証 | W1.2-W1.6 | 60分 |
 
 ### WP2 Application共通基盤
 
@@ -83,7 +83,7 @@ Level 0: AviUtl2 MCP V1を実装・検証・配布する
 | W2.3 | `InstanceSelector`を実装 | top-level/locator/env/唯一候補の優先順位とambiguous拒否 | W2.2 | 60分 |
 | W2.4 | `RequestValidator`を実装 | frame/layer/path/string/countの横断上限を検証 | W1.1,W2.1 | 60分 |
 | W2.5 | `PagingCursorCodec`を実装 | HMAC binding、期限、query/revision不一致を拒否 | W2.2 | 60分 |
-| W2.6 | `CapabilityService`を実装 | 28操作、version、固定limit DTOを返す | W2.3 | 60分 |
+| W2.6 | `CapabilityService`を実装 | 32操作、version、固定limit DTOを返す | W2.3 | 60分 |
 | W2.7 | envelope/result mapperを実装 | MCP成功、tool error、partial、warningを一貫変換 | W2.1,W2.2 | 45分 |
 
 ### WP3 C# BridgeClient
@@ -194,7 +194,7 @@ Level 0: AviUtl2 MCP V1を実装・検証・配布する
 |---|---|---|---|---:|
 | W10.1 | MCP composition rootを完成 | stdio server、DI、全Adapterを登録 | W5.7,W6.9,W7.5,W8.12,W9.5 | 45分 |
 | W10.2 | prompt 4種を実装 | 引数schemaと安全手順が設計表に一致 | W10.1 | 45分 |
-| W10.3 | catalog parity testを実装 | 28/5/4の名前、schema、description、annotationを比較 | W10.1,W10.2 | 60分 |
+| W10.3 | catalog parity testを実装 | 32/5/4の名前、schema、description、annotationを比較 | W10.1,W10.2 | 60分 |
 | W10.4 | MCP black-box testを完成 | initialize/list/read/prompt/tool/image/error/closeを検証 | W10.3 | 60分 |
 
 ### WP11 実機harness・package・CI
@@ -209,7 +209,7 @@ Level 0: AviUtl2 MCP V1を実装・検証・配布する
 | W11.6 | `.au2pkg.zip` packagingを実装 | bridge、server、asset manifest、licenseを再現可能生成 | W10.4,W11.3-W11.5 | 60分 |
 | W11.7 | MCP client設定exampleを作成 | 絶対path、stdio command、複数instance指定を記載 | W11.6 | 30分 |
 | W11.8 | Windows CIを実装 | restore locked/build/unit/contract/native/stdio/packageを実行 | W10.4,W11.6 | 60分 |
-| W11.9 | 33 AC証拠を集約 | test名、report、artifactをmatrixへ逆リンク | W11.3-W11.8 | 60分 |
+| W11.9 | 34 AC証拠を集約 | test名、report、artifactをmatrixへ逆リンク | W11.3-W11.8 | 60分 |
 
 ## 4. 依存関係
 
@@ -259,10 +259,10 @@ flowchart LR
 | M1 Buildable skeleton | WP0～WP1完了 | locked restore、C# build、native build、schema test |
 | M2 Connected bridge | WP2～WP4完了 | fake bridge handshake/reconnect/cancel/at-most-once |
 | M3 Read-only MCP | WP5完了 | MCP initialize/list、read 8 tools、5 resources |
-| M4 Safe editing | WP6完了 | dry-run、revision、9 batch op、Undo、再送 |
+| M4 Safe editing | WP6完了 | dry-run、revision、12 batch op、Undo、再送 |
 | M5 Visual diagnostics | WP7とWP9基礎完了 | PNG contract、late render、logs、debug report |
 | M6 PSD workflow | WP8完了 | 2 voice route、config isolation、partial operation |
-| M7 V1 complete | WP9～WP11完了 | 28/5/4 parity、33 AC、package smoke、実機report |
+| M7 V1 complete | WP9～WP11完了 | 32/5/4 parity、35 AC、package smoke、実機report |
 
 各milestoneでtestが失敗したまま次へ進まない。同じ原因へ3回失敗した場合は、試行、失敗理由、別approachをdebug reportへ残して設計判断を見直す。
 
@@ -292,12 +292,12 @@ flowchart LR
 |---|---|---|
 | AC-BLD-001～003 | WP0、WP11 | WP1 |
 | AC-MCP-001～005 | WP3、WP5、WP10 | WP2、WP4、WP9 |
-| AC-EDT-001～008 | WP5、WP6 | WP3、WP4、WP11 |
+| AC-EDT-001～009 | WP5、WP6 | WP3、WP4、WP11 |
 | AC-PSD-001～007 | WP8 | WP6、WP9、WP11 |
 | AC-DIA-001～006 | WP7、WP9 | WP3、WP4、WP11 |
 | AC-SAF-001～004 | WP2、WP4、WP6 | WP9、WP11 |
 
-個別test IDと33 ACの1対1対応は[受け入れテスト対応表](acceptance-test-matrix.md)を正本とする。
+個別test IDと34 ACの1対1対応は[受け入れテスト対応表](acceptance-test-matrix.md)を正本とする。
 
 ## 9. リスクと先行probe
 
@@ -315,7 +315,7 @@ flowchart LR
 
 | 観点 | 発見 | 反映 |
 |---|---|---|
-| 機能削減 | queryやPSDを後回しにしたままMVP完了扱いする危険 | M7だけをV1完了とし28/5/4 parityを必須化 |
+| 機能削減 | queryやPSDを後回しにしたままMVP完了扱いする危険 | M7だけをV1完了とし32/5/4 parityを必須化 |
 | 粒度 | native bridgeやPSDが1 taskでは大きすぎる | codec、route、lease、postcondition等を60分以下へ分割 |
 | 循環依存 | diagnosticsが全domainを前提にし実装を止める | logging基礎を先行し、diagnostic ruleを後から合流 |
 | テストの偽陽性 | GCMZ receiptやSendMessage returnだけで成功になる | SDK再検索と個別事後条件を必須化 |
@@ -331,9 +331,9 @@ flowchart LR
 以下は2026-07-19にすべて達成済み。個別の自動・実機証跡は[受け入れテスト対応表](acceptance-test-matrix.md)に記録する。
 
 - Windows x64でC# serverとnative `.aux2`がclean buildできる。
-- 28 tools、5 resources、4 promptsがmachine catalogと一致する。
+- 32 tools、5 resources、4 promptsがmachine catalogと一致する。
 - unit、schema、MCP contract、stdio、native、bridge integration testが成功する。
 - 専用実機でread/edit/Undo/preview/PSD/voice/diagnosticsを検証する。
-- 33 ACすべてに成功証拠または明示的な実機reportがある。
+- 34 ACすべてに成功証拠または明示的な実機reportがある。
 - `.au2pkg.zip`、MCP server配布物、設定例、license、導入/診断手順を生成する。
 - Git/GitHubへ論理単位のcommitをpushし、作業treeがcleanである。

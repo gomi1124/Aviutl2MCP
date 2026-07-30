@@ -32,6 +32,11 @@ public sealed record GetProjectInput : CommonInput
     public bool IncludeScenes { get; init; } = true;
 }
 
+public sealed record SaveProjectInput : CommonInput
+{
+    public required Revision ExpectedRevision { get; init; }
+}
+
 public enum TimelineDetail
 {
     Summary,
@@ -143,6 +148,29 @@ public sealed record SetObjectNameInput : MutationInput
     public required string Name { get; init; }
 }
 
+public sealed record CreateObjectSectionInput : MutationInput
+{
+    public required ObjectLocator Locator { get; init; }
+
+    public required int Frame { get; init; }
+}
+
+public sealed record DeleteObjectSectionInput : MutationInput
+{
+    public required ObjectLocator Locator { get; init; }
+
+    public required int Section { get; init; }
+}
+
+public sealed record MoveObjectSectionInput : MutationInput
+{
+    public required ObjectLocator Locator { get; init; }
+
+    public required int Section { get; init; }
+
+    public required int Frame { get; init; }
+}
+
 public sealed record SetEffectItemInput : MutationInput
 {
     public required ObjectLocator Locator { get; init; }
@@ -151,6 +179,7 @@ public sealed record SetEffectItemInput : MutationInput
 
     public required string ItemName { get; init; }
 
+    [EffectItemValue]
     public required System.Text.Json.JsonElement Value { get; init; }
 }
 

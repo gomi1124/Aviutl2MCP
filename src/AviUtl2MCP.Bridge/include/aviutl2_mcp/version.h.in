@@ -1,0 +1,15 @@
+#pragma once
+
+#include <cstdint>
+
+namespace aviutl2_mcp {
+
+inline constexpr char PRODUCT_VERSION[] = "@PROJECT_VERSION@";
+inline constexpr wchar_t BRIDGE_INFORMATION[] =
+    L"AviUtl2 MCP Bridge version @PROJECT_VERSION@";
+inline constexpr std::uint32_t MINIMUM_AVIUTL_VERSION =
+    @AVIUTL2_MCP_MINIMUM_AVIUTL_VERSION@U;
+inline constexpr char MINIMUM_AVIUTL_VERSION_TEXT[] =
+    "@AVIUTL2_MCP_MINIMUM_AVIUTL_VERSION@";
+
+}  // namespace aviutl2_mcp

@@ -7,6 +7,7 @@ using AviUtl2MCP.BridgeClient.Gateways;
 namespace AviUtl2MCP.RealAviUtlTests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class RealPackageInstallTests
 {
     private const string PACKAGE_PATH_VARIABLE =

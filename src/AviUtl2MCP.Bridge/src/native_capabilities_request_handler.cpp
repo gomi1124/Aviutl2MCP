@@ -6,6 +6,7 @@
 #include "aviutl2_mcp/native_operation_result.h"
 #include "aviutl2_mcp/psd_contract.h"
 #include "aviutl2_mcp/sdk_read_facade.h"
+#include "aviutl2_mcp/version.h"
 
 #include <Windows.h>
 
@@ -52,10 +53,17 @@ constexpr std::array EDIT_OPERATIONS{
     std::string_view("aviutl_move_object"),
     std::string_view("aviutl_delete_object"),
     std::string_view("aviutl_set_object_name"),
+    std::string_view("aviutl_create_object_section"),
+    std::string_view("aviutl_delete_object_section"),
+    std::string_view("aviutl_move_object_section"),
     std::string_view("aviutl_set_effect_item"),
     std::string_view("aviutl_set_effect_state"),
     std::string_view("aviutl_set_layer"),
     std::string_view("aviutl_execute_batch"),
+};
+
+constexpr std::array SAVE_OPERATIONS{
+    std::string_view("aviutl_save_project"),
 };
 
 constexpr std::array PSD_TOOLKIT_OPERATIONS{
@@ -100,6 +108,13 @@ void add_operations(
     return project_reason != nullptr ? project_reason
         : status.edit_state == sdk_edit_state::edit ? nullptr
         : "edit_not_available";
+}
+
+[[nodiscard]] const char* get_save_reason(const sdk_status_snapshot& status) noexcept {
+    const char* edit_reason = get_edit_reason(status);
+    return edit_reason != nullptr ? edit_reason
+        : status.project_state == sdk_project_state::saved ? nullptr
+        : "project_path_required";
 }
 
 [[nodiscard]] const char* choose_reason(
@@ -158,6 +173,7 @@ operation_result native_capabilities_request_handler::execute(
         const char* sdk_reason = get_sdk_reason(status);
         const char* project_reason = get_project_reason(status);
         const char* edit_reason = get_edit_reason(status);
+        const char* save_reason = get_save_reason(status);
         const native_environment_probe psd = probe_native_environment(sdk_, status);
         const bool has_profile = psd.psd_profile.is_match;
         const bool has_gcmz = psd.gcmz.ok;
@@ -169,6 +185,7 @@ operation_result native_capabilities_request_handler::execute(
         add_operations(operations, SDK_OPERATIONS, sdk_reason == nullptr, sdk_reason);
         add_operations(operations, PROJECT_OPERATIONS, project_reason == nullptr, project_reason);
         add_operations(operations, EDIT_OPERATIONS, edit_reason == nullptr, edit_reason);
+        add_operations(operations, SAVE_OPERATIONS, save_reason == nullptr, save_reason);
         const char* psd_edit_reason = choose_reason(
             edit_reason, has_profile, false, has_gcmz, false, has_voice_route);
         add_operations(
@@ -201,12 +218,14 @@ operation_result native_capabilities_request_handler::execute(
         const nlohmann::json result = {
             {"operations", std::move(operations)},
             {"versions", {
-                {"server", "0.1.0"},
+                {"server", PRODUCT_VERSION},
                 {"schema", "1.0.0"},
                 {"protocol", "1.0"},
-                {"bridge", "0.1.0"},
+                {"bridge", PRODUCT_VERSION},
                 {"aviutl", host_version_},
-                {"sdk", status.is_sdk_ready ? nlohmann::json("2003300") : nlohmann::json(nullptr)},
+                {"sdk", status.is_sdk_ready
+                    ? nlohmann::json(MINIMUM_AVIUTL_VERSION_TEXT)
+                    : nlohmann::json(nullptr)},
                 {"psdToolKit", psd.psdtoolkit_version.has_value()
                     ? nlohmann::json(*psd.psdtoolkit_version)
                     : nlohmann::json(nullptr)},

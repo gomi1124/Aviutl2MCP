@@ -47,7 +47,7 @@
   "processId": 1234,
   "processCreationTime": 134135000000000000,
   "pipeName": "AviUtl2MCP.v1.019f...",
-  "bridgeVersion": "0.1.0",
+  "bridgeVersion": "0.2.0",
   "protocolMajor": 1
 }
 ```
@@ -109,7 +109,7 @@ V1のflags:
   "clientProcessId": 4567,
   "targetInstanceId": "uuid",
   "protocol":{"minMajor":1,"minMinor":0,"maxMajor":1,"maxMinor":0},
-  "clientVersion":"0.1.0",
+  "clientVersion":"0.2.0",
   "limits":{"jsonBytes":8388608,"binaryBytes":16777216,"inFlight":8}
 }
 ```
@@ -122,7 +122,7 @@ V1のflags:
   "aviutlProcessId":1234,
   "aviutlProcessCreationTime":134135000000000000,
   "protocol":{"major":1,"minor":0},
-  "versions":{"bridge":"0.1.0","sdk":"2003300","aviutl":"2010100"},
+  "versions":{"bridge":"0.2.0","sdk":"2010200","aviutl":"2010200"},
   "limits":{"jsonBytes":8388608,"binaryBytes":16777216,"inFlight":8},
   "capabilities":{}
 }
@@ -210,6 +210,8 @@ V1のflags:
 | diagnostics | `diagnostics.*`, `logs.*` | cache/log/OS/SDK |
 
 operationの正確な入力・出力DTOは同じversionの`schemas/ipc/`へ保存し、C#とC++のgolden contract testで照合する。
+
+`project.save`は変更operationとしてat-most-once管理するが、project内容を変更しないためcontent revisionを増加させない。host command送信後にsave callbackを確認できない場合は`outcome="unknown"`を返し、同じrequest IDを再実行しない。
 
 ## 10. Binary payload
 

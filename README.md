@@ -8,9 +8,9 @@ PSDToolKit2 と GCMZDrops が導入された Windows 環境を対象に、編集
 
 ## 現在の状態
 
-V1のMCP server、AviUtl2 Bridge、PSDToolKit2/GCMZDrops連携、自動診断、配布packageを実装し、33件の受け入れ検証を完了しています。
+v0.2.0では、AviUtl ExEdit2 2.1.2対応、object中間点の作成・削除・移動、project保存、effect数値・真偽値の型整合を含むV1のMCP server、Bridge、PSDToolKit2/GCMZDrops連携、自動診断、配布packageを実装しています。
 
-- 28 tools、5 resources、4 prompts
+- 32 tools、5 resources、4 prompts
 - revision競合、instance曖昧性、at-most-once、batch/Undoを考慮した編集境界
 - PSD作成、setup、character/layer状態、音声・字幕・LAB連携
 - MCP stdio、IPC、native、実AviUtl2の分層テスト
@@ -39,7 +39,7 @@ V1のMCP server、AviUtl2 Bridge、PSDToolKit2/GCMZDrops連携、自動診断、
 ## 前提
 
 - Windows 64-bit
-- AviUtl ExEdit2
+- AviUtl ExEdit2 2.1.2以降
 - PSDToolKit2
 - GCMZDrops
 
@@ -52,7 +52,7 @@ dotnet restore .\AviUtl2MCP.slnx --locked-mode
 dotnet build .\AviUtl2MCP.slnx --no-restore --configuration Release
 .\scripts\Test-McpStdio.ps1 -Configuration Release -NoBuild
 .\scripts\Test-BridgeIntegration.ps1 -Configuration Release -NoBuild
-.\scripts\Build-Package.ps1 -Configuration Release -Version 0.1.0
+.\scripts\Build-Package.ps1 -Configuration Release
 ```
 
 実AviUtl2テストは既存の編集環境を保護するため、明示的なopt-in、専用fixture copy、runner所有PIDの条件が揃った場合だけ実行します。debug reportは`artifacts\debug`または`artifacts\real-e2e`へ生成されます。

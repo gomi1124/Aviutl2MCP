@@ -236,6 +236,13 @@ constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
         request.destination_start_frame = parse_integer(*placement, "startFrame", 1);
     } else if (kind == sdk_object_edit_kind::set_name) {
         request.name = parse_string(args, "name", 64U * 1024U, true);
+    } else if (kind == sdk_object_edit_kind::create_section) {
+        request.section_frame = parse_integer(args, "frame", 1);
+    } else if (kind == sdk_object_edit_kind::delete_section) {
+        request.section_index = parse_integer(args, "section", 1);
+    } else if (kind == sdk_object_edit_kind::move_section) {
+        request.section_index = parse_integer(args, "section", 1);
+        request.section_frame = parse_integer(args, "frame", 1);
     }
     return request;
 }
@@ -299,6 +306,15 @@ constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
     if (operation == "setObjectName") {
         return parse_object_edit(args, sdk_object_edit_kind::set_name);
     }
+    if (operation == "createObjectSection") {
+        return parse_object_edit(args, sdk_object_edit_kind::create_section);
+    }
+    if (operation == "deleteObjectSection") {
+        return parse_object_edit(args, sdk_object_edit_kind::delete_section);
+    }
+    if (operation == "moveObjectSection") {
+        return parse_object_edit(args, sdk_object_edit_kind::move_section);
+    }
     if (operation == "setEffectItem") {
         return parse_effect_edit(args, sdk_effect_edit_kind::set_item);
     }
@@ -345,9 +361,20 @@ constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
             : "createAliasObject";
     }
     if (const auto* object = std::get_if<sdk_object_edit_request>(&request)) {
-        return object->kind == sdk_object_edit_kind::move ? "moveObject"
-            : object->kind == sdk_object_edit_kind::delete_object ? "deleteObject"
-            : "setObjectName";
+        switch (object->kind) {
+            case sdk_object_edit_kind::move:
+                return "moveObject";
+            case sdk_object_edit_kind::delete_object:
+                return "deleteObject";
+            case sdk_object_edit_kind::set_name:
+                return "setObjectName";
+            case sdk_object_edit_kind::create_section:
+                return "createObjectSection";
+            case sdk_object_edit_kind::delete_section:
+                return "deleteObjectSection";
+            case sdk_object_edit_kind::move_section:
+                return "moveObjectSection";
+        }
     }
     if (const auto* effect = std::get_if<sdk_effect_edit_request>(&request)) {
         return effect->kind == sdk_effect_edit_kind::set_item
@@ -359,6 +386,24 @@ constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
 
 [[nodiscard]] nlohmann::json serialize_value(const sdk_effect_item_value& value) {
     return std::visit([](const auto& item) -> nlohmann::json { return item; }, value);
+}
+
+[[nodiscard]] const char* get_object_change_kind(const sdk_object_edit_kind kind) noexcept {
+    switch (kind) {
+        case sdk_object_edit_kind::move:
+            return "move";
+        case sdk_object_edit_kind::delete_object:
+            return "delete";
+        case sdk_object_edit_kind::set_name:
+            return "setName";
+        case sdk_object_edit_kind::create_section:
+            return "createObjectSection";
+        case sdk_object_edit_kind::delete_section:
+            return "deleteObjectSection";
+        case sdk_object_edit_kind::move_section:
+            return "moveObjectSection";
+    }
+    return "unknown";
 }
 
 [[nodiscard]] nlohmann::json serialize_effect(const sdk_effect_summary& effect) {
@@ -382,6 +427,10 @@ constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
     for (const sdk_effect_summary& effect : object.effects) {
         effects.push_back(serialize_effect(effect));
     }
+    nlohmann::json sections = nlohmann::json::array();
+    for (std::size_t index = 0U; index < object.section_frames.size(); ++index) {
+        sections.push_back({{"index", index}, {"startFrame", object.section_frames[index]}});
+    }
     nlohmann::json result{
         {"locator", {
             {"instanceId", locator.instance_id},
@@ -400,6 +449,7 @@ constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
         {"startFrame", object.candidate.start_frame},
         {"endFrame", object.candidate.end_frame},
         {"isSelected", object.is_selected},
+        {"sections", std::move(sections)},
         {"effects", std::move(effects)},
     };
     if (object.media_path.has_value()) {
@@ -426,9 +476,7 @@ constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
         }
         const sdk_object_snapshot& before = *result.object;
         nlohmann::json change{
-            {"kind", object->kind == sdk_object_edit_kind::move ? "move"
-                : object->kind == sdk_object_edit_kind::delete_object ? "delete"
-                : "setName"},
+            {"kind", get_object_change_kind(object->kind)},
             {"target", "object:" + std::to_string(before.candidate.scene_id)
                 + "/" + std::to_string(before.candidate.layer)
                 + "/" + std::to_string(before.candidate.start_frame)},
@@ -447,6 +495,17 @@ constexpr std::size_t MAXIMUM_ALIAS_BYTES = 1024U * 1024U;
         } else if (object->kind == sdk_object_edit_kind::set_name) {
             change["before"] = before.candidate.name;
             change["after"] = *object->name;
+        } else if (object->kind == sdk_object_edit_kind::create_section) {
+            change["before"] = "absent";
+            change["after"] = *object->section_frame;
+        } else if (object->kind == sdk_object_edit_kind::delete_section) {
+            change["before"] = before.section_frames[
+                static_cast<std::size_t>(*object->section_index)];
+            change["after"] = "deleted";
+        } else if (object->kind == sdk_object_edit_kind::move_section) {
+            change["before"] = before.section_frames[
+                static_cast<std::size_t>(*object->section_index)];
+            change["after"] = *object->section_frame;
         } else {
             change["before"] = "present";
             change["after"] = "deleted";

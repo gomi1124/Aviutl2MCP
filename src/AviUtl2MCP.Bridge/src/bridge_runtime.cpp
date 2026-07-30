@@ -3,6 +3,7 @@
 #include "aviutl2_mcp/instance_descriptor.h"
 #include "aviutl2_mcp/named_pipe_server.h"
 #include "aviutl2_mcp/native_ring_logger.h"
+#include "aviutl2_mcp/version.h"
 
 #include <Windows.h>
 
@@ -35,7 +36,7 @@ bool bridge_runtime::start(const std::uint32_t host_version) noexcept {
         publisher_ = std::make_unique<instance_descriptor_publisher>(
             *identity_,
             descriptor_directory_,
-            "0.1.0");
+            PRODUCT_VERSION);
         server_->start();
         try {
             publisher_->publish();

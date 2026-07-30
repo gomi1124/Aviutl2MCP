@@ -15,9 +15,10 @@ using ModelContextProtocol.Protocol;
 namespace AviUtl2MCP.RealAviUtlTests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class RealReadPreviewDiagnosticTests
 {
-    private const uint MINIMUM_TESTED_AVIUTL_VERSION = 2010100U;
+    private const uint MINIMUM_TESTED_AVIUTL_VERSION = 2010200U;
     private static readonly byte[] PNG_SIGNATURE =
         [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
     private static readonly string[] REQUIRED_READY_COMPONENTS =
@@ -80,17 +81,20 @@ public sealed class RealReadPreviewDiagnosticTests
 
         IList<McpClientTool> tools = await client.ListToolsAsync(
             cancellationToken: timeout.Token);
-        Assert.AreEqual(28, tools.Count);
+        Assert.AreEqual(32, tools.Count);
 
-        JsonElement status = RequireSuccess(await client.CallToolAsync(
-            "aviutl_get_status",
-            CreateInstanceArguments(harness.InstanceId),
-            cancellationToken: timeout.Token));
+        JsonElement project = await WaitForProjectAsync(
+            client,
+            harness.InstanceId,
+            timeout.Token);
+        JsonElement status = await WaitForRequiredComponentsReadyAsync(
+            client,
+            harness.InstanceId,
+            timeout.Token);
         Assert.AreEqual("ready", status.GetProperty("data").GetProperty("connectionState").GetString());
         Assert.AreEqual(
             harness.InstanceId,
             status.GetProperty("data").GetProperty("selectedInstance").GetGuid());
-        AssertRequiredComponentsReady(status);
 
         StdioClientTransport secondTransport = new(new StdioClientTransportOptions
         {
@@ -123,8 +127,7 @@ public sealed class RealReadPreviewDiagnosticTests
         Assert.AreEqual(
             8,
             capabilities.GetProperty("data").GetProperty("limits").GetProperty("bridgeConnections").GetInt32());
-        AssertAviUtl211Compatibility(capabilities);
-        JsonElement project = await WaitForProjectAsync(client, harness.InstanceId, timeout.Token);
+        AssertAviUtl212Compatibility(capabilities);
         Assert.AreEqual(1920, project.GetProperty("data").GetProperty("width").GetInt32());
         Assert.AreEqual(1080, project.GetProperty("data").GetProperty("height").GetInt32());
         int contentFrame = project.GetProperty("data").GetProperty("currentFrame").GetInt32();
@@ -253,8 +256,9 @@ public sealed class RealReadPreviewDiagnosticTests
             BridgeEditGateway edit = new(registry);
             BridgePsdGateway psd = new(registry);
 
-            GatewayResponse<ProjectData> project = await query.GetProjectAsync(
-                CreateGatewayRequest(harness.InstanceId, new GetProjectInput()),
+            GatewayResponse<ProjectData> project = await WaitForProjectAsync(
+                query,
+                harness.InstanceId,
                 timeout.Token);
             Assert.IsTrue(project.Ok, project.Error?.Message);
             Assert.IsNotNull(project.Revision);
@@ -372,8 +376,9 @@ public sealed class RealReadPreviewDiagnosticTests
             BridgeQueryGateway query = new(registry);
             BridgePsdGateway psd = new(registry);
 
-            GatewayResponse<ProjectData> project = await query.GetProjectAsync(
-                CreateGatewayRequest(harness.InstanceId, new GetProjectInput()),
+            GatewayResponse<ProjectData> project = await WaitForProjectAsync(
+                query,
+                harness.InstanceId,
                 timeout.Token);
             Assert.IsTrue(project.Ok, project.Error?.Message);
             Assert.IsNotNull(project.Revision);
@@ -495,8 +500,9 @@ public sealed class RealReadPreviewDiagnosticTests
             BridgeQueryGateway query = new(registry);
             BridgePsdGateway psd = new(registry);
 
-            GatewayResponse<ProjectData> project = await query.GetProjectAsync(
-                CreateGatewayRequest(harness.InstanceId, new GetProjectInput()),
+            GatewayResponse<ProjectData> project = await WaitForProjectAsync(
+                query,
+                harness.InstanceId,
                 timeout.Token);
             Assert.IsTrue(project.Ok, project.Error?.Message);
             Assert.IsNotNull(project.Revision);
@@ -605,8 +611,9 @@ public sealed class RealReadPreviewDiagnosticTests
             BridgeQueryGateway query = new(registry);
             BridgePsdGateway psd = new(registry);
 
-            GatewayResponse<ProjectData> project = await query.GetProjectAsync(
-                CreateGatewayRequest(harness.InstanceId, new GetProjectInput()),
+            GatewayResponse<ProjectData> project = await WaitForProjectAsync(
+                query,
+                harness.InstanceId,
                 timeout.Token);
             Assert.IsTrue(project.Ok, project.Error?.Message);
             Assert.IsNotNull(project.Revision);
@@ -1016,11 +1023,12 @@ public sealed class RealReadPreviewDiagnosticTests
             Assert.AreEqual(
                 "ready",
                 component.GetProperty("status").GetString(),
-                $"Component {componentName} was not ready on the tested AviUtl2 build.");
+                $"Component {componentName} was not ready on the tested AviUtl2 build: "
+                    + component.GetRawText());
         }
     }
 
-    private static void AssertAviUtl211Compatibility(JsonElement capabilities)
+    private static void AssertAviUtl212Compatibility(JsonElement capabilities)
     {
         JsonElement data = capabilities.GetProperty("data");
         JsonElement versions = data.GetProperty("versions");
@@ -1034,10 +1042,10 @@ public sealed class RealReadPreviewDiagnosticTests
                 out uint aviUtlVersion),
             $"AviUtl2 version was not numeric: {aviUtlVersionText}");
         Assert.IsGreaterThanOrEqualTo(MINIMUM_TESTED_AVIUTL_VERSION, aviUtlVersion);
-        Assert.AreEqual("2003300", versions.GetProperty("sdk").GetString());
+        Assert.AreEqual("2010200", versions.GetProperty("sdk").GetString());
 
         JsonElement[] operations = data.GetProperty("operations").EnumerateArray().ToArray();
-        Assert.AreEqual(28, operations.Length);
+        Assert.AreEqual(32, operations.Length);
         int availableOperationCount = 0;
         foreach (JsonElement operation in operations)
         {
@@ -1055,7 +1063,7 @@ public sealed class RealReadPreviewDiagnosticTests
                 "gcmzdrops_not_available",
                 operation.GetProperty("reason").GetString());
         }
-        Assert.IsGreaterThanOrEqualTo(26, availableOperationCount);
+        Assert.IsGreaterThanOrEqualTo(27, availableOperationCount);
     }
 
     private static async Task<JsonElement> WaitForProjectAsync(
@@ -1093,6 +1101,63 @@ public sealed class RealReadPreviewDiagnosticTests
         while (DateTimeOffset.UtcNow < deadline);
 
         return RequireSuccess(lastResult!);
+    }
+
+    private static async Task<GatewayResponse<ProjectData>> WaitForProjectAsync(
+        BridgeQueryGateway query,
+        Guid instanceId,
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        GatewayResponse<ProjectData>? lastResponse = null;
+        do
+        {
+            lastResponse = await query.GetProjectAsync(
+                CreateGatewayRequest(instanceId, new GetProjectInput()),
+                cancellationToken);
+            if (lastResponse.Ok || lastResponse.Error?.Code != "project_not_open")
+            {
+                return lastResponse;
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        return lastResponse!;
+    }
+
+    private static async Task<JsonElement> WaitForRequiredComponentsReadyAsync(
+        McpClient client,
+        Guid instanceId,
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        JsonElement lastStatus;
+        do
+        {
+            lastStatus = RequireSuccess(await client.CallToolAsync(
+                "aviutl_get_status",
+                CreateInstanceArguments(instanceId),
+                cancellationToken: cancellationToken));
+            JsonElement[] components = lastStatus
+                .GetProperty("data")
+                .GetProperty("components")
+                .EnumerateArray()
+                .ToArray();
+            bool areRequiredComponentsReady = REQUIRED_READY_COMPONENTS.All(componentName =>
+                components.Any(component =>
+                    component.GetProperty("name").GetString() == componentName
+                    && component.GetProperty("status").GetString() == "ready"));
+            if (areRequiredComponentsReady)
+            {
+                return lastStatus;
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        AssertRequiredComponentsReady(lastStatus);
+        return lastStatus;
     }
 
     private static async Task<string> CreateDebugReportAsync(

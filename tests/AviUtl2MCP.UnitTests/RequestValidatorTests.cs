@@ -206,6 +206,33 @@ public sealed class RequestValidatorTests
     }
 
     [TestMethod]
+    public void ValidateEditInputEnforcesObjectSectionRanges()
+    {
+        // Arrange
+        CreateObjectSectionInput valid = new()
+        {
+            ExpectedRevision = new Revision("r1"),
+            Locator = CreateValidLocator(),
+            Frame = 15,
+        };
+        MoveObjectSectionInput invalid = new()
+        {
+            ExpectedRevision = new Revision("r1"),
+            Locator = CreateValidLocator(),
+            Section = 0,
+            Frame = 15,
+        };
+
+        // Act
+        Action validAction = () => RequestValidator.ValidateEditInput(valid);
+        Action invalidAction = () => RequestValidator.ValidateEditInput(invalid);
+
+        // Assert
+        validAction();
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(invalidAction);
+    }
+
+    [TestMethod]
     public void ValidateEditInputRejectsEffectStateWithoutProperties()
     {
         // Arrange
@@ -237,10 +264,10 @@ public sealed class RequestValidatorTests
     }
 
     [TestMethod]
-    public void ValidateEditInputAcceptsSupportedEffectItemValue()
+    public void ValidateEditInputAcceptsZeroEffectItemValue()
     {
         // Arrange
-        using JsonDocument document = JsonDocument.Parse("42");
+        using JsonDocument document = JsonDocument.Parse("0");
         SetEffectItemInput input = new()
         {
             ExpectedRevision = new Revision("r1"),
@@ -300,6 +327,15 @@ public sealed class RequestValidatorTests
                 new BatchMoveObject(
                     "move",
                     new MoveObjectArgs(locator, new MovePlacement(0, 3, 61))),
+                new BatchCreateObjectSection(
+                    "create-section",
+                    new CreateObjectSectionArgs(locator, 15)),
+                new BatchDeleteObjectSection(
+                    "delete-section",
+                    new DeleteObjectSectionArgs(locator, 1)),
+                new BatchMoveObjectSection(
+                    "move-section",
+                    new MoveObjectSectionArgs(locator, 1, 16)),
                 new BatchSetEffectItem(
                     "item",
                     new SetEffectItemArgs(
