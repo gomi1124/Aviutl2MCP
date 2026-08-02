@@ -6,7 +6,7 @@
 - 状態: ユーザー承認済み（2026-07-18）
 - 承認済み入力: [Phase 0 仕様書](specification.md)、[Phase 1 要件定義書](requirements.md)
 - 実現性根拠: [V1 実現性マトリクス](feasibility.md)
-- 対象環境: Windows 64-bit、AviUtl ExEdit2 2.1.2、PSDToolKit2、GCMZDrops
+- 対象環境: Windows 64-bit、AviUtl ExEdit2 2.1.3a、PSDToolKit2、GCMZDrops
 
 ## 2. 設計目標
 

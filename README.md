@@ -8,7 +8,7 @@ PSDToolKit2 と GCMZDrops が導入された Windows 環境を対象に、編集
 
 ## 現在の状態
 
-v0.2.0では、AviUtl ExEdit2 2.1.2対応、object中間点の作成・削除・移動、project保存、effect数値・真偽値の型整合を含むV1のMCP server、Bridge、PSDToolKit2/GCMZDrops連携、自動診断、配布packageを実装しています。
+v0.2.1では、AviUtl ExEdit2 2.1.3aと2026-08-02版SDKへの互換性更新、object中間点の作成・削除・移動、project保存、effect数値・真偽値の型整合を含むV1のMCP server、Bridge、PSDToolKit2/GCMZDrops連携、自動診断、配布packageを実装しています。
 
 - 32 tools、5 resources、4 prompts
 - revision競合、instance曖昧性、at-most-once、batch/Undoを考慮した編集境界
@@ -39,7 +39,7 @@ v0.2.0では、AviUtl ExEdit2 2.1.2対応、object中間点の作成・削除・
 ## 前提
 
 - Windows 64-bit
-- AviUtl ExEdit2 2.1.2以降
+- AviUtl ExEdit2 2.1.3以降（2.1.3aで実機確認）
 - PSDToolKit2
 - GCMZDrops
 

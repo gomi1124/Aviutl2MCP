@@ -1330,10 +1330,10 @@ void test_bridge_version() {
         aviutl2_mcp::get_bridge_abi_version() == aviutl2_mcp::BRIDGE_ABI_VERSION,
         "bridge ABI version mismatch");
     require(
-        std::string_view(aviutl2_mcp::PRODUCT_VERSION) == "0.2.0",
+        std::string_view(aviutl2_mcp::PRODUCT_VERSION) == "0.2.1",
         "bridge product version did not match VERSION");
     require(
-        aviutl2_mcp::MINIMUM_AVIUTL_VERSION == 2010200U,
+        aviutl2_mcp::MINIMUM_AVIUTL_VERSION == 2010300U,
         "bridge minimum AviUtl2 version did not match SDK baseline");
 }
 
@@ -2674,7 +2674,7 @@ void test_native_query_request_handlers() {
     require(!find_operation("aviutl_psd_setup").at("available").get<bool>()
             && find_operation("aviutl_psd_setup").at("reason") == "psdtoolkit_not_available",
         "native capabilities enabled an incomplete PSDToolKit profile");
-    require(capabilities.at("result").at("versions").at("sdk") == "2010200"
+    require(capabilities.at("result").at("versions").at("sdk") == "2010300"
             && capabilities.at("result").at("versions").at("psdToolKit") == "2.0.0alpha10"
             && capabilities.at("result").at("limits").at("bridgeConnections")
                 == aviutl2_mcp::MAXIMUM_BRIDGE_CONNECTIONS
