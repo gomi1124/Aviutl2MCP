@@ -18,7 +18,7 @@ namespace AviUtl2MCP.RealAviUtlTests;
 [DoNotParallelize]
 public sealed class RealReadPreviewDiagnosticTests
 {
-    private const uint MINIMUM_TESTED_AVIUTL_VERSION = 2010200U;
+    private const uint MINIMUM_TESTED_AVIUTL_VERSION = 2010300U;
     private static readonly byte[] PNG_SIGNATURE =
         [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
     private static readonly string[] REQUIRED_READY_COMPONENTS =
@@ -1042,7 +1042,7 @@ public sealed class RealReadPreviewDiagnosticTests
                 out uint aviUtlVersion),
             $"AviUtl2 version was not numeric: {aviUtlVersionText}");
         Assert.IsGreaterThanOrEqualTo(MINIMUM_TESTED_AVIUTL_VERSION, aviUtlVersion);
-        Assert.AreEqual("2010200", versions.GetProperty("sdk").GetString());
+        Assert.AreEqual("2010300", versions.GetProperty("sdk").GetString());
 
         JsonElement[] operations = data.GetProperty("operations").EnumerateArray().ToArray();
         Assert.AreEqual(32, operations.Length);
