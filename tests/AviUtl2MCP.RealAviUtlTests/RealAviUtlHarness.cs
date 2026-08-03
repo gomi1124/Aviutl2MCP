@@ -29,8 +29,13 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
     private const uint MF_DISABLED = 0x00000002;
     private const uint MF_GRAYED = 0x00000001;
     private const uint INVALID_MENU_ITEM_ID = 0xffffffff;
+    private const uint INPUT_KEYBOARD = 1;
+    private const uint KEYEVENTF_KEYUP = 0x00000002;
     private const uint WM_COMMAND = 0x00000111;
     private const uint SMTO_ABORTIFHUNG = 0x00000002;
+    private const int SW_RESTORE = 9;
+    private const ushort VK_CONTROL = 0x11;
+    private const ushort VK_Z = 0x5a;
     private readonly string sourceProjectHash;
     private readonly DateTime processStartTimeUtc;
     private readonly List<string> acceptanceTestIds = [];
@@ -154,31 +159,31 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
             throw new InvalidOperationException("The AviUtl2 window process identity changed.");
         }
         nint menu = GetMenu(window);
-        if (menu == nint.Zero)
+        if (menu != nint.Zero)
         {
-            throw new InvalidOperationException("The owned AviUtl2 window has no standard menu.");
+            List<string> observedLabels = [];
+            (uint CommandId, string Label)? undo = FindUndoMenuItem(menu, observedLabels);
+            if (undo is not null)
+            {
+                nint sent = SendMessageTimeout(
+                    window,
+                    WM_COMMAND,
+                    undo.Value.CommandId,
+                    nint.Zero,
+                    SMTO_ABORTIFHUNG,
+                    5_000,
+                    out _);
+                if (sent == nint.Zero)
+                {
+                    throw new InvalidOperationException(
+                        $"The AviUtl2 Undo command timed out ({Marshal.GetLastPInvokeError()}).");
+                }
+                return undo.Value.Label;
+            }
         }
-        List<string> observedLabels = [];
-        (uint CommandId, string Label)? undo = FindUndoMenuItem(menu, observedLabels);
-        if (undo is null)
-        {
-            throw new InvalidOperationException(
-                $"The AviUtl2 Undo menu item was not found. Menus: {string.Join(" | ", observedLabels.Take(64))}");
-        }
-        nint sent = SendMessageTimeout(
-            window,
-            WM_COMMAND,
-            undo.Value.CommandId,
-            nint.Zero,
-            SMTO_ABORTIFHUNG,
-            5_000,
-            out _);
-        if (sent == nint.Zero)
-        {
-            throw new InvalidOperationException(
-                $"The AviUtl2 Undo command timed out ({Marshal.GetLastPInvokeError()}).");
-        }
-        return undo.Value.Label;
+
+        InvokeUndoShortcut(window);
+        return "Ctrl+Z";
     }
 
     public static async Task<RealAviUtlHarness> StartAsync(
@@ -421,6 +426,91 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
         return null;
     }
 
+    private static void InvokeUndoShortcut(nint window)
+    {
+        if (IsIconic(window))
+        {
+            _ = ShowWindow(window, SW_RESTORE);
+        }
+        _ = SetForegroundWindow(window);
+        DateTime deadline = DateTime.UtcNow.AddSeconds(2);
+        while (GetForegroundWindow() != window && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(25);
+        }
+        if (GetForegroundWindow() != window)
+        {
+            throw new InvalidOperationException(
+                "The owned AviUtl2 window could not receive the Undo shortcut.");
+        }
+        if (IsKeyPressed(VK_CONTROL) || IsKeyPressed(VK_Z))
+        {
+            throw new InvalidOperationException(
+                "Ctrl+Z could not be sent because its keyboard state is already active.");
+        }
+
+        INPUT[] inputs =
+        [
+            CreateKeyboardInput(VK_CONTROL),
+            CreateKeyboardInput(VK_Z),
+            CreateKeyboardInput(VK_Z, KEYEVENTF_KEYUP),
+            CreateKeyboardInput(VK_CONTROL, KEYEVENTF_KEYUP),
+        ];
+        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        if (sent != inputs.Length)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            INPUT[] releases =
+            [
+                CreateKeyboardInput(VK_Z, KEYEVENTF_KEYUP),
+                CreateKeyboardInput(VK_CONTROL, KEYEVENTF_KEYUP),
+            ];
+            _ = SendInput((uint)releases.Length, releases, Marshal.SizeOf<INPUT>());
+            throw new InvalidOperationException(
+                $"The AviUtl2 Undo shortcut was incomplete ({sent}/{inputs.Length}, {error}).");
+        }
+    }
+
+    private static INPUT CreateKeyboardInput(ushort virtualKey, uint flags = 0) => new()
+    {
+        Type = INPUT_KEYBOARD,
+        Data = new INPUT_UNION
+        {
+            Keyboard = new KEYBDINPUT
+            {
+                VirtualKey = virtualKey,
+                Flags = flags,
+            },
+        },
+    };
+
+    private static bool IsKeyPressed(int virtualKey) =>
+        (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint Type;
+        public INPUT_UNION Data;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct INPUT_UNION
+    {
+        [FieldOffset(0)]
+        public KEYBDINPUT Keyboard;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort VirtualKey;
+        public ushort ScanCode;
+        public uint Flags;
+        public uint Time;
+        public nuint ExtraInfo;
+    }
+
 #pragma warning disable CA1838, SYSLIB1054
     [DllImport("user32.dll", SetLastError = true)]
     private static extern nint GetMenu(nint window);
@@ -451,6 +541,30 @@ internal sealed partial class RealAviUtlHarness : IAsyncDisposable
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(nint window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(nint window, int command);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(
+        uint numberOfInputs,
+        INPUT[] inputs,
+        int sizeOfInput);
 
     [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)]
     private static extern nint SendMessageTimeout(
