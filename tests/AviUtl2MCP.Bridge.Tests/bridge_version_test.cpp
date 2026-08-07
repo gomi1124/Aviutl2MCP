@@ -495,6 +495,10 @@ fake_sdk_state* ACTIVE_FAKE_SDK = nullptr;
     return &ACTIVE_FAKE_SDK->edit_handle;
 }
 
+[[nodiscard]] HWND get_fake_host_app_window() {
+    return reinterpret_cast<HWND>(static_cast<std::uintptr_t>(1U));
+}
+
 void register_fake_project_load_handler(void (*handler)(PROJECT_FILE*)) {
     ACTIVE_FAKE_SDK->project_load_handler = handler;
 }
@@ -1273,6 +1277,7 @@ void configure_fake_sdk(fake_sdk_state& state) {
     };
     state.edit_handle.get_edit_info = &get_fake_edit_info;
     state.edit_handle.get_edit_state = &get_fake_edit_state;
+    state.edit_handle.get_host_app_window = &get_fake_host_app_window;
     state.edit_handle.call_read_section_param = &call_fake_read_section;
     state.edit_handle.call_edit_section_param = &call_fake_edit_section;
     state.edit_handle.rendering_scene_video = &render_fake_scene_video;
@@ -2654,7 +2659,7 @@ void test_native_query_request_handlers() {
         identity.instance_id).get()));
     require(capabilities.at("ok").get<bool>(), "native capabilities query failed");
     const nlohmann::json& operations = capabilities.at("result").at("operations");
-    require(operations.size() == 32U, "native capabilities query did not return all 32 operations");
+    require(operations.size() == 33U, "native capabilities query did not return all 33 operations");
     const auto find_operation = [&operations](const std::string& name) -> const nlohmann::json& {
         const auto match = std::ranges::find_if(operations, [&name](const nlohmann::json& operation) {
             return operation.at("name") == name;
@@ -3444,7 +3449,33 @@ void test_native_object_edit_request_handlers() {
 void test_native_effect_layer_view_request_handlers() {
     fake_sdk_state fake;
     configure_fake_sdk(fake);
-    aviutl2_mcp::sdk_read_facade facade;
+    int scene_open_count = 0;
+    aviutl2_mcp::sdk_read_facade facade(
+        {},
+        [&fake, &scene_open_count](
+            void*,
+            const std::string&,
+            const aviutl2_mcp::scene_list_target& target,
+            std::uint32_t) {
+            ++scene_open_count;
+            if ((target.scene_id.has_value() && *target.scene_id == 2)
+                || (target.scene_name.has_value() && *target.scene_name == "Scene Two")) {
+                fake.edit_info.scene_id = 2;
+                fake.scene_name = L"Scene Two";
+                return aviutl2_mcp::scene_list_open_command_result{
+                    .ok = true,
+                    .command_was_dispatched = true,
+                    .target = aviutl2_mcp::scene_list_snapshot{
+                        .scene_id = 2,
+                        .name = "Scene Two",
+                    },
+                };
+            }
+            return aviutl2_mcp::scene_list_open_command_result{
+                .error_code = "scene_not_found",
+                .error_message = "Scene fixture target was not found",
+            };
+        });
     require(facade.register_host(&fake.host), "effect/layer/view fixture SDK registration failed");
     fake.project_load_handler(&fake.project_file);
 
@@ -3456,6 +3487,8 @@ void test_native_effect_layer_view_request_handlers() {
         identity, facade, "effect.setState", aviutl2_mcp::sdk_effect_edit_kind::set_state));
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_layer_request_handler>(facade));
     dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_view_request_handler>(facade));
+    dispatcher.register_handler(
+        std::make_unique<aviutl2_mcp::native_open_scene_request_handler>(facade));
 
     const aviutl2_mcp::sdk_timeline_query_result timeline = facade.query_timeline(
         aviutl2_mcp::sdk_timeline_query{
@@ -3666,6 +3699,44 @@ void test_native_effect_layer_view_request_handlers() {
             && stale_view.at("error").at("code") == "revision_conflict"
             && fake.edit_info.frame == 24,
         "native view edit accepted a stale view revision");
+
+    const std::string changed_view_revision = changed_view.at("viewRevision").get<std::string>();
+    const std::string open_scene_params = nlohmann::json{
+        {"sceneId", 2},
+        {"expectedViewRevision", changed_view_revision},
+    }.dump();
+    const nlohmann::json opened_scene = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 191U),
+            "view.openScene",
+            correlation_id,
+            open_scene_params),
+        identity.instance_id).get()));
+    require(opened_scene.at("ok").get<bool>()
+            && opened_scene.at("result").at("sceneId") == 2
+            && opened_scene.at("result").at("name") == "Scene Two"
+            && opened_scene.at("revision") == content_after_layer
+            && opened_scene.at("viewRevision") != changed_view_revision
+            && scene_open_count == 1,
+        "native scene open did not select and verify the requested scene");
+
+    const std::string opened_view_revision = opened_scene.at("viewRevision").get<std::string>();
+    const std::string same_scene_params = nlohmann::json{
+        {"sceneName", "Scene Two"},
+        {"expectedViewRevision", opened_view_revision},
+    }.dump();
+    const nlohmann::json same_scene = nlohmann::json::parse(get_json(dispatcher.dispatch(
+        create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), 192U),
+            "view.openScene",
+            correlation_id,
+            same_scene_params),
+        identity.instance_id).get()));
+    require(same_scene.at("ok").get<bool>()
+            && same_scene.at("result").at("sceneId") == 2
+            && same_scene.at("viewRevision") == opened_view_revision
+            && scene_open_count == 1,
+        "native scene open did not preserve the view revision for an idempotent request");
 
     dispatcher.stop();
     facade.detach();

@@ -9,6 +9,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace aviutl2_mcp {
 namespace {
@@ -105,6 +106,33 @@ namespace {
         throw std::invalid_argument("At least one view property is required");
     }
     return request;
+}
+
+[[nodiscard]] sdk_open_scene_request parse_open_scene_request(
+    const nlohmann::json& params,
+    const std::uint32_t timeout_ms) {
+    const std::optional<int> scene_id = parse_optional_integer(params, "sceneId", 0);
+    std::optional<std::string> scene_name;
+    const auto raw_name = params.find("sceneName");
+    if (raw_name != params.end()) {
+        if (!raw_name->is_string()) {
+            throw std::invalid_argument("sceneName must be a string");
+        }
+        std::string value = raw_name->get<std::string>();
+        if (value.empty() || value.find('\0') != std::string::npos
+            || value.size() > 64U * 1024U) {
+            throw std::invalid_argument("sceneName is outside the supported length");
+        }
+        scene_name = std::move(value);
+    }
+    if (scene_id.has_value() == scene_name.has_value()) {
+        throw std::invalid_argument("Exactly one of sceneId or sceneName is required");
+    }
+    return {
+        .scene_id = scene_id,
+        .scene_name = scene_name,
+        .timeout_ms = timeout_ms,
+    };
 }
 
 [[nodiscard]] nlohmann::json serialize_layer(const sdk_layer_snapshot& layer) {
@@ -331,6 +359,88 @@ operation_result native_view_request_handler::execute(
         return create_native_success(serialize_view(*edited.view).dump(), context);
     } catch (const nlohmann::json::exception&) {
         return create_native_failure("invalid_argument", "View edit request JSON is invalid", context);
+    } catch (const std::invalid_argument& exception) {
+        return create_native_failure("invalid_argument", exception.what(), context);
+    } catch (const std::exception& exception) {
+        return create_native_failure("sdk_query_failed", exception.what(), context, true);
+    }
+}
+
+native_open_scene_request_handler::native_open_scene_request_handler(sdk_read_facade& sdk)
+    : sdk_(sdk) {}
+
+std::string native_open_scene_request_handler::operation() const {
+    return "view.openScene";
+}
+
+bool native_open_scene_request_handler::is_mutating() const noexcept {
+    return false;
+}
+
+operation_result native_open_scene_request_handler::execute(
+    const operation_request& request,
+    operation_execution_context& context) {
+    try {
+        const nlohmann::json params = nlohmann::json::parse(request.params_json);
+        if (!params.is_object()) {
+            throw std::invalid_argument("Open scene parameters must be an object");
+        }
+        const auto expected = params.find("expectedViewRevision");
+        if (expected != params.end()) {
+            if (!expected->is_string()
+                || !context.revisions().matches_view(expected->get<std::string>())) {
+                return create_native_failure(
+                    "revision_conflict",
+                    "The expected view revision does not match the current revision",
+                    context);
+            }
+        }
+        const sdk_open_scene_request scene_request = parse_open_scene_request(
+            params,
+            request.timeout_ms);
+        if (!context.reach_commit_point()) {
+            return create_native_failure(
+                "operation_cancelled", "Scene open was cancelled before commit", context);
+        }
+        const sdk_open_scene_result opened = sdk_.open_scene(scene_request);
+        if (!opened.ok) {
+            if (opened.has_changed) {
+                static_cast<void>(context.revisions().commit_view_change());
+                return create_partial_failure(
+                    context,
+                    opened.error_message.empty()
+                        ? "The scene view changed but the requested scene was not verified"
+                        : opened.error_message.c_str(),
+                    false);
+            }
+            return create_native_failure(
+                opened.error_code.empty() ? "ui_automation_failed" : opened.error_code,
+                opened.error_message.empty()
+                    ? "AviUtl2 scene list operation failed"
+                    : opened.error_message,
+                context,
+                opened.error_code == "operation_timeout"
+                    || opened.error_code == "sdk_query_failed");
+        }
+        if (!opened.scene.has_value()) {
+            if (opened.has_changed) {
+                static_cast<void>(context.revisions().commit_view_change());
+                return create_partial_failure(
+                    context, "The scene changed but its postcondition was omitted", false);
+            }
+            return create_native_failure(
+                "sdk_query_failed", "Scene open omitted its postcondition", context, true);
+        }
+        if (opened.has_changed) {
+            static_cast<void>(context.revisions().commit_view_change());
+        }
+        return create_native_success(nlohmann::json{
+            {"sceneId", opened.scene->scene_id},
+            {"name", opened.scene->name},
+        }.dump(), context);
+    } catch (const nlohmann::json::exception&) {
+        return create_native_failure(
+            "invalid_argument", "Open scene request JSON is invalid", context);
     } catch (const std::invalid_argument& exception) {
         return create_native_failure("invalid_argument", exception.what(), context);
     } catch (const std::exception& exception) {

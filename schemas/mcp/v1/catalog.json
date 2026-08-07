@@ -534,6 +534,11 @@
       "properties": { "sceneId": { "type": "integer" }, "frame": { "type": "integer" }, "displayFrame": { "type": "integer" }, "selection": { "oneOf": [{ "$ref": "#/$defs/Selection" }, { "type": "null" }] }, "coordinateSystem": { "$ref": "#/$defs/CoordinateSystem" } },
       "required": ["sceneId", "frame", "displayFrame", "selection", "coordinateSystem"]
     },
+    "OpenSceneData": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "name": { "type": "string" } },
+      "required": ["sceneId", "name"]
+    },
     "BatchResult": {
       "type": "object", "additionalProperties": false,
       "properties": {
@@ -622,6 +627,7 @@
     "EffectStateUpdateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/EffectStateUpdateData" } } }] },
     "LayerUpdateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/LayerUpdateData" } } }] },
     "CursorOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/CursorData" } } }] },
+    "OpenSceneOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/OpenSceneData" } } }] },
     "BatchOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/BatchData" } } }] },
     "PreviewOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/PreviewData" } } }] },
     "LogsOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/LogsData" } } }] },
@@ -653,6 +659,7 @@
     "SetEffectStateInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetEffectStateArgs" }], "unevaluatedProperties": false },
     "SetLayerInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/SetLayerArgs" }], "unevaluatedProperties": false },
     "SetCursorInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "frame": { "type": "integer", "minimum": 1 }, "displayFrame": { "type": "integer", "minimum": 1 }, "selection": { "$ref": "#/$defs/Selection" }, "expectedViewRevision": { "$ref": "#/$defs/Revision" } }, "anyOf": [{ "required": ["frame"] }, { "required": ["displayFrame"] }, { "required": ["selection"] }] }], "unevaluatedProperties": false },
+    "OpenSceneInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "sceneName": { "type": "string", "minLength": 1, "maxLength": 4096 }, "expectedViewRevision": { "$ref": "#/$defs/Revision" } }, "oneOf": [{ "required": ["sceneId"] }, { "required": ["sceneName"] }] }], "unevaluatedProperties": false },
     "ExecuteBatchInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "type": "object", "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/BatchOperation" } } }, "required": ["operations"] }], "unevaluatedProperties": false },
     "RenderPreviewInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "frame": { "type": "integer", "minimum": 1 }, "maxWidth": { "type": "integer", "minimum": 1, "maximum": 4096 }, "maxHeight": { "type": "integer", "minimum": 1, "maximum": 4096 }, "includeAlpha": { "type": "boolean", "default": false } }, "required": ["frame"], "oneOf": [{ "required": ["maxWidth", "maxHeight"] }, { "not": { "anyOf": [{ "required": ["maxWidth"] }, { "required": ["maxHeight"] }] } }] }], "unevaluatedProperties": false },
     "GetLogsInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "sources": { "type": "array", "uniqueItems": true, "items": { "enum": ["server", "bridge", "aviutl"] } }, "levels": { "type": "array", "uniqueItems": true, "items": { "enum": ["trace", "debug", "information", "warning", "error", "critical"] } }, "since": { "type": "string", "format": "date-time" }, "correlationId": { "$ref": "#/$defs/Uuid" }, "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100 }, "cursor": { "type": "string", "minLength": 1, "maxLength": 4096 } } }], "unevaluatedProperties": false },
@@ -687,6 +694,7 @@
     "aviutl_set_effect_state": "既存effectの有効・lock状態を変更します。",
     "aviutl_set_layer": "layerの名前、表示、lock状態を変更します。",
     "aviutl_set_cursor": "cursor、表示frame、選択範囲を変更します。",
+    "aviutl_open_scene": "シーンIDまたは完全一致するシーン名を指定し、シーンリストから開きます。",
     "aviutl_execute_batch": "複数のSDK編集を1 Undo単位で実行します。",
     "aviutl_render_preview": "指定frameをPNG previewとして取得します。",
     "aviutl_get_logs": "マスク済みのServer、Bridge、AviUtl2 logを取得します。",
@@ -721,6 +729,7 @@
     { "name": "aviutl_set_effect_state", "inputSchema": { "$ref": "#/$defs/SetEffectStateInput" }, "outputSchema": { "$ref": "#/$defs/EffectStateUpdateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_set_layer", "inputSchema": { "$ref": "#/$defs/SetLayerInput" }, "outputSchema": { "$ref": "#/$defs/LayerUpdateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_set_cursor", "inputSchema": { "$ref": "#/$defs/SetCursorInput" }, "outputSchema": { "$ref": "#/$defs/CursorOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_open_scene", "inputSchema": { "$ref": "#/$defs/OpenSceneInput" }, "outputSchema": { "$ref": "#/$defs/OpenSceneOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_execute_batch", "inputSchema": { "$ref": "#/$defs/ExecuteBatchInput" }, "outputSchema": { "$ref": "#/$defs/BatchOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
     { "name": "aviutl_render_preview", "inputSchema": { "$ref": "#/$defs/RenderPreviewInput" }, "outputSchema": { "$ref": "#/$defs/PreviewOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_get_logs", "inputSchema": { "$ref": "#/$defs/GetLogsInput" }, "outputSchema": { "$ref": "#/$defs/LogsOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },

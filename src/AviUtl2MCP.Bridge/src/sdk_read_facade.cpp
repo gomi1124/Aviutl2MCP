@@ -2981,10 +2981,15 @@ const char* sdk_edit_state_error_message(const sdk_edit_state state) noexcept {
     }
 }
 
-sdk_read_facade::sdk_read_facade(sdk_project_save_command project_save_command)
+sdk_read_facade::sdk_read_facade(
+    sdk_project_save_command project_save_command,
+    scene_list_open_command scene_open_command)
     : project_save_command_(project_save_command
         ? std::move(project_save_command)
-        : sdk_project_save_command(dispatch_project_save_command)) {}
+        : sdk_project_save_command(dispatch_project_save_command)),
+      scene_open_command_(scene_open_command
+        ? std::move(scene_open_command)
+        : scene_list_open_command(open_scene_from_list)) {}
 
 sdk_read_facade::~sdk_read_facade() {
     detach();
@@ -4353,6 +4358,170 @@ sdk_view_edit_result sdk_read_facade::edit_view(
     } catch (...) {
         return {.ok = false, .error_code = "sdk_query_failed",
             .error_message = "SDK view edit failed with an unknown exception"};
+    }
+}
+
+sdk_open_scene_result sdk_read_facade::open_scene(
+    const sdk_open_scene_request& request) const noexcept {
+    const bool has_scene_id = request.scene_id.has_value();
+    const bool has_scene_name = request.scene_name.has_value();
+    if (has_scene_id == has_scene_name
+        || (has_scene_id && *request.scene_id < 0)
+        || (has_scene_name && request.scene_name->empty())
+        || request.timeout_ms == 0U) {
+        return {
+            .error_code = "invalid_argument",
+            .error_message = "Exactly one valid scene selector and a positive timeout are required",
+        };
+    }
+
+    const sdk_status_snapshot status = query_status();
+    if (!status.is_sdk_ready) {
+        return {
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 SDK edit handle is not available",
+        };
+    }
+    if (status.has_query_error) {
+        return {
+            .error_code = "sdk_query_failed",
+            .error_message = status.query_error,
+        };
+    }
+    if (status.project_state != sdk_project_state::saved
+        && status.project_state != sdk_project_state::unsaved) {
+        return {
+            .error_code = "project_not_open",
+            .error_message = "No AviUtl2 project is open",
+        };
+    }
+    if (status.edit_state != sdk_edit_state::edit) {
+        return {
+            .error_code = sdk_edit_state_error_code(status.edit_state),
+            .error_message = sdk_edit_state_error_message(status.edit_state),
+        };
+    }
+    if (!status.project_path.has_value() || status.project_path->empty()) {
+        return {
+            .error_code = "project_path_required",
+            .error_message = "The project must be saved before a scene can be opened",
+        };
+    }
+
+    const sdk_project_query_result before_query = query_project(true);
+    if (!before_query.ok || before_query.project.scenes.empty()) {
+        return {
+            .error_code = before_query.error_code.empty()
+                ? "sdk_query_failed"
+                : before_query.error_code,
+            .error_message = before_query.error_message.empty()
+                ? "The active scene could not be read before scene selection"
+                : before_query.error_message,
+        };
+    }
+    const scene_list_snapshot before{
+        .scene_id = before_query.project.current_scene_id,
+        .name = before_query.project.scenes.front().name,
+    };
+    const bool is_already_open = has_scene_id
+        ? before.scene_id == *request.scene_id
+        : before.name == *request.scene_name;
+    if (is_already_open) {
+        return {
+            .ok = true,
+            .scene = before,
+        };
+    }
+
+    void* host_window = nullptr;
+    scene_list_open_command command;
+    {
+        std::scoped_lock lock(mutex_);
+        host_window = host_app_window_;
+        command = scene_open_command_;
+    }
+    if (host_window == nullptr || !command) {
+        return {
+            .error_code = "sdk_not_available",
+            .error_message = "AviUtl2 scene list operation is unavailable",
+        };
+    }
+
+    try {
+        const scene_list_target target{
+            .scene_id = request.scene_id,
+            .scene_name = request.scene_name,
+        };
+        const scene_list_open_command_result command_result = command(
+            host_window,
+            *status.project_path,
+            target,
+            request.timeout_ms);
+        if (!command_result.ok || !command_result.target.has_value()) {
+            return {
+                .has_changed = command_result.command_was_dispatched,
+                .error_code = command_result.error_code.empty()
+                    ? "ui_automation_failed"
+                    : command_result.error_code,
+                .error_message = command_result.error_message.empty()
+                    ? "AviUtl2 scene list operation failed"
+                    : command_result.error_message,
+            };
+        }
+
+        const sdk_project_query_result after_query = query_project(true);
+        if (!after_query.ok || after_query.project.scenes.empty()) {
+            return {
+                .has_changed = command_result.command_was_dispatched,
+                .error_code = after_query.error_code.empty()
+                    ? "scene_switch_failed"
+                    : after_query.error_code,
+                .error_message = after_query.error_message.empty()
+                    ? "The active scene could not be verified after scene selection"
+                    : after_query.error_message,
+            };
+        }
+        const scene_list_snapshot after{
+            .scene_id = after_query.project.current_scene_id,
+            .name = after_query.project.scenes.front().name,
+        };
+        const scene_list_snapshot& expected = *command_result.target;
+        if (after.scene_id != expected.scene_id || after.name != expected.name) {
+            const scene_list_target restore_target{
+                .scene_id = before.scene_id,
+                .scene_name = std::nullopt,
+            };
+            static_cast<void>(command(
+                host_window,
+                *status.project_path,
+                restore_target,
+                request.timeout_ms));
+            return {
+                .has_changed = command_result.command_was_dispatched,
+                .scene = after,
+                .error_code = "scene_switch_failed",
+                .error_message = "AviUtl2 opened scene "
+                    + std::to_string(after.scene_id)
+                    + " ('" + after.name + "') instead of scene "
+                    + std::to_string(expected.scene_id)
+                    + " ('" + expected.name + "')",
+            };
+        }
+        return {
+            .ok = true,
+            .has_changed = before.scene_id != after.scene_id,
+            .scene = after,
+        };
+    } catch (const std::exception& exception) {
+        return {
+            .error_code = "ui_automation_failed",
+            .error_message = exception.what(),
+        };
+    } catch (...) {
+        return {
+            .error_code = "ui_automation_failed",
+            .error_message = "Scene list operation failed with an unknown exception",
+        };
     }
 }
 

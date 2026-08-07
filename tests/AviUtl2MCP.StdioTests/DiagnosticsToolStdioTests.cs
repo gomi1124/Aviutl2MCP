@@ -228,7 +228,7 @@ public sealed class DiagnosticsToolStdioTests
                 cancellationToken: timeout.Token);
 
             // Assert
-            Assert.AreEqual(32, tools.Count);
+            Assert.AreEqual(33, tools.Count);
             CollectionAssert.IsSubsetOf(
                 READ_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());
@@ -254,6 +254,7 @@ public sealed class DiagnosticsToolStdioTests
             }
             AssertToolMetadata(psdValidateTool, "scope", "checks", "locator");
             AssertCursorToolMetadata(tools.Single(tool => tool.Name == "aviutl_set_cursor"));
+            AssertOpenSceneToolMetadata(tools.Single(tool => tool.Name == "aviutl_open_scene"));
             AssertToolMetadata(logsTool, "sources", "limit");
             AssertToolMetadata(diagnoseTool, "includeReadSmoke", "includePreviewSmoke", "maxLogLines");
             AssertToolMetadata(previewTool, "frame", "maxWidth", "maxHeight", "includeAlpha");
@@ -419,6 +420,14 @@ public sealed class DiagnosticsToolStdioTests
         Assert.IsTrue(properties.TryGetProperty("expectedViewRevision", out _));
         Assert.IsFalse(properties.TryGetProperty("dryRun", out _));
         Assert.IsFalse(properties.TryGetProperty("input", out _));
+    }
+
+    private static void AssertOpenSceneToolMetadata(McpClientTool tool)
+    {
+        AssertCursorToolMetadata(tool);
+        JsonElement properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        Assert.IsTrue(properties.TryGetProperty("sceneId", out _));
+        Assert.IsTrue(properties.TryGetProperty("sceneName", out _));
     }
 
     private static void AssertSaveToolMetadata(McpClientTool tool)

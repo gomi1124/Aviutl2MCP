@@ -2,7 +2,7 @@
 
 ## 1. 適用範囲
 
-本書はV1で公開する32 tools、5 resources、4 promptsの名前、入力、構造化出力、エラー、annotationsを固定する。機械可読な必須、enum、条件、nested DTO、tool別input/outputは [V1 Schema catalog](../schemas/mcp/v1/catalog.json) を正とする。
+本書はV1で公開する33 tools、5 resources、4 promptsの名前、入力、構造化出力、エラー、annotationsを固定する。機械可読な必須、enum、条件、nested DTO、tool別input/outputは [V1 Schema catalog](../schemas/mcp/v1/catalog.json) を正とする。
 
 - MCP SDK: 公式C# SDK `ModelContextProtocol` 1.4.1
 - transport: stdio
@@ -49,7 +49,7 @@
 | `expectedRevision` | string | はい | 現在値と不一致なら変更せず `revision_conflict` |
 | `dryRun` | boolean | いいえ | 既定`false`。`true`では事前検証結果だけを返す |
 
-`aviutl_set_cursor`は内容を変更しないため、`expectedViewRevision`を任意指定する。`dryRun`は持たない。
+`aviutl_set_cursor`と`aviutl_open_scene`は内容を変更しないため、`expectedViewRevision`を任意指定する。`dryRun`は持たない。
 
 ### 2.4 共通型
 
@@ -128,7 +128,7 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 | Tool | 固有入力 | `data` |
 |---|---|---|
 | `aviutl_get_status` | なし | `connectionState`、各componentの`version/status`、`projectState`、`editState`、`selectedInstance`、候補`instances[]` |
-| `aviutl_get_capabilities` | なし | 32操作ごとの`available/reason/constraints`、protocol/schema/bridge版、V1制限値 |
+| `aviutl_get_capabilities` | なし | 33操作ごとの`available/reason/constraints`、protocol/schema/bridge版、V1制限値 |
 | `aviutl_get_project` | `includeScenes?: boolean=true` | `path?`、`isSaved`、解像度、frame/sample rate、current scene/frame、選択・表示範囲、`scenes[]` |
 | `aviutl_save_project` | `expectedRevision: string` | `path`、`saved: true`。名前付きの現在projectだけを保存し、`dryRun`と別名保存dialogは提供しない |
 | `aviutl_get_timeline` | `sceneId?`、`layerStart?`、`layerEnd?`、`startFrame?`、`endFrame?`、`detail?: "summary"|"effects"="summary"`、Page | `layers[]`、`objects[]`、Page、`coordinateSystem` |
@@ -143,7 +143,7 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 
 ### 3.2 タイムライン編集
 
-次のtoolは `aviutl_set_cursor` と `aviutl_save_project` を除き、すべて `expectedRevision` と任意の `dryRun` を持つ。`aviutl_save_project`は`expectedRevision`だけを持ち、保存完了後もcontent revisionを変更しない。
+次のtoolは `aviutl_set_cursor`、`aviutl_open_scene`、`aviutl_save_project` を除き、すべて `expectedRevision` と任意の `dryRun` を持つ。`aviutl_save_project`は`expectedRevision`だけを持ち、保存完了後もcontent revisionを変更しない。
 
 | Tool | 固有入力 | `data` |
 |---|---|---|
@@ -159,9 +159,12 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 | `aviutl_set_effect_item` | `locator: Locator`、`effect: EffectInstanceSelector`、`itemName: string`、`value: EffectItemValue` | codec正規化後value、更新後effect item |
 | `aviutl_set_effect_state` | `locator: Locator`、`effect: EffectInstanceSelector`、`isEnabled?`、`isLocked?` | 更新後effect state。少なくとも一方必須 |
 | `aviutl_set_layer` | `sceneId?`、`layer: integer`、`name?`、`isVisible?`、`isLocked?` | 更新後layer。変更propertyを1つ以上必須 |
+| `aviutl_open_scene` | `sceneId`または`sceneName`のちょうど一方、`expectedViewRevision?` | 開いたsceneの`sceneId/name`、`viewRevision` |
 | `aviutl_set_cursor` | `sceneId?`、`frame?`、`displayFrame?`、`selection?: {startFrame,endFrame}`、`expectedViewRevision?` | 更新後のcurrent/display/selection、`viewRevision` |
 
 作成・移動は対象範囲、layer lock、object衝突を事前検証する。ファイルtoolは絶対パスへ正規化し、存在、通常ファイル、許可拡張子を検証する。シェルや関連付け実行は行わない。
+
+`aviutl_open_scene`は公開SDKにscene切替APIがないため、保存済みprojectのscene catalogとdock済み`シーンリスト`を使う実験機能とする。floating配置、未保存project、scene ID/名前の事後照合不一致は成功扱いにしない。OSのforegroundや実cursor位置は変更しない。
 
 ### 3.3 Batch
 
@@ -236,6 +239,7 @@ PSD編集toolは `expectedRevision` と任意の `dryRun` を持つ。`aviutl_ps
 | `aviutl_set_effect_item` | false | true | true |
 | `aviutl_set_effect_state` | false | true | true |
 | `aviutl_set_layer` | false | true | true |
+| `aviutl_open_scene` | false | false | true |
 | `aviutl_set_cursor` | false | false | true |
 | `aviutl_execute_batch` | false | true | false |
 | `aviutl_render_preview` | true | false | true |

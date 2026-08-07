@@ -11,9 +11,9 @@
 | AC-BLD-001 | `build.clean-windows` | Windows CI | locked restoreからServer/Bridgeを警告エラーなしでbuild | [CI] `managed` / `native` / `contract` / `integration` |
 | AC-BLD-002 | `ci.required-jobs` | GitHub Actions | managed/native/contract/integration jobが全成功 | [CI] 全required job成功 |
 | AC-BLD-003 | `real.package-install` | 専用AviUtl2実機 | `.au2pkg.zip`導入後にbridge versionをstatusで取得 | `artifacts/real-e2e/019fb0db-d158-79fd-a67f-af46b5705a41/debug-report.json` |
-| AC-MCP-001 | `stdio.offline-initialize` | stdio black-box | AviUtl2なしでinitializeと32 tools listが成功 | [CI] `contract` |
+| AC-MCP-001 | `stdio.offline-initialize` | stdio black-box | AviUtl2なしでinitializeと33 tools listが成功 | [CI] `contract` |
 | AC-MCP-002 | `pipe.late-connect` | fake bridge統合 | Server維持中にbridge起動しReadyへ遷移 | [CI] `integration` |
-| AC-MCP-003 | `mcp.catalog-snapshot` | MCP contract | 32 tools、5 resources、4 promptsとSchema catalogが一致 | [CI] `contract` |
+| AC-MCP-003 | `mcp.catalog-snapshot` | MCP contract | 33 tools、5 resources、4 promptsとSchema catalogが一致 | [CI] `contract` |
 | AC-MCP-004 | `stdio.stdout-purity` | stdio black-box | stdoutの全frameが有効MCP message、ログはstderrのみ | [CI] `contract` |
 | AC-MCP-005 | `pipe.instance-selection` | fake bridge統合 | 複数時は曖昧拒否、明示IDだけへ要求送信 | [CI] `integration` |
 | AC-EDT-001 | `real.timeline-read` | 専用AviUtl2実機 | fixtureのscene/layer/object/effect DTOがgolden値と一致 | `artifacts/real-e2e/019f79ef-acdd-7f30-b7bd-0f6a9417e1db/debug-report.json` |

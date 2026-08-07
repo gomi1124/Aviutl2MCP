@@ -116,7 +116,7 @@ AviUtl2MCP.Server -> AviUtl2MCP.Application <- AviUtl2MCP.BridgeClient
 
 - MCPクライアントが子プロセスとして起動する単一stdioセッションとする。
 - stdinが閉じたら、接続中IPCをキャンセルして終了する。
-- 32 tools、5 resources、4 promptsは常に静的登録する。AviUtl2未起動時も一覧を変えない。
+- 33 tools、5 resources、4 promptsは常に静的登録する。AviUtl2未起動時も一覧を変えない。
 - 全Console loggerをstderrへ送り、stdoutへMCP以外を一切書かない。
 
 ### 6.2 ブリッジ
@@ -429,7 +429,7 @@ V1では独自イベントバス、汎用ワークフローエンジン、デー
 | Application単体 | locator、revision、dry-run、batch、PSD検証、エラー変換をAAA構造で検証 |
 | IPC codec単体 | 分割read、境界長、無効magic/version/UTF-8、過大長、binary hash |
 | Bridge native単体 | fake SDK tableでハンドル寿命、read/edit区分、部分失敗、render lifetimeを検証 |
-| MCP contract | 公式C# clientとin-memory streamで32 tools、5 resources、4 prompts、schemas、annotationsを検証 |
+| MCP contract | 公式C# clientとin-memory streamで33 tools、5 resources、4 prompts、schemas、annotationsを検証 |
 | stdio black-box | 実Server.exeを起動し、stdout汚染、stderrログ、stdin close終了を検証 |
 | named pipe統合 | fake bridgeで再接続、複数in-flight、cancel、timeout、切断、protocol不一致を検証 |
 | 実機 | 専用一時プロジェクトでcreate/read/move/set/delete/Undo/preview/PSD/voiceを検証 |
@@ -472,7 +472,7 @@ revision単体・統合テストでは連続2編集を同じ旧revisionで送信
 
 ## 22. Phase 2レビュー項目
 
-1. 32 tools、5 resources、4 promptsを全て契約化できているか。
+1. 33 tools、5 resources、4 promptsを全て契約化できているか。
 2. SDKハンドルをコールバック外へ保持する経路がないか。
 3. GCMZDrops複合操作を誤って原子的成功として扱っていないか。
 4. 複数AviUtl2/MCPクライアントで誤接続・同時編集しないか。

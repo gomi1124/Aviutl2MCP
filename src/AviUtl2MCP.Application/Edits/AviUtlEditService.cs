@@ -177,6 +177,23 @@ public sealed class AviUtlEditService(
                     input),
                 cancellationToken));
 
+    public ValueTask<QueryExecutionResult<OpenSceneData>> OpenSceneAsync(
+        OpenSceneInput input,
+        RequestContext context) => ExecuteCoreAsync(
+            input,
+            [],
+            context,
+            (instance, cancellationToken) => _editGateway.OpenSceneAsync(
+                new GatewayRequest<OpenSceneInput>(
+                    instance.InstanceId,
+                    context.CorrelationId,
+                    context.Deadline,
+                    context.TimeoutMs,
+                    null,
+                    false,
+                    input),
+                cancellationToken));
+
     public ValueTask<QueryExecutionResult<BatchData>> ExecuteBatchAsync(
         ExecuteBatchInput input,
         RequestContext context)

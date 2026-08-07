@@ -81,7 +81,7 @@ public sealed class RealReadPreviewDiagnosticTests
 
         IList<McpClientTool> tools = await client.ListToolsAsync(
             cancellationToken: timeout.Token);
-        Assert.AreEqual(32, tools.Count);
+        Assert.AreEqual(33, tools.Count);
 
         JsonElement project = await WaitForProjectAsync(
             client,
@@ -1045,7 +1045,7 @@ public sealed class RealReadPreviewDiagnosticTests
         Assert.AreEqual("2010300", versions.GetProperty("sdk").GetString());
 
         JsonElement[] operations = data.GetProperty("operations").EnumerateArray().ToArray();
-        Assert.AreEqual(32, operations.Length);
+        Assert.AreEqual(33, operations.Length);
         int availableOperationCount = 0;
         foreach (JsonElement operation in operations)
         {

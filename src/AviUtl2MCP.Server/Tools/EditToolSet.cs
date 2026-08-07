@@ -454,6 +454,33 @@ public sealed class EditToolSet(
             cancellationToken);
 
     [McpServerTool(
+        Name = "aviutl_open_scene",
+        Title = "AviUtl2 シーンを開く",
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<OpenSceneData>))]
+    [Description("シーンIDまたは完全一致するシーン名を指定し、シーンリストからそのシーンを開きます。")]
+    public ValueTask<CallToolResult> OpenSceneAsync(
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        int? sceneId = null,
+        string? sceneName = null,
+        Revision? expectedViewRevision = null,
+        CancellationToken cancellationToken = default) => ExecuteOpenSceneAsync(
+            new OpenSceneInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                SceneId = sceneId,
+                SceneName = sceneName,
+                ExpectedViewRevision = expectedViewRevision,
+            },
+            cancellationToken);
+
+    [McpServerTool(
         Name = "aviutl_set_cursor",
         Title = "AviUtl2 cursor変更",
         ReadOnly = false,
@@ -560,6 +587,47 @@ public sealed class EditToolSet(
                 input,
                 context).ConfigureAwait(false);
             ToolEnvelope<CursorData> envelope = ToolResultFactory.CreateEnvelope(
+                execution.Result,
+                context,
+                execution.InstanceId,
+                execution.Revision,
+                execution.ViewRevision);
+            return McpToolResultFactory.Create(envelope);
+        }
+    }
+
+    private async ValueTask<CallToolResult> ExecuteOpenSceneAsync(
+        OpenSceneInput input,
+        CancellationToken cancellationToken)
+    {
+        RequestContext context;
+        try
+        {
+            context = _requestContextFactory.CreateContext(
+                input.InstanceId,
+                input.TimeoutMs,
+                EDIT_DEFAULT_TIMEOUT_MS,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is ArgumentException or OverflowException)
+        {
+            return CreateInvalidArgument<OpenSceneData>(exception.Message, cancellationToken);
+        }
+        using (context)
+        {
+            input = input with { TimeoutMs = context.TimeoutMs };
+            try
+            {
+                RequestValidator.ValidateOpenSceneInput(input);
+            }
+            catch (Exception exception) when (exception is ArgumentException or OverflowException)
+            {
+                return CreateInvalidArgument<OpenSceneData>(context, exception.Message);
+            }
+            QueryExecutionResult<OpenSceneData> execution = await _editService.OpenSceneAsync(
+                input,
+                context).ConfigureAwait(false);
+            ToolEnvelope<OpenSceneData> envelope = ToolResultFactory.CreateEnvelope(
                 execution.Result,
                 context,
                 execution.InstanceId,

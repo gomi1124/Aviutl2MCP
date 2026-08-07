@@ -220,6 +220,15 @@ public sealed record SetCursorInput : CommonInput
     public Revision? ExpectedViewRevision { get; init; }
 }
 
+public sealed record OpenSceneInput : CommonInput
+{
+    public int? SceneId { get; init; }
+
+    public string? SceneName { get; init; }
+
+    public Revision? ExpectedViewRevision { get; init; }
+}
+
 public sealed record ExecuteBatchInput : MutationInput
 {
     public required IReadOnlyList<BatchOperation> Operations { get; init; }

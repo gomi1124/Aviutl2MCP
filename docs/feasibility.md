@@ -47,6 +47,7 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 | `aviutl_set_effect_item` | 直接 | `get_effect_item_value`、`set_effect_item_value`、項目別トラック・チェック設定API | 列挙した項目型に応じて入力を検証する |
 | `aviutl_set_effect_state` | 直接 | `set_effect_enable`、`set_effect_lock` | 既存エフェクトだけを対象とし、追加・削除・並べ替えは行わない |
 | `aviutl_set_layer` | 直接 | `set_layer_name`、`set_layer_enable`、`set_layer_lock` | UI表示番号とSDKの0始まり番号を境界で変換する |
+| `aviutl_open_scene` | UI補助 | 保存済み`.aup2`のscene catalog、`シーンリスト`、SDK事後読取 | 公開SDKにscene切替APIがないため、dock済みシーンリストを同期messageで操作し、scene IDと名前をSDKで再照合する実験機能。floating配置は明示的に拒否する |
 | `aviutl_set_cursor` | 直接 | `set_cursor_layer_frame`、`set_display_layer_frame`、`set_select_range` | SDK側で補正された実値を再取得して返す |
 | `aviutl_execute_batch` | 複合 | サーバー側事前検証後、1回の `call_edit_section_param` 内で各編集APIを実行 | 1 Undo単位にはできるが、編集開始後のAPI失敗を自動ロールバックする公開APIはない。部分適用を検出して明示する |
 | `aviutl_render_preview` | 複合 | `rendering_scene_video`、`wait_rendering_task`、bridge側WIC PNG変換 | 描画は非同期。`wait_rendering_task` を読取・編集ロック中に呼ぶとデッドロックし得るため、必ずロック外で待つ |
@@ -59,7 +60,7 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 | `aviutl_psd_create_voice` | 複合 | WAV/TXT/LAB検証、GCMZDrops外部APIによる直接WAV/TXTまたは中間`.object`投入、`セリフ準備@PSDToolKit`生成、字幕エイリアス作成 | `external_wav_txt_pair`または`external_object_audio_text`が必要。必須character IDを生成後にSDK設定し、各生成物を事後検証する |
 | `aviutl_psd_validate` | 複合 | タイムライン、エイリアス、エフェクト、項目、ファイル対応を読取り、サーバーで規則判定 | 目パチ、2方式の口パク、パーツ上書き、参照ID、初期化順序を個別結果として返す |
 
-結論として、列挙済み32 toolsはV1の実装候補として維持できる。ただし、バッチ編集、PSD投入、音声・字幕生成は完全な原子性を保証できないため、事前検証、相関ID、事後条件検証、部分適用エラーをAPI契約へ含める。
+結論として、列挙済み33 toolsはV1の実装候補として維持できる。ただし、シーン切替はUI補助を使う実験機能であり、バッチ編集、PSD投入、音声・字幕生成は完全な原子性を保証できないため、事前検証、相関ID、事後条件検証、部分適用エラーをAPI契約へ含める。
 
 ## 5. Resources と Prompts
 

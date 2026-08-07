@@ -64,6 +64,7 @@ constexpr std::array EDIT_OPERATIONS{
 
 constexpr std::array SAVE_OPERATIONS{
     std::string_view("aviutl_save_project"),
+    std::string_view("aviutl_open_scene"),
 };
 
 constexpr std::array PSD_TOOLKIT_OPERATIONS{

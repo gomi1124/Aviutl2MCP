@@ -35,6 +35,7 @@ add_library(AviUtl2MCP.Bridge.Core STATIC
   src/psd_contract.cpp
   src/request_dispatcher.cpp
   src/revision_tracker.cpp
+  src/scene_list_ui_operator.cpp
   src/sdk_read_facade.cpp
 )
 

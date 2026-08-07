@@ -209,6 +209,32 @@ public sealed class AviUtlEditServiceTests
     }
 
     [TestMethod]
+    public async Task OpenSceneUsesViewRevisionWithoutContentRevision()
+    {
+        // Arrange
+        Revision expectedViewRevision = new("epoch:generation:2");
+        CapturingEditGateway gateway = new(CreateSuccess(new OpenSceneData(7, "Ending")));
+        AviUtlEditService service = new(new StubResolver(CreateInstance()), gateway);
+        OpenSceneInput input = new()
+        {
+            SceneId = 7,
+            ExpectedViewRevision = expectedViewRevision,
+        };
+        using RequestContext context = CreateContext();
+
+        // Act
+        QueryExecutionResult<OpenSceneData> result = await service.OpenSceneAsync(input, context);
+
+        // Assert
+        Assert.IsTrue(result.Result.IsSuccess);
+        Assert.AreEqual("view.openScene", gateway.Operation);
+        Assert.IsNull(gateway.ExpectedRevision);
+        OpenSceneInput parameters = Assert.IsInstanceOfType<OpenSceneInput>(gateway.Parameters);
+        Assert.AreEqual(7, parameters.SceneId);
+        Assert.AreEqual(expectedViewRevision, parameters.ExpectedViewRevision);
+    }
+
+    [TestMethod]
     public async Task SaveProjectUsesContentRevisionWithoutDryRun()
     {
         // Arrange
@@ -401,6 +427,17 @@ public sealed class AviUtlEditServiceTests
             DryRun = request.DryRun;
             Parameters = request.Parameters;
             return ValueTask.FromResult((GatewayResponse<CursorData>)response!);
+        }
+
+        public ValueTask<GatewayResponse<OpenSceneData>> OpenSceneAsync(
+            GatewayRequest<OpenSceneInput> request,
+            CancellationToken cancellationToken)
+        {
+            Operation = "view.openScene";
+            ExpectedRevision = request.ExpectedRevision;
+            DryRun = request.DryRun;
+            Parameters = request.Parameters;
+            return ValueTask.FromResult((GatewayResponse<OpenSceneData>)response!);
         }
     }
 }

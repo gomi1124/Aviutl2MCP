@@ -27,8 +27,8 @@ public sealed class ToolSchemaConformanceTests
         JsonArray tools = catalog["x-tools"]!.AsArray();
 
         // Act and Assert
-        Assert.HasCount(32, fixtures);
-        Assert.HasCount(32, tools);
+        Assert.HasCount(33, fixtures);
+        Assert.HasCount(33, tools);
         foreach (JsonNode? toolNode in tools)
         {
             JsonObject tool = toolNode!.AsObject();
@@ -75,6 +75,7 @@ public sealed class ToolSchemaConformanceTests
             ["aviutl_set_effect_item"] = CreateFixture(typeof(SetEffectItemInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"effect":{"name":"standard"},"itemName":"opacity","value":100}"""),
             ["aviutl_set_effect_state"] = CreateFixture(typeof(SetEffectStateInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"effect":{"name":"standard"},"isEnabled":true}"""),
             ["aviutl_set_layer"] = new(typeof(SetLayerInput), """{"expectedRevision":"r1","layer":1,"name":"voice"}"""),
+            ["aviutl_open_scene"] = new(typeof(OpenSceneInput), """{"sceneId":0}"""),
             ["aviutl_set_cursor"] = new(typeof(SetCursorInput), """{"frame":1}"""),
             ["aviutl_execute_batch"] = CreateFixture(typeof(ExecuteBatchInput), """{"expectedRevision":"r1","operations":[{"op":"createObject","clientOperationId":"op-1","args":{"effect":{"name":"standard"},"placement":__PLACEMENT__}}]}"""),
             ["aviutl_render_preview"] = new(typeof(RenderPreviewInput), """{"frame":1}"""),

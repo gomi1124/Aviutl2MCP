@@ -194,6 +194,8 @@ public sealed record CursorData(
     Selection? Selection,
     CoordinateSystem CoordinateSystem);
 
+public sealed record OpenSceneData(int SceneId, string Name);
+
 public enum BatchOperationKind
 {
     CreateObject,

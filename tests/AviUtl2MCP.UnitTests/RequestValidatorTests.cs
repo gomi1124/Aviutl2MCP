@@ -264,6 +264,34 @@ public sealed class RequestValidatorTests
     }
 
     [TestMethod]
+    public void ValidateOpenSceneInputAcceptsExactlyOneSelector()
+    {
+        // Arrange
+        OpenSceneInput byId = new() { SceneId = 0 };
+        OpenSceneInput byName = new() { SceneName = "Root" };
+
+        // Act and Assert
+        RequestValidator.ValidateOpenSceneInput(byId);
+        RequestValidator.ValidateOpenSceneInput(byName);
+    }
+
+    [TestMethod]
+    public void ValidateOpenSceneInputRejectsMissingOrMultipleSelectors()
+    {
+        // Arrange
+        OpenSceneInput missing = new();
+        OpenSceneInput multiple = new() { SceneId = 0, SceneName = "Root" };
+
+        // Act
+        Action missingAction = () => RequestValidator.ValidateOpenSceneInput(missing);
+        Action multipleAction = () => RequestValidator.ValidateOpenSceneInput(multiple);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(missingAction);
+        Assert.ThrowsExactly<ArgumentException>(multipleAction);
+    }
+
+    [TestMethod]
     public void ValidateEditInputAcceptsZeroEffectItemValue()
     {
         // Arrange

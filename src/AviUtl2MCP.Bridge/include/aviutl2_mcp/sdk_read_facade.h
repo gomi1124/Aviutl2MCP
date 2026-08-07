@@ -1,5 +1,7 @@
 #pragma once
 
+#include "aviutl2_mcp/scene_list_ui_operator.h"
+
 #include "aviutl2_mcp/locator_resolver.h"
 
 #include <cstdint>
@@ -316,6 +318,20 @@ struct sdk_view_edit_result final {
     std::string error_message;
 };
 
+struct sdk_open_scene_request final {
+    std::optional<int> scene_id;
+    std::optional<std::string> scene_name;
+    std::uint32_t timeout_ms;
+};
+
+struct sdk_open_scene_result final {
+    bool ok = false;
+    bool has_changed = false;
+    std::optional<scene_list_snapshot> scene;
+    std::string error_code;
+    std::string error_message;
+};
+
 struct sdk_preview_render_result final {
     bool ok = false;
     int frame = 0;
@@ -381,7 +397,9 @@ struct sdk_batch_edit_result final {
 
 class sdk_read_facade final {
 public:
-    explicit sdk_read_facade(sdk_project_save_command project_save_command = {});
+    explicit sdk_read_facade(
+        sdk_project_save_command project_save_command = {},
+        scene_list_open_command scene_open_command = {});
     ~sdk_read_facade();
 
     sdk_read_facade(const sdk_read_facade&) = delete;
@@ -423,6 +441,8 @@ public:
     [[nodiscard]] sdk_view_edit_result edit_view(
         const sdk_view_edit_request& request,
         bool dry_run) const noexcept;
+    [[nodiscard]] sdk_open_scene_result open_scene(
+        const sdk_open_scene_request& request) const noexcept;
     [[nodiscard]] sdk_batch_edit_result edit_batch(
         const std::vector<sdk_batch_operation>& operations,
         const std::string& current_instance_id,
@@ -470,6 +490,7 @@ private:
     std::string project_cache_error_;
     std::uint64_t project_save_sequence_ = 0U;
     sdk_project_save_command project_save_command_;
+    scene_list_open_command scene_open_command_;
     std::function<void()> project_loaded_callback_;
 };
 

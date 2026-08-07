@@ -16,8 +16,8 @@ public sealed class CapabilityServiceTests
         CapabilitiesData data = CapabilityService.GetCapabilities(environment);
 
         // Assert
-        Assert.HasCount(32, data.Operations);
-        Assert.HasCount(32, data.Operations.Select(operation => operation.Name).Distinct(StringComparer.Ordinal).ToArray());
+        Assert.HasCount(33, data.Operations);
+        Assert.HasCount(33, data.Operations.Select(operation => operation.Name).Distinct(StringComparer.Ordinal).ToArray());
         Assert.IsTrue(data.Operations.All(operation => operation.Available));
         Assert.AreEqual(100, data.Limits.BatchOperations);
     }
@@ -72,6 +72,23 @@ public sealed class CapabilityServiceTests
         // Assert
         Assert.IsFalse(save.Available);
         Assert.AreEqual("project_path_required", save.Reason);
+    }
+
+    [TestMethod]
+    public void GetCapabilitiesRequiresNamedEditableProjectForOpeningScene()
+    {
+        // Arrange
+        CapabilityEnvironment environment = CreateEnvironment(
+            hasGcmzDrops: true,
+            isProjectSaved: false);
+
+        // Act
+        CapabilityOperation openScene = CapabilityService.GetCapabilities(environment)
+            .Operations.Single(operation => operation.Name == "aviutl_open_scene");
+
+        // Assert
+        Assert.IsFalse(openScene.Available);
+        Assert.AreEqual("project_path_required", openScene.Reason);
     }
 
     private static CapabilityEnvironment CreateEnvironment(

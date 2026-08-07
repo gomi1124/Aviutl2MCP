@@ -20,4 +20,8 @@ public interface IAviUtlEditGateway
     ValueTask<GatewayResponse<CursorData>> SetCursorAsync(
         GatewayRequest<SetCursorInput> request,
         CancellationToken cancellationToken);
+
+    ValueTask<GatewayResponse<OpenSceneData>> OpenSceneAsync(
+        GatewayRequest<OpenSceneInput> request,
+        CancellationToken cancellationToken);
 }

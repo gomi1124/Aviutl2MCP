@@ -83,6 +83,11 @@ public static class CapabilityService
             ["aviutl_save_project"],
             canSaveProject,
             GetSaveProjectReason(environment));
+        AddOperations(
+            operations,
+            ["aviutl_open_scene"],
+            canSaveProject,
+            GetSaveProjectReason(environment));
 
         bool canUsePsdToolKit = canEdit && environment.HasPsdToolKit;
         AddOperations(

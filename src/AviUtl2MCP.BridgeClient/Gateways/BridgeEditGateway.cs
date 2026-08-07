@@ -53,4 +53,9 @@ public sealed class BridgeEditGateway(BridgeConnectionRegistry connectionRegistr
         GatewayRequest<SetCursorInput> request,
         CancellationToken cancellationToken) =>
         SendOperationAsync<SetCursorInput, CursorData>("view.setCursor", request, cancellationToken);
+
+    public ValueTask<GatewayResponse<OpenSceneData>> OpenSceneAsync(
+        GatewayRequest<OpenSceneInput> request,
+        CancellationToken cancellationToken) =>
+        SendOperationAsync<OpenSceneInput, OpenSceneData>("view.openScene", request, cancellationToken);
 }

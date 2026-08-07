@@ -10,4 +10,9 @@
     <ProjectReference Include="../../src/AviUtl2MCP.BridgeClient/AviUtl2MCP.BridgeClient.csproj" />
     <ProjectReference Include="../../src/AviUtl2MCP.Server/AviUtl2MCP.Server.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="Fixtures/OpenSceneFixture.aup2">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

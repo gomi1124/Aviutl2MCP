@@ -91,6 +91,7 @@ V1では次の論理ツールを公開する。最終的なJSON SchemaはPhase 2
 | `aviutl_set_effect_item` | 既存エフェクトの設定値を変更 | あり |
 | `aviutl_set_effect_state` | 既存エフェクトの有効・ロックを変更 | あり |
 | `aviutl_set_layer` | レイヤー名、表示、ロックを変更 | あり |
+| `aviutl_open_scene` | シーンIDまたは完全一致名で表示シーンを開く | なし |
 | `aviutl_set_cursor` | カーソル、表示位置、選択範囲を変更 | あり |
 | `aviutl_execute_batch` | 複数の編集を1 Undo単位で実行 | あり |
 | `aviutl_render_preview` | 指定フレームを画像として取得 | なし |

@@ -358,6 +358,29 @@ public static partial class RequestValidator
         }
     }
 
+    public static void ValidateOpenSceneInput(OpenSceneInput input)
+    {
+        ValidateCommonInput(input);
+        if (input.SceneId.HasValue == (input.SceneName is not null))
+        {
+            throw new ArgumentException(
+                "Exactly one of sceneId or sceneName is required.",
+                nameof(input));
+        }
+        if (input.SceneId.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(input.SceneId.Value);
+        }
+        if (input.SceneName is not null)
+        {
+            ValidateString(input.SceneName, nameof(input.SceneName), 4096);
+        }
+        if (input.ExpectedViewRevision is not null)
+        {
+            _ = new Revision(input.ExpectedViewRevision.Value.Value);
+        }
+    }
+
     public static void ValidatePreviewInput(RenderPreviewInput input)
     {
         ValidateCommonInput(input);
