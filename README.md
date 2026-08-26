@@ -16,6 +16,7 @@ v0.2.1では、AviUtl ExEdit2 2.1.3aと2026-08-02版SDKへの互換性更新、o
 - MCP stdio、IPC、native、実AviUtl2の分層テスト
 - correlation ID、component別log、revision、preview hashを含むdebug report
 - `.au2pkg.zip` Bridge packageと自己完結`win-x64` MCP server package
+- stable Releaseだけを検証・自動切替する固定launcher（起動時のnetwork待ちなし）
 
 - [Phase 0 仕様書](docs/specification.md)
 - [Phase 1 要件定義書](docs/requirements.md)

@@ -1,8 +1,15 @@
 {
   "mcpServers": {
     "aviutl2": {
-      "command": "C:\\ABSOLUTE\\PATH\\AviUtl2MCP-Server-win-x64\\AviUtl2MCP.Server.exe",
-      "args": [],
+      "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\YOUR_NAME\\AppData\\Local\\AviUtl2MCP\\Run-AviUtl2MCP.ps1"
+      ],
       "env": {
         "AVIUTL2_MCP_INSTANCE_DIRECTORY": "C:\\Users\\YOUR_NAME\\AppData\\Local\\AviUtl2MCP\\v1\\instances"
       }

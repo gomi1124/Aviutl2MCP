@@ -18,10 +18,21 @@ packageは`Plugin\AviUtl2MCP`だけを所有し、更新・uninstall時はこの
 
 ## 3. MCP serverの設定
 
-1. `AviUtl2MCP-Server-win-x64-vX.Y.Z.zip`を任意の固定directoryへ展開する。
-2. `mcp-config.example.json`をMCP clientの形式へ合わせてコピーする。
-3. `command`を`AviUtl2MCP.Server.exe`の絶対pathへ変更する。
-4. MCP clientを再起動し、33 tools・5 resources・4 promptsを列挙する。
+1. `AviUtl2MCP-Server-win-x64-vX.Y.Z.zip`を一時directoryへ展開する。
+2. AviUtl2を終了し、`Install-AviUtl2MCP.ps1`を実行する。
+3. `mcp-config.example.json`をMCP clientの形式へ合わせてコピーする。
+4. `command`と`args`を、installerが表示した固定launcherのpathへ変更する。
+5. MCP clientを再起動し、33 tools・5 resources・4 promptsを列挙する。
+
+```powershell
+.\Install-AviUtl2MCP.ps1
+```
+
+既定の導入先は`%LOCALAPPDATA%\AviUtl2MCP`です。固定launcherは検証済みのserverを直ちに起動し、最新のstable GitHub Releaseの確認だけを非同期に行います。draft、prerelease、`main`のartifactは自動導入しません。更新assetは`release-manifest.json`、`checksums.sha256`、byte length、SHA-256、server self-testをすべて通過した場合だけ有効化されます。
+
+Bridgeとserverは同じreleaseへ揃えて切り替えます。AviUtl2が起動中の場合はBridgeを置換せず、`state\update-state.json`を`bridge_pending`にして更新を保留します。AviUtl2を終了すると次回の更新確認でBridgeを更新し、その後にserverを有効化します。以前のBridgeは`bridge-backups`に退避されます。
+
+更新確認の既定間隔は6時間です。MCP起動自体はnetworkを待たず、更新失敗時も`state\active-server.json`が指す直前の検証済みserverを使い続けます。Bridgeを外部で管理する場合だけ、明示的に`-SkipBridgeUpdate`を指定できます。
 
 複数のAviUtl2が起動している場合、編集toolへ対象の`instanceId`を明示します。指定がなければ曖昧な対象への編集は拒否されます。
 MCP server全体の既定対象を固定する場合は、環境変数`AVIUTL2_MCP_INSTANCE`へ対象の`instanceId`を指定します。旧実装名`AVIUTL2_MCP_INSTANCE_ID`も互換受付しますが、両方を指定する場合は同じ値にしてください。
