@@ -64,7 +64,7 @@ function Copy-ReleaseAsset {
     param(
         [Parameter(Mandatory = $true)][object]$Asset,
         [Parameter(Mandatory = $true)][string]$Destination,
-        [Parameter(Mandatory = $true)][string]$LocalAssetDirectory
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$LocalAssetDirectory
     )
 
     if (-not [string]::IsNullOrWhiteSpace($LocalAssetDirectory)) {

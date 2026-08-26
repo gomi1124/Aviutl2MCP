@@ -73,6 +73,22 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $launcherPath = Join-Path $resolvedInstallRoot "Run-AviUtl2MCP.ps1"
+$activeStatePath = Join-Path $resolvedInstallRoot "state\active-server.json"
+if (-not (Test-Path -LiteralPath $activeStatePath -PathType Leaf)) {
+    $updateStatePath = Join-Path $resolvedInstallRoot "state\update-state.json"
+    $updateState = if (Test-Path -LiteralPath $updateStatePath -PathType Leaf) {
+        Get-Content -LiteralPath $updateStatePath -Raw | ConvertFrom-Json
+    }
+    else {
+        $null
+    }
+    if ($null -ne $updateState -and [string]$updateState.status -eq "bridge_pending") {
+        Write-Warning "AviUtl2 is running. Close it and run this installer again to activate v$($updateState.availableVersion)."
+        Write-Output "Staged AviUtl2MCP update: $($updateState.pendingBridgePath)"
+        return
+    }
+    throw "The updater completed without activating a verified server."
+}
 Write-Output "Installed AviUtl2MCP launcher: $launcherPath"
 Write-Output "Configure the MCP client command as: $powershellPath"
 Write-Output "Configure its arguments as: -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcherPath`""
