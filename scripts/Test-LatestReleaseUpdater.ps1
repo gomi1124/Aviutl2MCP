@@ -176,6 +176,7 @@ try {
         "Tampered Release created an active state."
 
     Write-Output "Latest Release updater tests passed."
+    exit 0
 }
 finally {
     $normalizedOwnedRoot = [IO.Path]::GetFullPath($ownedRoot).TrimEnd(
