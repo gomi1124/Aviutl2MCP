@@ -186,11 +186,9 @@ New-Item -ItemType Directory -Path $pluginStage, $serverStage, $publishStage | O
 try {
     $cmake = Get-CMakePath
     $nativeBuildDirectory = Join-Path $repositoryRoot "build\native"
-    if (-not (Test-Path -LiteralPath (Join-Path $nativeBuildDirectory "CMakeCache.txt") -PathType Leaf)) {
-        & $cmake -S $repositoryRoot -B $nativeBuildDirectory -A x64
-        if ($LASTEXITCODE -ne 0) {
-            throw "Native CMake configure failed with exit code $LASTEXITCODE."
-        }
+    & $cmake -S $repositoryRoot -B $nativeBuildDirectory -A x64
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native CMake configure failed with exit code $LASTEXITCODE."
     }
     & $cmake --build $nativeBuildDirectory --config $Configuration
     if ($LASTEXITCODE -ne 0) {
