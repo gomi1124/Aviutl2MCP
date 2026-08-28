@@ -21,6 +21,21 @@ using AviUtl2MCP.Server.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Reflection;
+using System.Text.Json;
+
+string serverVersion = typeof(AviUtl2MCP.Server.ServerMarker).Assembly
+    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+    .InformationalVersion
+    ?? typeof(AviUtl2MCP.Server.ServerMarker).Assembly.GetName().Version?.ToString()
+    ?? "unknown";
+bool isVersionRequest = args.SequenceEqual(["--version"], StringComparer.Ordinal);
+bool isSelfTestRequest = args.SequenceEqual(["--self-test"], StringComparer.Ordinal);
+if (isVersionRequest)
+{
+    Console.WriteLine(serverVersion);
+    return;
+}
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
@@ -97,7 +112,20 @@ builder.Services
     .WithPrompts<AviUtlPromptProvider>(ContractJsonSerializer.CreateSerializerOptions())
     .WithResources<AviUtlResourceSet>();
 
-await builder.Build().RunAsync().ConfigureAwait(false);
+using IHost host = builder.Build();
+if (isSelfTestRequest)
+{
+    _ = host.Services.GetRequiredService<AviUtlQueryService>();
+    _ = host.Services.GetRequiredService<AviUtlEditService>();
+    _ = host.Services.GetRequiredService<DiagnosticsService>();
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        ok = true,
+        version = serverVersion,
+    }));
+    return;
+}
+await host.RunAsync().ConfigureAwait(false);
 
 namespace AviUtl2MCP.Server
 {

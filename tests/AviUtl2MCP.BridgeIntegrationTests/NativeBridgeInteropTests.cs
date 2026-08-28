@@ -52,7 +52,7 @@ public sealed class NativeBridgeInteropTests
             InstanceDescriptorWatcher watcher = new(pollInterval: TimeSpan.FromMilliseconds(20));
             BridgeInstanceDescriptor descriptor = await WaitForCurrentProcessDescriptorAsync(watcher);
             descriptorPath = Path.Combine(watcher.DirectoryPath, $"{descriptor.InstanceId:D}.json");
-            Assert.AreEqual("0.2.1", descriptor.BridgeVersion);
+            Assert.AreEqual("0.3.0", descriptor.BridgeVersion);
 
             await using NamedPipeBridgeTransport transport = new();
             BridgeHandshakeClient handshake = new(transport, Guid.CreateVersion7(), "0.1.0-test");
@@ -66,7 +66,7 @@ public sealed class NativeBridgeInteropTests
             Assert.AreEqual(Environment.ProcessId, session.AviutlProcessId);
             Assert.AreEqual(descriptor.ProcessCreationTime, session.AviutlProcessCreationTime);
             Assert.AreNotEqual(Guid.Empty, session.ServerEpoch);
-            Assert.AreEqual("0.2.1", session.Versions.Bridge);
+            Assert.AreEqual("0.3.0", session.Versions.Bridge);
             Assert.AreEqual(
                 TEST_HOST_VERSION.ToString(CultureInfo.InvariantCulture),
                 session.Versions.Sdk);

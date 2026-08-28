@@ -55,6 +55,9 @@ jobs:
       - name: MCP stdio debug run
         shell: powershell
         run: ./scripts/Test-McpStdio.ps1 -Configuration Release -NoBuild
+      - name: Latest Release updater tests
+        shell: powershell
+        run: ./scripts/Test-LatestReleaseUpdater.ps1 -Configuration Release -NoBuild
       - uses: actions/upload-artifact@v7
         if: always()
         with:

@@ -1335,7 +1335,7 @@ void test_bridge_version() {
         aviutl2_mcp::get_bridge_abi_version() == aviutl2_mcp::BRIDGE_ABI_VERSION,
         "bridge ABI version mismatch");
     require(
-        std::string_view(aviutl2_mcp::PRODUCT_VERSION) == "0.2.1",
+        std::string_view(aviutl2_mcp::PRODUCT_VERSION) == "0.3.0",
         "bridge product version did not match VERSION");
     require(
         aviutl2_mcp::MINIMUM_AVIUTL_VERSION == 2010300U,
