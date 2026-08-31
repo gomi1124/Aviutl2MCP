@@ -129,6 +129,7 @@ public sealed class RealOpenSceneTests
             "data",
             "aviutl2.ini");
         File.Copy(sourceLayoutPath, isolatedLayoutPath, overwrite: false);
+        SetSceneListLayout(isolatedLayoutPath);
 
         string sourcePath = Path.Combine(
             AppContext.BaseDirectory,
@@ -145,6 +146,55 @@ public sealed class RealOpenSceneTests
         }
         lines[fileLineIndex] = $"file={fixtureProjectPath}";
         File.WriteAllText(fixtureProjectPath, string.Join("\r\n", lines), UTF8_NO_BOM);
+    }
+
+    private static void SetSceneListLayout(string layoutPath)
+    {
+        Dictionary<string, string> values = new(StringComparer.Ordinal)
+        {
+            ["left"] = "0.000000",
+            ["top"] = "0.000000",
+            ["area"] = "0",
+            ["group"] = "0",
+            ["right"] = "0.133176",
+            ["hide"] = "0",
+            ["bottom"] = "1.000000",
+            ["floating"] = "0",
+        };
+        string content = File.ReadAllText(layoutPath, UTF8_NO_BOM);
+        string[] lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        bool isSceneListSection = false;
+        HashSet<string> replacedKeys = new(StringComparer.Ordinal);
+        for (int index = 0; index < lines.Length; index++)
+        {
+            string line = lines[index];
+            if (line.Length > 0 && line[0] == '[')
+            {
+                isSceneListSection = line == "[Window.scene.list]";
+                continue;
+            }
+            if (!isSceneListSection)
+            {
+                continue;
+            }
+            int separatorIndex = line.IndexOf('=', StringComparison.Ordinal);
+            if (separatorIndex <= 0)
+            {
+                continue;
+            }
+            string key = line[..separatorIndex];
+            if (values.TryGetValue(key, out string? value))
+            {
+                lines[index] = $"{key}={value}";
+                replacedKeys.Add(key);
+            }
+        }
+        if (replacedKeys.Count != values.Count)
+        {
+            throw new InvalidDataException(
+                "The AviUtl2 scene list layout section is incomplete.");
+        }
+        File.WriteAllText(layoutPath, string.Join("\r\n", lines), UTF8_NO_BOM);
     }
 
     private static async Task<GatewayResponse<ProjectData>> WaitForProjectAsync(

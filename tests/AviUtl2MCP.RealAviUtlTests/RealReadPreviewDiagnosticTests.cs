@@ -34,7 +34,7 @@ public sealed class RealReadPreviewDiagnosticTests
         "aviutl_psd_create",
         "aviutl_psd_create_voice",
     ];
-    private static readonly string[] VALID_DIAGNOSTIC_STATUSES = ["pass", "degraded"];
+    private static readonly string[] VALID_DIAGNOSTIC_STATUSES = ["healthy", "degraded"];
 
     [TestMethod]
     [TestCategory("RealAviUtl2")]
