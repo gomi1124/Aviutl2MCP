@@ -481,7 +481,7 @@
     },
     "EffectItem": {
       "type": "object", "additionalProperties": false,
-      "properties": { "name": { "type": "string" }, "type": { "enum": ["integer", "number", "check", "text", "string", "file", "color", "select", "scene", "range", "combo", "mask", "font", "figure", "data", "folder", "unknown"] }, "codec": { "enum": ["integer", "number", "check01", "aliasString", "unsupported"] }, "isWritable": { "type": "boolean" }, "value": { "$ref": "#/$defs/EffectItemValue" }, "choices": { "type": "array", "items": { "type": "string" } } },
+      "properties": { "name": { "type": "string" }, "type": { "enum": ["integer", "number", "check", "text", "string", "file", "color", "select", "scene", "range", "combo", "mask", "font", "figure", "data", "folder", "numberGroup", "group", "separator", "unknown"] }, "codec": { "enum": ["integer", "number", "check01", "aliasString", "unsupported"] }, "isWritable": { "type": "boolean" }, "value": { "$ref": "#/$defs/EffectItemValue" }, "choices": { "type": "array", "items": { "type": "string" } } },
       "required": ["name", "type", "codec", "isWritable"]
     },
     "EffectItemsData": {

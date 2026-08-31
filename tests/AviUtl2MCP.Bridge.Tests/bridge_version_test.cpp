@@ -800,6 +800,9 @@ void set_fake_effect_lock(const EFFECT_HANDLE effect, const bool locked) {
     } else if (std::wstring_view(effect) == L"Text") {
         callback(parameter, L"Text", EDIT_HANDLE::EFFECT_ITEM_TYPE_TEXT);
         callback(parameter, L"Font", EDIT_HANDLE::EFFECT_ITEM_TYPE_FONT);
+        callback(parameter, L"Position", EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER_GROUP);
+        callback(parameter, L"Appearance", EDIT_HANDLE::EFFECT_ITEM_TYPE_GROUP);
+        callback(parameter, L"Layout", EDIT_HANDLE::EFFECT_ITEM_TYPE_SEPARATOR);
     } else if (std::wstring_view(effect) == L"PSDファイル@PSDToolKit") {
         callback(parameter, L"PSDファイル", EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE);
         callback(parameter, L"セーフガード", EDIT_HANDLE::EFFECT_ITEM_TYPE_CHECK);
@@ -2528,7 +2531,7 @@ void test_sdk_read_facade() {
 
     const aviutl2_mcp::sdk_effect_items_query_result text_items =
         facade.query_effect_items("Text", true);
-    require(text_items.ok && text_items.items.size() == 2U
+    require(text_items.ok && text_items.items.size() == 5U
             && text_items.items[0].name == "Text"
             && text_items.items[0].codec == "aliasString"
             && text_items.items[0].is_writable
@@ -2536,6 +2539,16 @@ void test_sdk_read_facade() {
             && text_items.items[1].choices
                 == std::vector<std::string>({"Yu Gothic UI", "Noto Sans JP"}),
         "SDK facade did not return effect item codecs and public font choices");
+    require(text_items.items[2].type == "numberGroup"
+            && text_items.items[3].type == "group"
+            && text_items.items[4].type == "separator"
+            && std::ranges::all_of(
+                text_items.items.begin() + 2,
+                text_items.items.end(),
+                [](const auto& item) {
+                    return item.codec == "unsupported" && !item.is_writable;
+                }),
+        "SDK facade did not map structural effect item types safely");
     const aviutl2_mcp::sdk_effect_items_query_result text_items_without_choices =
         facade.query_effect_items("Text", false);
     require(text_items_without_choices.ok
@@ -2751,10 +2764,14 @@ void test_native_query_request_handlers() {
             R"({"effect":{"name":"Text"},"includeChoices":true})"),
         identity.instance_id).get()));
     require(effect_items.at("ok").get<bool>()
-            && effect_items.at("result").at("items").size() == 2U
+            && effect_items.at("result").at("items").size() == 5U
             && effect_items.at("result").at("items")[1].at("type") == "font"
             && effect_items.at("result").at("items")[1].at("choices").size() == 2U
-            && effect_items.at("result").at("items")[1].at("isWritable").get<bool>(),
+            && effect_items.at("result").at("items")[1].at("isWritable").get<bool>()
+            && effect_items.at("result").at("items")[2].at("type") == "numberGroup"
+            && !effect_items.at("result").at("items")[2].at("isWritable").get<bool>()
+            && effect_items.at("result").at("items")[3].at("type") == "group"
+            && effect_items.at("result").at("items")[4].at("type") == "separator",
         "native effect item handler omitted codec or font choices");
 
     const nlohmann::json missing_effect_items = nlohmann::json::parse(get_json(dispatcher.dispatch(

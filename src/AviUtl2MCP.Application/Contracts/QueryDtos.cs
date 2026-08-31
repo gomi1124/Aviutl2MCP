@@ -67,6 +67,10 @@ public enum EffectItemType
     Figure,
     Data,
     Folder,
+    [JsonStringEnumMemberName("numberGroup")]
+    NumberGroup,
+    Group,
+    Separator,
     Unknown,
 }
 

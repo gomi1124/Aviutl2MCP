@@ -572,6 +572,12 @@ struct effect_item_codec final {
             return {"data", "unsupported", false};
         case EDIT_HANDLE::EFFECT_ITEM_TYPE_FOLDER:
             return {"folder", "unsupported", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER_GROUP:
+            return {"numberGroup", "unsupported", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_GROUP:
+            return {"group", "unsupported", false};
+        case EDIT_HANDLE::EFFECT_ITEM_TYPE_SEPARATOR:
+            return {"separator", "unsupported", false};
         default:
             return {"unknown", "unsupported", false};
     }
