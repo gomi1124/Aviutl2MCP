@@ -1,9 +1,13 @@
+using System.Globalization;
 using AviUtl2MCP.Application.Contracts;
 
 namespace AviUtl2MCP.Application.Capabilities;
 
 public static class CapabilityService
 {
+    private const uint SCENE_API_MINIMUM_AVIUTL_VERSION = 2011000;
+    private static readonly Version minimumSceneApiVersion = new(2, 1, 10);
+
     private static readonly string[] alwaysAvailableOperations =
     [
         "aviutl_get_status",
@@ -77,6 +81,13 @@ public static class CapabilityService
             canEdit,
             GetEditReason(environment));
 
+        bool hasNativeSceneApi = HasNativeSceneApi(environment.Versions.Aviutl);
+        AddOperations(
+            operations,
+            ["aviutl_create_scene"],
+            canEdit && hasNativeSceneApi,
+            GetEditReason(environment) ?? (hasNativeSceneApi ? null : "version_not_supported"));
+
         bool canSaveProject = canEdit && environment.IsProjectSaved;
         AddOperations(
             operations,
@@ -86,8 +97,8 @@ public static class CapabilityService
         AddOperations(
             operations,
             ["aviutl_open_scene"],
-            canSaveProject,
-            GetSaveProjectReason(environment));
+            hasNativeSceneApi ? canEdit : canSaveProject,
+            hasNativeSceneApi ? GetEditReason(environment) : GetSaveProjectReason(environment));
 
         bool canUsePsdToolKit = canEdit && environment.HasPsdToolKit;
         AddOperations(
@@ -133,6 +144,23 @@ public static class CapabilityService
         {
             target.Add(new CapabilityOperation(name, isAvailable, reason, []));
         }
+    }
+
+    private static bool HasNativeSceneApi(string? aviutlVersion)
+    {
+        if (string.IsNullOrEmpty(aviutlVersion))
+        {
+            return false;
+        }
+        if (uint.TryParse(aviutlVersion, NumberStyles.None, CultureInfo.InvariantCulture, out uint versionCode))
+        {
+            return versionCode >= SCENE_API_MINIMUM_AVIUTL_VERSION;
+        }
+        string numericVersion = new(aviutlVersion
+            .TakeWhile(character => char.IsAsciiDigit(character) || character == '.')
+            .ToArray());
+        return Version.TryParse(numericVersion, out Version? version)
+            && version >= minimumSceneApiVersion;
     }
 
     private static string? GetProjectReason(CapabilityEnvironment environment)

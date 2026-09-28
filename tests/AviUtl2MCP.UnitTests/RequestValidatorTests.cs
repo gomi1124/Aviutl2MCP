@@ -8,6 +8,120 @@ namespace AviUtl2MCP.UnitTests;
 public sealed class RequestValidatorTests
 {
     [TestMethod]
+    public void ValidateCreateSceneAcceptsInheritanceAndBoundarySettings()
+    {
+        // Arrange
+        CreateSceneInput inherited = new()
+        {
+            ExpectedRevision = new Revision("epoch:generation:1"),
+            Name = "新しいシーン",
+        };
+        CreateSceneInput boundary = inherited with
+        {
+            Width = 1,
+            Height = 8192,
+            FrameRate = 1000,
+            SampleRate = 384000,
+            Label = string.Empty,
+        };
+        CreateSceneInput oppositeBoundary = boundary with { Width = 8192, Height = 1, SampleRate = 8000 };
+
+        // Act and Assert
+        RequestValidator.ValidateEditInput(inherited);
+        RequestValidator.ValidateEditInput(boundary);
+        RequestValidator.ValidateEditInput(oppositeBoundary);
+    }
+
+    [TestMethod]
+    [DataRow(0, 720, 48000)]
+    [DataRow(8193, 720, 48000)]
+    [DataRow(1280, 0, 48000)]
+    [DataRow(1280, 8193, 48000)]
+    [DataRow(1280, 720, 7999)]
+    [DataRow(1280, 720, 384001)]
+    public void ValidateCreateSceneRejectsOutOfRangeSettings(int width, int height, int sampleRate)
+    {
+        // Arrange
+        CreateSceneInput input = new()
+        {
+            ExpectedRevision = new Revision("epoch:generation:1"),
+            Name = "Scene",
+            Width = width,
+            Height = height,
+            SampleRate = sampleRate,
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidateEditInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(action);
+    }
+
+    [TestMethod]
+    [DataRow(0.0)]
+    [DataRow(-1.0)]
+    [DataRow(1000.1)]
+    [DataRow(double.NaN)]
+    [DataRow(double.PositiveInfinity)]
+    [DataRow(double.NegativeInfinity)]
+    public void ValidateCreateSceneRejectsInvalidFrameRate(double frameRate)
+    {
+        // Arrange
+        CreateSceneInput input = new()
+        {
+            ExpectedRevision = new Revision("epoch:generation:1"),
+            Name = "Scene",
+            FrameRate = frameRate,
+        };
+
+        // Act
+        Action action = () => RequestValidator.ValidateEditInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(action);
+    }
+
+    [TestMethod]
+    [DataRow("")]
+    [DataRow(" ")]
+    [DataRow("scene\0name")]
+    public void ValidateCreateSceneRejectsInvalidName(string name)
+    {
+        // Arrange
+        CreateSceneInput input = new() { ExpectedRevision = new Revision("epoch:generation:1"), Name = name };
+
+        // Act
+        Action action = () => RequestValidator.ValidateEditInput(input);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentException>(action);
+    }
+
+    [TestMethod]
+    public void ValidateCreateSceneRejectsLongNameAndLabel()
+    {
+        // Arrange
+        CreateSceneInput input = new()
+        {
+            ExpectedRevision = new Revision("epoch:generation:1"),
+            Name = new string('n', 257),
+        };
+        CreateSceneInput invalidLabel = input with { Name = "Scene", Label = new string('l', 257) };
+        CreateSceneInput nulLabel = input with { Name = "Scene", Label = "label\0" };
+
+        // Act
+        Action nameAction = () => RequestValidator.ValidateEditInput(input);
+        Action labelAction = () => RequestValidator.ValidateEditInput(invalidLabel);
+        Action nulLabelAction = () => RequestValidator.ValidateEditInput(nulLabel);
+
+        // Assert
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(nameAction);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(labelAction);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(nulLabelAction);
+    }
+
+    [TestMethod]
     [TestProperty("TestId", "fuzz.input-boundaries")]
     public void ValidateBoundaryRejectionsDoNotPoisonSubsequentStatusValidation()
     {

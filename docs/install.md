@@ -4,6 +4,7 @@
 
 - Windows x64
 - AviUtl ExEdit2 2.1.3以降（2.1.3aで実機確認済み）
+- 新規シーン追加・公式SDKのシーン切り替え・全シーン一覧取得には2.1.10以降が必要。旧本体ではシーン追加を能力エラーで拒否し、従来のシーン選択経路を使用する
 - PSDToolKit2 2.0.0alpha10互換profile
 - GCMZDrops API v3
 
@@ -22,7 +23,7 @@ packageは`Plugin\AviUtl2MCP`だけを所有し、更新・uninstall時はこの
 2. AviUtl2を終了し、`Install-AviUtl2MCP.ps1`を実行する。
 3. `mcp-config.example.json`をMCP clientの形式へ合わせてコピーする。
 4. `command`と`args`を、installerが表示した固定launcherのpathへ変更する。
-5. MCP clientを再起動し、33 tools・5 resources・4 promptsを列挙する。
+5. MCP clientを再起動し、34 tools・5 resources・4 promptsを列挙する。
 
 ```powershell
 .\Install-AviUtl2MCP.ps1

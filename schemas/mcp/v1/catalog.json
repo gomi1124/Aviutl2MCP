@@ -481,7 +481,7 @@
     },
     "EffectItem": {
       "type": "object", "additionalProperties": false,
-      "properties": { "name": { "type": "string" }, "type": { "enum": ["integer", "number", "check", "text", "string", "file", "color", "select", "scene", "range", "combo", "mask", "font", "figure", "data", "folder", "unknown"] }, "codec": { "enum": ["integer", "number", "check01", "aliasString", "unsupported"] }, "isWritable": { "type": "boolean" }, "value": { "$ref": "#/$defs/EffectItemValue" }, "choices": { "type": "array", "items": { "type": "string" } } },
+      "properties": { "name": { "type": "string" }, "type": { "enum": ["integer", "number", "check", "text", "string", "file", "color", "select", "scene", "range", "combo", "mask", "font", "figure", "data", "folder", "numberGroup", "group", "separator", "unknown"] }, "codec": { "enum": ["integer", "number", "check01", "aliasString", "unsupported"] }, "isWritable": { "type": "boolean" }, "value": { "$ref": "#/$defs/EffectItemValue" }, "choices": { "type": "array", "items": { "type": "string" } } },
       "required": ["name", "type", "codec", "isWritable"]
     },
     "EffectItemsData": {
@@ -538,6 +538,24 @@
       "type": "object", "additionalProperties": false,
       "properties": { "sceneId": { "type": "integer", "minimum": 0 }, "name": { "type": "string" } },
       "required": ["sceneId", "name"]
+    },
+    "CreateSceneData": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "sceneId": { "type": "integer", "minimum": -1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "frameRate": { "type": "number", "exclusiveMinimum": 0 },
+        "sampleRate": { "type": "integer", "minimum": 1 },
+        "created": { "type": "boolean" },
+        "activated": { "type": "boolean" }
+      },
+      "required": ["sceneId", "name", "width", "height", "frameRate", "sampleRate", "created", "activated"],
+      "oneOf": [
+        { "properties": { "sceneId": { "minimum": 0 }, "created": { "const": true }, "activated": { "const": true } } },
+        { "properties": { "sceneId": { "const": -1 }, "created": { "const": false }, "activated": { "const": false } } }
+      ]
     },
     "BatchResult": {
       "type": "object", "additionalProperties": false,
@@ -628,6 +646,7 @@
     "LayerUpdateOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/LayerUpdateData" } } }] },
     "CursorOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/CursorData" } } }] },
     "OpenSceneOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/OpenSceneData" } } }] },
+    "CreateSceneOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/CreateSceneData" } } }] },
     "BatchOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/BatchData" } } }] },
     "PreviewOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/PreviewData" } } }] },
     "LogsOutput": { "allOf": [{ "$ref": "#/$defs/ToolEnvelope" }, { "properties": { "data": { "$ref": "#/$defs/LogsData" } } }] },
@@ -647,6 +666,25 @@
     "ListEffectsInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/PageInput" }, { "type": "object", "properties": { "category": { "enum": ["filter", "input", "transition", "control", "output"] }, "nameContains": { "type": "string", "minLength": 1, "maxLength": 4096 } } }], "unevaluatedProperties": false },
     "ListEffectItemsInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "type": "object", "properties": { "effect": { "$ref": "#/$defs/EffectDefinitionSelector" }, "includeChoices": { "type": "boolean", "default": true } }, "required": ["effect"] }], "unevaluatedProperties": false },
     "CreateObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/CreateObjectArgs" }], "unevaluatedProperties": false },
+    "CreateSceneInput": {
+      "allOf": [
+        { "$ref": "#/$defs/CommonInput" },
+        { "$ref": "#/$defs/MutationInput" },
+        {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "\\S" },
+            "width": { "type": "integer", "minimum": 1, "maximum": 8192 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 8192 },
+            "frameRate": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 },
+            "sampleRate": { "type": "integer", "minimum": 8000, "maximum": 384000 },
+            "label": { "type": "string", "maxLength": 256 }
+          },
+          "required": ["name"]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
     "CreateMediaObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/CreateMediaObjectArgs" }], "unevaluatedProperties": false },
     "CreateAliasObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/CreateAliasObjectArgs" }], "unevaluatedProperties": false },
     "MoveObjectInput": { "allOf": [{ "$ref": "#/$defs/CommonInput" }, { "$ref": "#/$defs/MutationInput" }, { "$ref": "#/$defs/MoveObjectArgs" }], "unevaluatedProperties": false },
@@ -694,7 +732,8 @@
     "aviutl_set_effect_state": "既存effectの有効・lock状態を変更します。",
     "aviutl_set_layer": "layerの名前、表示、lock状態を変更します。",
     "aviutl_set_cursor": "cursor、表示frame、選択範囲を変更します。",
-    "aviutl_open_scene": "シーンIDまたは完全一致するシーン名を指定し、シーンリストから開きます。",
+    "aviutl_open_scene": "シーンIDまたは完全一致するシーン名を指定して開きます。AviUtl2 2.1.10以降では保存前のシーンも選択できます。",
+    "aviutl_create_scene": "新しいシーンを追加して開きます。省略した設定は現在のシーンから引き継ぎます。AviUtl2 2.1.10以降が必要です。",
     "aviutl_execute_batch": "複数のSDK編集を1 Undo単位で実行します。",
     "aviutl_render_preview": "指定frameをPNG previewとして取得します。",
     "aviutl_get_logs": "マスク済みのServer、Bridge、AviUtl2 logを取得します。",
@@ -730,6 +769,7 @@
     { "name": "aviutl_set_layer", "inputSchema": { "$ref": "#/$defs/SetLayerInput" }, "outputSchema": { "$ref": "#/$defs/LayerUpdateOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_set_cursor", "inputSchema": { "$ref": "#/$defs/SetCursorInput" }, "outputSchema": { "$ref": "#/$defs/CursorOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_open_scene", "inputSchema": { "$ref": "#/$defs/OpenSceneInput" }, "outputSchema": { "$ref": "#/$defs/OpenSceneOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "aviutl_create_scene", "inputSchema": { "$ref": "#/$defs/CreateSceneInput" }, "outputSchema": { "$ref": "#/$defs/CreateSceneOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
     { "name": "aviutl_execute_batch", "inputSchema": { "$ref": "#/$defs/ExecuteBatchInput" }, "outputSchema": { "$ref": "#/$defs/BatchOutput" }, "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false } },
     { "name": "aviutl_render_preview", "inputSchema": { "$ref": "#/$defs/RenderPreviewInput" }, "outputSchema": { "$ref": "#/$defs/PreviewOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "aviutl_get_logs", "inputSchema": { "$ref": "#/$defs/GetLogsInput" }, "outputSchema": { "$ref": "#/$defs/LogsOutput" }, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },

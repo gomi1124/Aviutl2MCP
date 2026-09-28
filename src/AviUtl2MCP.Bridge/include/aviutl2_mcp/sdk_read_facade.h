@@ -40,6 +40,7 @@ enum class sdk_edit_state {
 
 struct sdk_status_snapshot final {
     bool is_sdk_ready = false;
+    bool supports_scene_management = false;
     bool has_query_error = false;
     std::string query_error;
     sdk_project_state project_state = sdk_project_state::unknown;
@@ -74,6 +75,28 @@ struct sdk_project_snapshot final {
 struct sdk_project_query_result final {
     bool ok = false;
     sdk_project_snapshot project{};
+    std::string error_code;
+    std::string error_message;
+};
+
+struct sdk_scene_create_request final {
+    std::string name;
+    std::optional<std::string> label;
+    std::optional<int> width;
+    std::optional<int> height;
+    std::optional<double> frame_rate;
+    std::optional<int> sample_rate;
+};
+
+struct sdk_scene_create_result final {
+    bool ok = false;
+    bool has_changed = false;
+    int scene_id = -1;
+    std::string name;
+    int width = 0;
+    int height = 0;
+    double frame_rate = 0;
+    int sample_rate = 0;
     std::string error_code;
     std::string error_message;
 };
@@ -406,10 +429,13 @@ public:
     sdk_read_facade& operator=(const sdk_read_facade&) = delete;
 
     [[nodiscard]] bool register_host(HOST_APP_TABLE* host) noexcept;
+    void set_host_version(std::uint32_t version) noexcept;
     void detach() noexcept;
 
     [[nodiscard]] sdk_status_snapshot query_status() const noexcept;
     [[nodiscard]] sdk_project_query_result query_project(bool include_scenes) const noexcept;
+    [[nodiscard]] sdk_scene_create_result create_scene(
+        const sdk_scene_create_request& request, bool dry_run) const noexcept;
     [[nodiscard]] sdk_timeline_query_result query_timeline(const sdk_timeline_query& query) const noexcept;
     [[nodiscard]] sdk_object_query_result query_object(
         const object_locator& locator,
@@ -481,6 +507,7 @@ private:
     mutable std::mutex mutex_;
     mutable std::condition_variable project_saved_cv_;
     EDIT_HANDLE* edit_handle_ = nullptr;
+    std::uint32_t host_version_ = 0U;
     void* host_app_window_ = nullptr;
     void* sdk_dispatch_window_ = nullptr;
     std::uint32_t sdk_thread_id_ = 0U;

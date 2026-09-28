@@ -19,6 +19,29 @@ public sealed class AviUtlEditService(
     private readonly IAviUtlEditGateway _editGateway = editGateway
         ?? throw new ArgumentNullException(nameof(editGateway));
 
+    public ValueTask<QueryExecutionResult<CreateSceneData>> CreateSceneAsync(
+        CreateSceneInput input,
+        RequestContext context) => ExecuteCoreAsync(
+            input,
+            [],
+            context,
+            (instance, cancellationToken) => _editGateway.CreateSceneAsync(
+                new GatewayRequest<CreateSceneArgs>(
+                    instance.InstanceId,
+                    context.CorrelationId,
+                    context.Deadline,
+                    context.TimeoutMs,
+                    input.ExpectedRevision,
+                    input.DryRun,
+                    new CreateSceneArgs(
+                        input.Name,
+                        input.Width,
+                        input.Height,
+                        input.FrameRate,
+                        input.SampleRate,
+                        input.Label)),
+                cancellationToken));
+
     public ValueTask<QueryExecutionResult<CreateObjectData>> CreateObjectAsync(
         CreateObjectInput input,
         RequestContext context) => ExecuteAsync<CreateObjectArgs, CreateObjectData>(

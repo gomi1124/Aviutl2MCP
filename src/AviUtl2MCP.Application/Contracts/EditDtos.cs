@@ -3,6 +3,24 @@ using System.Text.Json.Serialization;
 
 namespace AviUtl2MCP.Application.Contracts;
 
+public sealed record CreateSceneArgs(
+    string Name,
+    int? Width = null,
+    int? Height = null,
+    double? FrameRate = null,
+    int? SampleRate = null,
+    string? Label = null);
+
+public sealed record CreateSceneData(
+    int SceneId,
+    string Name,
+    int Width,
+    int Height,
+    double FrameRate,
+    int SampleRate,
+    bool Created,
+    bool Activated);
+
 public sealed record CreateObjectArgs(
     EffectDefinitionSelector Effect,
     Placement Placement)

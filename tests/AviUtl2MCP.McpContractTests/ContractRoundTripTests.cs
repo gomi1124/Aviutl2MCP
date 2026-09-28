@@ -24,6 +24,13 @@ public sealed class ContractRoundTripTests
         "setLayer",
     ];
 
+    private static readonly string[] EXPECTED_STRUCTURAL_EFFECT_ITEM_TYPES =
+    [
+        "numberGroup",
+        "group",
+        "separator",
+    ];
+
     [TestMethod]
     public void RoundTripQueryDataPreservesRequiredNulls()
     {
@@ -43,6 +50,27 @@ public sealed class ContractRoundTripTests
         // Assert
         Assert.IsTrue(root.ContainsKey("selectedInstance"));
         Assert.IsNull(root["selectedInstance"]);
+    }
+
+    [TestMethod]
+    public void RoundTripEffectItemsPreservesStructuralSdkTypes()
+    {
+        // Arrange
+        EffectItemsData data = new(
+        [
+            new EffectItem("Position", EffectItemType.NumberGroup, EffectItemCodec.Unsupported, false),
+            new EffectItem("Appearance", EffectItemType.Group, EffectItemCodec.Unsupported, false),
+            new EffectItem("Layout", EffectItemType.Separator, EffectItemCodec.Unsupported, false),
+        ]);
+
+        // Act
+        string json = AssertRoundTrip(data);
+        string[] types = JsonNode.Parse(json)!["items"]!.AsArray()
+            .Select(item => item!["type"]!.GetValue<string>())
+            .ToArray();
+
+        // Assert
+        CollectionAssert.AreEqual(EXPECTED_STRUCTURAL_EFFECT_ITEM_TYPES, types);
     }
 
     [TestMethod]

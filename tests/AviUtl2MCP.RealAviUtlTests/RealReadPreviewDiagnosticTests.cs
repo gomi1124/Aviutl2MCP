@@ -34,7 +34,7 @@ public sealed class RealReadPreviewDiagnosticTests
         "aviutl_psd_create",
         "aviutl_psd_create_voice",
     ];
-    private static readonly string[] VALID_DIAGNOSTIC_STATUSES = ["pass", "degraded"];
+    private static readonly string[] VALID_DIAGNOSTIC_STATUSES = ["healthy", "degraded"];
 
     [TestMethod]
     [TestCategory("RealAviUtl2")]
@@ -81,7 +81,7 @@ public sealed class RealReadPreviewDiagnosticTests
 
         IList<McpClientTool> tools = await client.ListToolsAsync(
             cancellationToken: timeout.Token);
-        Assert.AreEqual(33, tools.Count);
+        Assert.AreEqual(34, tools.Count);
 
         JsonElement project = await WaitForProjectAsync(
             client,
@@ -1045,7 +1045,7 @@ public sealed class RealReadPreviewDiagnosticTests
         Assert.AreEqual("2010300", versions.GetProperty("sdk").GetString());
 
         JsonElement[] operations = data.GetProperty("operations").EnumerateArray().ToArray();
-        Assert.AreEqual(33, operations.Length);
+        Assert.AreEqual(34, operations.Length);
         int availableOperationCount = 0;
         foreach (JsonElement operation in operations)
         {
@@ -1055,6 +1055,11 @@ public sealed class RealReadPreviewDiagnosticTests
                 continue;
             }
             string operationName = operation.GetProperty("name").GetString()!;
+            if (operationName == "aviutl_create_scene" && aviUtlVersion < 2011000U)
+            {
+                Assert.AreEqual("version_not_supported", operation.GetProperty("reason").GetString());
+                continue;
+            }
             CollectionAssert.Contains(
                 GCMZ_EXCLUSIVE_OPERATION_NAMES,
                 operationName,

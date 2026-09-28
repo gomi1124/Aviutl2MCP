@@ -11,9 +11,9 @@
 | AC-BLD-001 | `build.clean-windows` | Windows CI | locked restoreからServer/Bridgeを警告エラーなしでbuild | [CI] `managed` / `native` / `contract` / `integration` |
 | AC-BLD-002 | `ci.required-jobs` | GitHub Actions | managed/native/contract/integration jobが全成功 | [CI] 全required job成功 |
 | AC-BLD-003 | `real.package-install` | 専用AviUtl2実機 | `.au2pkg.zip`導入後にbridge versionをstatusで取得 | `artifacts/real-e2e/019fb0db-d158-79fd-a67f-af46b5705a41/debug-report.json` |
-| AC-MCP-001 | `stdio.offline-initialize` | stdio black-box | AviUtl2なしでinitializeと33 tools listが成功 | [CI] `contract` |
+| AC-MCP-001 | `stdio.offline-initialize` | stdio black-box | AviUtl2なしでinitializeと34 tools listが成功 | [CI] `contract` |
 | AC-MCP-002 | `pipe.late-connect` | fake bridge統合 | Server維持中にbridge起動しReadyへ遷移 | [CI] `integration` |
-| AC-MCP-003 | `mcp.catalog-snapshot` | MCP contract | 33 tools、5 resources、4 promptsとSchema catalogが一致 | [CI] `contract` |
+| AC-MCP-003 | `mcp.catalog-snapshot` | MCP contract | 34 tools、5 resources、4 promptsとSchema catalogが一致 | [CI] `contract` |
 | AC-MCP-004 | `stdio.stdout-purity` | stdio black-box | stdoutの全frameが有効MCP message、ログはstderrのみ | [CI] `contract` |
 | AC-MCP-005 | `pipe.instance-selection` | fake bridge統合 | 複数時は曖昧拒否、明示IDだけへ要求送信 | [CI] `integration` |
 | AC-EDT-001 | `real.timeline-read` | 専用AviUtl2実機 | fixtureのscene/layer/object/effect DTOがgolden値と一致 | `artifacts/real-e2e/019f79ef-acdd-7f30-b7bd-0f6a9417e1db/debug-report.json` |
@@ -26,6 +26,8 @@
 | AC-EDT-008 | `bridge.batch-partial` | native fake＋実機 | N件目失敗で適用ID/状態/Undo推奨、1 Undo復旧 | [CI] `native` / `integration` + `real-e2e/019f79ef-7a3a-785f-ad59-2c4c7c30369e` |
 | AC-EDT-009 | `real.project-save` | 専用AviUtl2実機 | 名前付きprojectの保存完了、path、revision不変、保存file更新を確認 | `artifacts/real-e2e/019f9f2f-15bf-7b08-aaed-f5c390be81a3/debug-report.json` |
 | AC-EDT-010 | `real.object-section-lifecycle` | 専用AviUtl2実機 | 中間点の作成・移動・削除と区間開始frameを再取得で確認 | `artifacts/real-e2e/019fb0d6-fdfa-77e9-84fa-7e9c772f8e46/debug-report.json` |
+| AC-PRJ-001 | `real.create-scene` | native fake＋Application＋専用AviUtl2実機 | dry-runのrevision/scene数不変、明示設定・継承設定でscene追加、選択・設定再取得、保存前の一覧取得と切り戻しを確認 | `artifacts/real-e2e/01a0e829-ef6c-7f27-a893-ca41c004471a/debug-report.json` |
+| AC-PRJ-002 | `scene.version-compatibility` | native fake＋旧本体実機 | 2.1.10未満で追加を能力エラー拒否し、従来のscene選択が動作 | `artifacts/real-e2e/01a0e82a-6909-7173-99a4-a729133f7064/debug-report.json` + `01a0e82b-c3ac-761d-b532-88171371fcb9` |
 | AC-PSD-001 | `real.psd-create` | 専用PSD実機 | PSD投入後にprofile一致objectをSDK再検索 | `artifacts/real-e2e/019f7a32-2164-75ca-abfb-6d4455c25855/debug-report.json` |
 | AC-PSD-002 | `real.psd-setup` | 専用PSD実機 | 不足/誤配置を検出し、安全候補へsetupを作成 | `artifacts/real-e2e/019f79ef-ce94-7340-8803-bf6ea373c2d7/debug-report.json` |
 | AC-PSD-003 | `real.psd-character-layer` | 専用PSD実機 | character IDとcanonical layerStateがround-trip一致 | `artifacts/real-e2e/019f79ef-ff8e-775b-858a-f5667a48cb81/debug-report.json` |

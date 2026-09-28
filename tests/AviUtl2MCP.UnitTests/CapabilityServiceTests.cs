@@ -16,8 +16,8 @@ public sealed class CapabilityServiceTests
         CapabilitiesData data = CapabilityService.GetCapabilities(environment);
 
         // Assert
-        Assert.HasCount(33, data.Operations);
-        Assert.HasCount(33, data.Operations.Select(operation => operation.Name).Distinct(StringComparer.Ordinal).ToArray());
+        Assert.HasCount(34, data.Operations);
+        Assert.HasCount(34, data.Operations.Select(operation => operation.Name).Distinct(StringComparer.Ordinal).ToArray());
         Assert.IsTrue(data.Operations.All(operation => operation.Available));
         Assert.AreEqual(100, data.Limits.BatchOperations);
     }
@@ -80,7 +80,8 @@ public sealed class CapabilityServiceTests
         // Arrange
         CapabilityEnvironment environment = CreateEnvironment(
             hasGcmzDrops: true,
-            isProjectSaved: false);
+            isProjectSaved: false,
+            aviutlVersion: "2.1.7a");
 
         // Act
         CapabilityOperation openScene = CapabilityService.GetCapabilities(environment)
@@ -91,17 +92,88 @@ public sealed class CapabilityServiceTests
         Assert.AreEqual("project_path_required", openScene.Reason);
     }
 
+    [TestMethod]
+    [DataRow("2011000", true)]
+    [DataRow("2011001", true)]
+    [DataRow("2010900", false)]
+    [DataRow("2.1.10", true)]
+    [DataRow("2.1.10a", true)]
+    [DataRow("2.2.0", true)]
+    [DataRow("2.1.9", false)]
+    [DataRow("2.1.7a", false)]
+    [DataRow("unknown", false)]
+    [DataRow(null, false)]
+    public void GetCapabilitiesGatesSceneCreationByHostVersion(string? aviutlVersion, bool isAvailable)
+    {
+        // Arrange
+        CapabilityEnvironment environment = CreateEnvironment(hasGcmzDrops: true, aviutlVersion: aviutlVersion);
+
+        // Act
+        CapabilityOperation create = CapabilityService.GetCapabilities(environment)
+            .Operations.Single(operation => operation.Name == "aviutl_create_scene");
+
+        // Assert
+        Assert.AreEqual(isAvailable, create.Available);
+        Assert.AreEqual(isAvailable ? null : "version_not_supported", create.Reason);
+    }
+
+    [TestMethod]
+    public void GetCapabilitiesUsesNativeSceneApiForUnsavedProjects()
+    {
+        // Arrange
+        CapabilityEnvironment environment = CreateEnvironment(hasGcmzDrops: true, isProjectSaved: false);
+
+        // Act
+        CapabilitiesData data = CapabilityService.GetCapabilities(environment);
+        CapabilityOperation create = data.Operations.Single(operation => operation.Name == "aviutl_create_scene");
+        CapabilityOperation open = data.Operations.Single(operation => operation.Name == "aviutl_open_scene");
+
+        // Assert
+        Assert.IsTrue(create.Available);
+        Assert.IsNull(create.Reason);
+        Assert.IsTrue(open.Available);
+        Assert.IsNull(open.Reason);
+    }
+
+    [TestMethod]
+    [DataRow(false, true, true, "bridge_not_connected")]
+    [DataRow(true, false, true, "project_not_open")]
+    [DataRow(true, true, false, "edit_not_available")]
+    public void GetCapabilitiesRequiresEditableProjectForSceneCreation(
+        bool isBridgeReady,
+        bool isProjectOpen,
+        bool canEdit,
+        string reason)
+    {
+        // Arrange
+        CapabilityEnvironment environment = CreateEnvironment(hasGcmzDrops: true) with
+        {
+            IsBridgeReady = isBridgeReady,
+            IsProjectOpen = isProjectOpen,
+            CanEdit = canEdit,
+        };
+
+        // Act
+        CapabilityOperation create = CapabilityService.GetCapabilities(environment)
+            .Operations.Single(operation => operation.Name == "aviutl_create_scene");
+
+        // Assert
+        Assert.IsFalse(create.Available);
+        Assert.AreEqual(reason, create.Reason);
+    }
+
     private static CapabilityEnvironment CreateEnvironment(
         bool hasGcmzDrops,
         bool canEdit = true,
-        bool isProjectSaved = true)
+        bool isProjectSaved = true,
+        string? aviutlVersion = "2011000")
     {
         CapabilityVersions versions = new(
             "0.1.0",
             "1.0.0",
             "1.0",
             "0.1.0",
-            "2.1.0",
+            aviutlVersion,
             "2.1.0",
             "2.0.0",
             hasGcmzDrops ? "3.0.0" : null);

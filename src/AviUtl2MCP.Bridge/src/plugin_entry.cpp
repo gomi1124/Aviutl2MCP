@@ -39,6 +39,7 @@ AVIUTL2_MCP_EXPORT void InitializeLogger(LOG_HANDLE* logger) noexcept {
 }
 
 AVIUTL2_MCP_EXPORT bool InitializePlugin(const DWORD version) noexcept {
+    aviutl2_mcp::get_sdk_read_facade().set_host_version(version);
     return aviutl2_mcp::get_bridge_runtime().start(version);
 }
 

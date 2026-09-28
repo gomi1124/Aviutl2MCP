@@ -164,12 +164,12 @@ classDiagram
 |---|---:|---|
 | `StatusToolSet` | 2 | `aviutl_get_status`、`aviutl_get_capabilities` |
 | `TimelineQueryToolSet` | 6 | `aviutl_get_project`、`aviutl_get_timeline`、`aviutl_find_objects`、`aviutl_get_object`、`aviutl_list_effects`、`aviutl_list_effect_items` |
-| `TimelineEditToolSet` | 15 | `aviutl_create_object`、`aviutl_create_media_object`、`aviutl_create_alias_object`、`aviutl_move_object`、`aviutl_delete_object`、`aviutl_set_object_name`、`aviutl_create_object_section`、`aviutl_delete_object_section`、`aviutl_move_object_section`、`aviutl_set_effect_item`、`aviutl_set_effect_state`、`aviutl_set_layer`、`aviutl_open_scene`、`aviutl_set_cursor`、`aviutl_save_project` |
+| `TimelineEditToolSet` | 16 | `aviutl_create_object`、`aviutl_create_media_object`、`aviutl_create_alias_object`、`aviutl_move_object`、`aviutl_delete_object`、`aviutl_set_object_name`、`aviutl_create_object_section`、`aviutl_delete_object_section`、`aviutl_move_object_section`、`aviutl_set_effect_item`、`aviutl_set_effect_state`、`aviutl_set_layer`、`aviutl_open_scene`、`aviutl_create_scene`、`aviutl_set_cursor`、`aviutl_save_project` |
 | `BatchToolSet` | 1 | `aviutl_execute_batch` |
 | `DiagnosticsToolSet` | 3 | `aviutl_render_preview`、`aviutl_get_logs`、`aviutl_diagnose` |
 | `PsdToolSet` | 6 | `aviutl_psd_create`、`aviutl_psd_setup`、`aviutl_psd_set_character`、`aviutl_psd_set_layer_state`、`aviutl_psd_create_voice`、`aviutl_psd_validate` |
 
-合計33 toolsとし、tool class内にAviUtl2固有処理を実装しない。
+合計34 toolsとし、tool class内にAviUtl2固有処理を実装しない。
 
 ### 3.2 Resource / Prompt配置
 
@@ -578,7 +578,7 @@ SDK handle、callbackポインター、`PROJECT_FILE*`、render callback buffer�
 
 ## 11. Phase 3完了条件
 
-- 33 tools、5 resources、4 promptsの所有classが決まっている。
+- 34 tools、5 resources、4 promptsの所有classが決まっている。
 - C# Applicationとnative bridgeの依存方向が一方向である。
 - query/edit/preview/PSD/diagnosticsのtest seamが存在する。
 - SDK handle、revision、at-most-once、render、temp artifactのownerと寿命が明記されている。

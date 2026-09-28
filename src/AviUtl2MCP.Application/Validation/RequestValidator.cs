@@ -106,6 +106,36 @@ public static partial class RequestValidator
         ValidateMutationInput(input);
         switch (input)
         {
+            case CreateSceneInput createScene:
+                ValidateString(createScene.Name, nameof(createScene.Name), 256);
+                if (createScene.Width.HasValue)
+                {
+                    ArgumentOutOfRangeException.ThrowIfLessThan(createScene.Width.Value, 1);
+                    ArgumentOutOfRangeException.ThrowIfGreaterThan(createScene.Width.Value, 8192);
+                }
+                if (createScene.Height.HasValue)
+                {
+                    ArgumentOutOfRangeException.ThrowIfLessThan(createScene.Height.Value, 1);
+                    ArgumentOutOfRangeException.ThrowIfGreaterThan(createScene.Height.Value, 8192);
+                }
+                if (createScene.FrameRate.HasValue
+                    && (!double.IsFinite(createScene.FrameRate.Value)
+                        || createScene.FrameRate.Value <= 0
+                        || createScene.FrameRate.Value > 1000))
+                {
+                    throw new ArgumentOutOfRangeException(nameof(input), "Frame rate must be finite and in (0, 1000].");
+                }
+                if (createScene.SampleRate.HasValue)
+                {
+                    ArgumentOutOfRangeException.ThrowIfLessThan(createScene.SampleRate.Value, 8000);
+                    ArgumentOutOfRangeException.ThrowIfGreaterThan(createScene.SampleRate.Value, 384000);
+                }
+                if (createScene.Label is not null
+                    && (createScene.Label.Contains('\0') || createScene.Label.Length > 256))
+                {
+                    throw new ArgumentOutOfRangeException(nameof(input), "Scene label exceeds the contract limit.");
+                }
+                break;
             case CreateObjectInput create:
                 ArgumentNullException.ThrowIfNull(create.Effect);
                 ValidateString(create.Effect.Name, nameof(create.Effect), 4096);

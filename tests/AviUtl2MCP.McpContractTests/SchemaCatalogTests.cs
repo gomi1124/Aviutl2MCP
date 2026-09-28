@@ -21,8 +21,8 @@ public sealed class SchemaCatalogTests
             .ToArray();
 
         // Assert
-        Assert.HasCount(33, toolNames);
-        Assert.HasCount(33, toolNames.Distinct(StringComparer.Ordinal).ToArray());
+        Assert.HasCount(34, toolNames);
+        Assert.HasCount(34, toolNames.Distinct(StringComparer.Ordinal).ToArray());
     }
 
     private static string FindRepositoryRoot()

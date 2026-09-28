@@ -21,6 +21,44 @@ public sealed class EditToolSet(
     private readonly AviUtlEditService _editService = editService;
 
     [McpServerTool(
+        Name = "aviutl_create_scene",
+        Title = "AviUtl2 scene作成",
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = false,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ToolEnvelope<CreateSceneData>))]
+    [Description("新規sceneを作成して開きます。AviUtl2 2.1.10以降が必要です。省略した設定は現在のsceneから継承し、dryRunでは作成もscene切替も行いません。")]
+    public ValueTask<CallToolResult> CreateSceneAsync(
+        Revision expectedRevision,
+        string name,
+        Guid? instanceId = null,
+        int? timeoutMs = null,
+        bool dryRun = false,
+        int? width = null,
+        int? height = null,
+        double? frameRate = null,
+        int? sampleRate = null,
+        string? label = null,
+        CancellationToken cancellationToken = default) => ExecuteAsync(
+            new CreateSceneInput
+            {
+                InstanceId = instanceId,
+                TimeoutMs = timeoutMs,
+                ExpectedRevision = expectedRevision,
+                DryRun = dryRun,
+                Name = name,
+                Width = width,
+                Height = height,
+                FrameRate = frameRate,
+                SampleRate = sampleRate,
+                Label = label,
+            },
+            _editService.CreateSceneAsync,
+            cancellationToken);
+
+    [McpServerTool(
         Name = "aviutl_create_object",
         Title = "AviUtl2 object作成",
         ReadOnly = false,
@@ -462,7 +500,7 @@ public sealed class EditToolSet(
         OpenWorld = false,
         UseStructuredContent = true,
         OutputSchemaType = typeof(ToolEnvelope<OpenSceneData>))]
-    [Description("シーンIDまたは完全一致するシーン名を指定し、シーンリストからそのシーンを開きます。")]
+    [Description("シーンIDまたは完全一致するシーン名を指定して開きます。AviUtl2 2.1.10以降は保存前のシーンも選択できます。")]
     public ValueTask<CallToolResult> OpenSceneAsync(
         Guid? instanceId = null,
         int? timeoutMs = null,

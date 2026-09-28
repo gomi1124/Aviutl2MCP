@@ -357,6 +357,10 @@ struct fake_sdk_state final {
     PROJECT_FILE project_file{};
     std::wstring project_path = L"D:\\Video\\fixture.aup2";
     std::wstring scene_name = L"Main";
+    std::vector<std::pair<int, std::wstring>> scenes{{0, L"Root"}, {7, L"Main"}};
+    int scene_create_count = 0;
+    bool should_reject_scene_creation = false;
+    bool should_hide_created_scene = false;
     int edit_state = EDIT_HANDLE::EDIT_STATE_EDIT;
     int first_object = 1;
     int second_object = 2;
@@ -493,6 +497,39 @@ fake_sdk_state* ACTIVE_FAKE_SDK = nullptr;
 
 [[nodiscard]] EDIT_HANDLE* create_fake_edit_handle() {
     return &ACTIVE_FAKE_SDK->edit_handle;
+}
+
+void enumerate_fake_scene_names(void* parameter, void (*callback)(void*, LPCWSTR, int)) {
+    for (const auto& [id, name] : ACTIVE_FAKE_SDK->scenes) { callback(parameter, name.c_str(), id); }
+}
+
+bool select_fake_scene(const int scene_id) {
+    require(!ACTIVE_FAKE_SDK->is_read_active, "Scene selection ran inside a read lock");
+    const auto scene = std::ranges::find_if(ACTIVE_FAKE_SDK->scenes, [scene_id](const auto& entry) {
+        return entry.first == scene_id;
+    });
+    if (scene == ACTIVE_FAKE_SDK->scenes.end()) { return false; }
+    ACTIVE_FAKE_SDK->edit_info.scene_id = scene_id;
+    ACTIVE_FAKE_SDK->scene_name = scene->second;
+    return true;
+}
+
+bool create_fake_scene(LPCWSTR name, LPCWSTR, const int width, const int height,
+    const int rate, const int scale, const int sample_rate, EDIT_INFO::COLOR background) {
+    require(!ACTIVE_FAKE_SDK->is_read_active, "Scene creation ran inside a read lock");
+    ++ACTIVE_FAKE_SDK->scene_create_count;
+    if (ACTIVE_FAKE_SDK->should_reject_scene_creation) { return false; }
+    const int scene_id = 8 + ACTIVE_FAKE_SDK->scene_create_count;
+    ACTIVE_FAKE_SDK->edit_info.scene_id = scene_id;
+    ACTIVE_FAKE_SDK->edit_info.width = width;
+    ACTIVE_FAKE_SDK->edit_info.height = height;
+    ACTIVE_FAKE_SDK->edit_info.rate = rate;
+    ACTIVE_FAKE_SDK->edit_info.scale = scale;
+    ACTIVE_FAKE_SDK->edit_info.sample_rate = sample_rate;
+    ACTIVE_FAKE_SDK->edit_info.background = background;
+    ACTIVE_FAKE_SDK->scene_name = name;
+    if (!ACTIVE_FAKE_SDK->should_hide_created_scene) { ACTIVE_FAKE_SDK->scenes.emplace_back(scene_id, name); }
+    return true;
 }
 
 [[nodiscard]] HWND get_fake_host_app_window() {
@@ -800,6 +837,9 @@ void set_fake_effect_lock(const EFFECT_HANDLE effect, const bool locked) {
     } else if (std::wstring_view(effect) == L"Text") {
         callback(parameter, L"Text", EDIT_HANDLE::EFFECT_ITEM_TYPE_TEXT);
         callback(parameter, L"Font", EDIT_HANDLE::EFFECT_ITEM_TYPE_FONT);
+        callback(parameter, L"Position", EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER_GROUP);
+        callback(parameter, L"Appearance", EDIT_HANDLE::EFFECT_ITEM_TYPE_GROUP);
+        callback(parameter, L"Layout", EDIT_HANDLE::EFFECT_ITEM_TYPE_SEPARATOR);
     } else if (std::wstring_view(effect) == L"PSDファイル@PSDToolKit") {
         callback(parameter, L"PSDファイル", EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE);
         callback(parameter, L"セーフガード", EDIT_HANDLE::EFFECT_ITEM_TYPE_CHECK);
@@ -1276,6 +1316,9 @@ void configure_fake_sdk(fake_sdk_state& state) {
         .scene_id = 7,
     };
     state.edit_handle.get_edit_info = &get_fake_edit_info;
+    state.edit_handle.enum_scene_name = &enumerate_fake_scene_names;
+    state.edit_handle.select_scene = &select_fake_scene;
+    state.edit_handle.create_scene = &create_fake_scene;
     state.edit_handle.get_edit_state = &get_fake_edit_state;
     state.edit_handle.get_host_app_window = &get_fake_host_app_window;
     state.edit_handle.call_read_section_param = &call_fake_read_section;
@@ -1335,7 +1378,7 @@ void test_bridge_version() {
         aviutl2_mcp::get_bridge_abi_version() == aviutl2_mcp::BRIDGE_ABI_VERSION,
         "bridge ABI version mismatch");
     require(
-        std::string_view(aviutl2_mcp::PRODUCT_VERSION) == "0.3.0",
+        std::string_view(aviutl2_mcp::PRODUCT_VERSION) == "0.4.0",
         "bridge product version did not match VERSION");
     require(
         aviutl2_mcp::MINIMUM_AVIUTL_VERSION == 2010300U,
@@ -2528,7 +2571,7 @@ void test_sdk_read_facade() {
 
     const aviutl2_mcp::sdk_effect_items_query_result text_items =
         facade.query_effect_items("Text", true);
-    require(text_items.ok && text_items.items.size() == 2U
+    require(text_items.ok && text_items.items.size() == 5U
             && text_items.items[0].name == "Text"
             && text_items.items[0].codec == "aliasString"
             && text_items.items[0].is_writable
@@ -2536,6 +2579,16 @@ void test_sdk_read_facade() {
             && text_items.items[1].choices
                 == std::vector<std::string>({"Yu Gothic UI", "Noto Sans JP"}),
         "SDK facade did not return effect item codecs and public font choices");
+    require(text_items.items[2].type == "numberGroup"
+            && text_items.items[3].type == "group"
+            && text_items.items[4].type == "separator"
+            && std::ranges::all_of(
+                text_items.items.begin() + 2,
+                text_items.items.end(),
+                [](const auto& item) {
+                    return item.codec == "unsupported" && !item.is_writable;
+                }),
+        "SDK facade did not map structural effect item types safely");
     const aviutl2_mcp::sdk_effect_items_query_result text_items_without_choices =
         facade.query_effect_items("Text", false);
     require(text_items_without_choices.ok
@@ -2568,6 +2621,120 @@ void test_sdk_read_facade() {
 
     facade.detach();
     require(!facade.query_status().is_sdk_ready, "SDK facade retained the edit handle after detach");
+    ACTIVE_FAKE_SDK = nullptr;
+}
+
+void test_native_scene_creation() {
+    // Arrange: saved project with a sparse scene catalog and active scene 7.
+    fake_sdk_state fake;
+    configure_fake_sdk(fake);
+    aviutl2_mcp::sdk_read_facade facade;
+    require(facade.register_host(&fake.host), "Scene fixture SDK registration failed");
+    fake.project_load_handler(&fake.project_file);
+    const aviutl2_mcp::bridge_identity identity = aviutl2_mcp::create_bridge_identity();
+    aviutl2_mcp::request_dispatcher dispatcher(identity);
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_scene_create_request_handler>(facade));
+    dispatcher.register_handler(std::make_unique<aviutl2_mcp::native_open_scene_request_handler>(facade));
+    const std::string revision = dispatcher.revisions().content_revision();
+    const std::string view_revision = dispatcher.revisions().view_revision();
+    std::uint8_t request_sequence = 200U;
+    const auto execute = [&](const char* operation, const std::string& parameters,
+        const std::string& expected, const bool dry_run = false) {
+        return nlohmann::json::parse(get_json(dispatcher.dispatch(create_request_frame(
+            create_uuid_v7_bytes(std::chrono::system_clock::now(), ++request_sequence), operation,
+            identity.instance_id, parameters, expected, dry_run), identity.instance_id).get()));
+    };
+
+    // Act/Assert: old hosts must not access the new SDK function table tail.
+    facade.set_host_version(2010900U);
+    const auto unsupported = execute("scene.create", R"({"name":"New"})", revision);
+    require(!unsupported.at("ok").get<bool>()
+        && unsupported.at("error").at("code") == "version_not_supported"
+        && fake.scene_create_count == 0, "Old host attempted scene creation");
+    facade.set_host_version(2011000U);
+    const auto all_scenes = facade.query_project(true);
+    require(all_scenes.ok && all_scenes.project.scenes.size() == 2U
+        && all_scenes.project.current_scene_id == 7, "SDK scene enumeration lost sparse IDs");
+
+    // Act/Assert: active names must still be unique, while explicit IDs remain usable.
+    fake.scenes.emplace_back(12, L"Main");
+    const auto ambiguous = execute("view.openScene", R"({"sceneName":"Main"})", revision);
+    require(!ambiguous.at("ok").get<bool>()
+        && ambiguous.at("error").at("code") == "scene_ambiguous"
+        && dispatcher.revisions().view_revision() == view_revision,
+        "Active duplicate scene name bypassed ambiguity validation");
+    const auto same_scene = execute("view.openScene", R"({"sceneId":7})", revision);
+    require(same_scene.at("ok").get<bool>()
+        && dispatcher.revisions().view_revision() == view_revision,
+        "Explicit active scene ID was not an unchanged success");
+    fake.scenes.pop_back();
+
+    const auto original_scenes = fake.scenes;
+    for (int id = 100; fake.scenes.size() < 4096U; ++id) {
+        fake.scenes.emplace_back(id, L"Existing" + std::to_wstring(id));
+    }
+    const auto full_catalog = execute("scene.create", R"({"name":"Overflow"})", revision);
+    require(!full_catalog.at("ok").get<bool>() && fake.scene_create_count == 0,
+        "Full scene catalog was mutated before rejecting the size limit");
+    fake.scenes = original_scenes;
+
+    const auto dry = execute("scene.create", R"({"name":"Planned"})", revision, true);
+    require(dry.at("ok").get<bool>() && !dry.at("result").at("created").get<bool>()
+        && dry.at("result").at("sceneId") == -1
+        && dry.at("result").at("width") == fake.edit_info.width
+        && fake.scene_create_count == 0
+        && dispatcher.revisions().content_revision() == revision
+        && dispatcher.revisions().view_revision() == view_revision,
+        ("Scene dry-run mutated state or failed to inherit settings: " + dry.dump()).c_str());
+    const auto invalid = execute("scene.create", R"({"name":"Invalid","width":0})", revision);
+    require(!invalid.at("ok").get<bool>() && fake.scene_create_count == 0,
+        "Invalid scene dimensions reached the SDK");
+    const auto tiny_fps = execute("scene.create", R"({"name":"Tiny","frameRate":0.00000001})", revision);
+    require(!tiny_fps.at("ok").get<bool>() && fake.scene_create_count == 0,
+        "Unrepresentable scene FPS reached the SDK");
+
+    aviutl2_mcp::ipc_frame create = create_request_frame(
+        create_uuid_v7_bytes(std::chrono::system_clock::now(), 152U), "scene.create", identity.instance_id,
+        R"({"name":"追加シーン","width":1280,"height":720,"frameRate":29.97,"sampleRate":48000,"label":"本編"})",
+        revision);
+    const auto created = nlohmann::json::parse(get_json(dispatcher.dispatch(create, identity.instance_id).get()));
+    const auto replay = nlohmann::json::parse(get_json(dispatcher.dispatch(create, identity.instance_id).get()));
+    require(created.at("ok").get<bool>() && created == replay && fake.scene_create_count == 1
+        && created.at("result").at("name") == "追加シーン"
+        && created.at("result").at("created").get<bool>()
+        && created.at("result").at("activated").get<bool>()
+        && created.at("result").at("sceneId") == fake.edit_info.scene_id
+        && fake.edit_info.width == 1280 && fake.edit_info.height == 720
+        && fake.edit_info.rate == 2997 && fake.edit_info.scale == 100
+        && fake.edit_info.sample_rate == 48000
+        && dispatcher.revisions().content_revision() != revision
+        && dispatcher.revisions().view_revision() != view_revision,
+        "Scene creation, activation, rational FPS or at-most-once replay failed");
+    const std::string current = dispatcher.revisions().content_revision();
+    const auto duplicate = execute("scene.create", R"({"name":"追加シーン"})", current);
+    const auto stale = execute("scene.create", R"({"name":"Stale"})", revision);
+    require(!duplicate.at("ok").get<bool>() && duplicate.at("error").at("code") == "scene_already_exists"
+        && !stale.at("ok").get<bool>() && stale.at("error").at("code") == "revision_conflict"
+        && fake.scene_create_count == 1, "Duplicate or stale creation mutated the project");
+    fake.project_path.clear();
+    fake.project_load_handler(&fake.project_file);
+    const auto switched = execute("view.openScene", R"({"sceneId":0})", current);
+    require(switched.at("ok").get<bool>() && fake.edit_info.scene_id == 0,
+        "Native scene selection required a saved project or assumed catalog first is active");
+    fake.should_reject_scene_creation = true;
+    const auto rejected = execute("scene.create", R"({"name":"Rejected"})", current);
+    require(!rejected.at("ok").get<bool>() && rejected.at("error").at("outcome") == "unchanged"
+        && dispatcher.revisions().content_revision() == current,
+        "SDK rejection incorrectly changed revision");
+    fake.should_reject_scene_creation = false;
+    fake.should_hide_created_scene = true;
+    const auto partial = execute("scene.create", R"({"name":"Hidden"})", current);
+    require(!partial.at("ok").get<bool>() && partial.at("error").at("outcome") == "partial"
+        && !partial.at("error").at("undoRecommended").get<bool>()
+        && dispatcher.revisions().content_revision() != current,
+        "Unverifiable created scene was reported unchanged or incorrectly recommended Undo");
+    dispatcher.stop();
+    facade.detach();
     ACTIVE_FAKE_SDK = nullptr;
 }
 
@@ -2659,7 +2826,7 @@ void test_native_query_request_handlers() {
         identity.instance_id).get()));
     require(capabilities.at("ok").get<bool>(), "native capabilities query failed");
     const nlohmann::json& operations = capabilities.at("result").at("operations");
-    require(operations.size() == 33U, "native capabilities query did not return all 33 operations");
+    require(operations.size() == 34U, "native capabilities query did not return all 34 operations");
     const auto find_operation = [&operations](const std::string& name) -> const nlohmann::json& {
         const auto match = std::ranges::find_if(operations, [&name](const nlohmann::json& operation) {
             return operation.at("name") == name;
@@ -2751,10 +2918,14 @@ void test_native_query_request_handlers() {
             R"({"effect":{"name":"Text"},"includeChoices":true})"),
         identity.instance_id).get()));
     require(effect_items.at("ok").get<bool>()
-            && effect_items.at("result").at("items").size() == 2U
+            && effect_items.at("result").at("items").size() == 5U
             && effect_items.at("result").at("items")[1].at("type") == "font"
             && effect_items.at("result").at("items")[1].at("choices").size() == 2U
-            && effect_items.at("result").at("items")[1].at("isWritable").get<bool>(),
+            && effect_items.at("result").at("items")[1].at("isWritable").get<bool>()
+            && effect_items.at("result").at("items")[2].at("type") == "numberGroup"
+            && !effect_items.at("result").at("items")[2].at("isWritable").get<bool>()
+            && effect_items.at("result").at("items")[3].at("type") == "group"
+            && effect_items.at("result").at("items")[4].at("type") == "separator",
         "native effect item handler omitted codec or font choices");
 
     const nlohmann::json missing_effect_items = nlohmann::json::parse(get_json(dispatcher.dispatch(
@@ -5273,6 +5444,7 @@ int main() {
         std::pair{"native log request handler", &test_native_log_request_handler},
         std::pair{"SDK read facade", &test_sdk_read_facade},
         std::pair{"native query request handlers", &test_native_query_request_handlers},
+        std::pair{"native scene creation", &test_native_scene_creation},
         std::pair{"native create request handlers", &test_native_create_request_handlers},
         std::pair{"app.stable-edit-errors / native object edit request handlers",
             &test_native_object_edit_request_handlers},
