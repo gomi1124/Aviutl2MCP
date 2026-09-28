@@ -42,7 +42,7 @@ MCP 対応AIクライアントが、起動中の AviUtl2 に対して以下を�
 - 再生開始、停止
 - 既存オブジェクトへのエフェクト追加、削除、並べ替え
 - オブジェクト分割、長さ変更、トラック・キーフレーム編集
-- シーンの追加、削除、切り替え
+- シーンの削除、旧本体でのUI補助による切り替え（追加と2.1.10以降の切り替えは公開SDKで実装）
 - 出力開始、進捗取得、キャンセル
 
 実験機能が無効な環境では、未実装を成功として返さず `capability_not_available` を返す。
@@ -92,6 +92,7 @@ V1では次の論理ツールを公開する。最終的なJSON SchemaはPhase 2
 | `aviutl_set_effect_state` | 既存エフェクトの有効・ロックを変更 | あり |
 | `aviutl_set_layer` | レイヤー名、表示、ロックを変更 | あり |
 | `aviutl_open_scene` | シーンIDまたは完全一致名で表示シーンを開く | なし |
+| `aviutl_create_scene` | シーンを追加し、名前・映像/音声設定を指定または継承して開く | あり |
 | `aviutl_set_cursor` | カーソル、表示位置、選択範囲を変更 | あり |
 | `aviutl_execute_batch` | 複数の編集を1 Undo単位で実行 | あり |
 | `aviutl_render_preview` | 指定フレームを画像として取得 | なし |
@@ -147,6 +148,8 @@ Resources は読み取り専用とし、未接続時も構造化された状態�
 - **FR-PRJ-004** プロジェクト未作成時は空の成功結果にせず `project_not_open` を返す。
 - **FR-PRJ-005** プロジェクトパスは公開SDKまたはGCMZDrops共有メモリから取得し、未保存による空パスとプロジェクト未作成を区別する。
 - **FR-PRJ-006** 名前付きの現在プロジェクトを`expectedRevision`付きで保存し、既存のsave callbackによる完了を確認する。未保存プロジェクトではdialogを開かず`project_path_required`を返し、保存だけではcontent revisionを増加させない。
+- **FR-PRJ-007** AviUtl2 2.1.10以降では公開SDKでsceneを追加する。名前は必須、映像/音声設定とlabelは任意とし、省略設定は現在sceneを継承する。dry-runでは追加・選択状態を変更しない。
+- **FR-PRJ-008** AviUtl2 2.1.10以降では保存前に追加したsceneを含む全sceneを列挙し、IDまたは完全一致名で選択する。旧本体では従来の保存済みprojectとdock UIによる経路を維持する。
 
 ### 6.3 タイムライン参照
 

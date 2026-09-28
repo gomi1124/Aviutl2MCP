@@ -21,14 +21,13 @@ public sealed class ToolSchemaConformanceTests
     public void VerifyAllToolInputsAndOutputsConformToCatalog()
     {
         // Arrange
-        string catalogPath = Path.Combine(FindRepositoryRoot(), "schemas", "mcp", "v1", "catalog.json");
-        JsonObject catalog = JsonNode.Parse(File.ReadAllText(catalogPath))!.AsObject();
+        JsonObject catalog = ReadCatalog();
         Dictionary<string, InputFixture> fixtures = CreateInputFixtures();
         JsonArray tools = catalog["x-tools"]!.AsArray();
 
         // Act and Assert
-        Assert.HasCount(33, fixtures);
-        Assert.HasCount(33, tools);
+        Assert.HasCount(34, fixtures);
+        Assert.HasCount(34, tools);
         foreach (JsonNode? toolNode in tools)
         {
             JsonObject tool = toolNode!.AsObject();
@@ -48,6 +47,75 @@ public sealed class ToolSchemaConformanceTests
             AssertSchemaValidity(catalog, outputReference, serializedOutput, true, toolName);
             AssertRejectsUnknownProperty(catalog, outputReference, serializedOutput, toolName);
         }
+    }
+
+    [TestMethod]
+    [DataRow("{\"expectedRevision\":\"r1\"}")]
+    [DataRow("{\"name\":\"New scene\"}")]
+    [DataRow("{\"expectedRevision\":\"r1\",\"name\":\"   \"}")]
+    [DataRow("{\"expectedRevision\":\"r1\",\"name\":\"New scene\",\"width\":0}")]
+    [DataRow("{\"expectedRevision\":\"r1\",\"name\":\"New scene\",\"height\":8193}")]
+    [DataRow("{\"expectedRevision\":\"r1\",\"name\":\"New scene\",\"frameRate\":0}")]
+    [DataRow("{\"expectedRevision\":\"r1\",\"name\":\"New scene\",\"frameRate\":1001}")]
+    [DataRow("{\"expectedRevision\":\"r1\",\"name\":\"New scene\",\"sampleRate\":7999}")]
+    [DataRow("{\"expectedRevision\":\"r1\",\"name\":\"New scene\",\"sampleRate\":384001}")]
+    public void CreateSceneSchemaRejectsInvalidInputs(string json)
+    {
+        // Arrange
+        JsonObject catalog = ReadCatalog();
+
+        // Act and Assert
+        AssertSchemaValidity(catalog, "#/$defs/CreateSceneInput", json, false, "aviutl_create_scene");
+    }
+
+    [TestMethod]
+    [DataRow("name", 256, true)]
+    [DataRow("name", 257, false)]
+    [DataRow("label", 256, true)]
+    [DataRow("label", 257, false)]
+    public void CreateSceneSchemaValidatesNameAndLabelLengths(
+        string property,
+        int length,
+        bool expectedIsValid)
+    {
+        // Arrange
+        JsonObject catalog = ReadCatalog();
+        JsonObject input = new()
+        {
+            ["expectedRevision"] = "r1",
+            ["name"] = "New scene",
+            [property] = new string('a', length),
+        };
+
+        // Act and Assert
+        AssertSchemaValidity(catalog, "#/$defs/CreateSceneInput", input.ToJsonString(), expectedIsValid, "aviutl_create_scene");
+    }
+
+    [TestMethod]
+    [DataRow(-1, false, false)]
+    [DataRow(7, true, true)]
+    public void CreateSceneSuccessAndDryRunResultsConformToCatalog(
+        int sceneId,
+        bool created,
+        bool activated)
+    {
+        // Arrange
+        JsonObject catalog = ReadCatalog();
+        CreateSceneData data = new(sceneId, "New scene", 1920, 1080, 29.97, 48000, created, activated);
+        ToolEnvelope<CreateSceneData> envelope = new(
+            true,
+            Guid.Parse("019f0000-0000-7000-8000-000000000003"),
+            [])
+        {
+            Data = data,
+        };
+
+        // Act
+        string json = ContractJsonSerializer.SerializeContract(envelope);
+
+        // Assert
+        AssertSchemaValidity(catalog, "#/$defs/CreateSceneOutput", json, true, "aviutl_create_scene");
+        AssertRejectsUnknownProperty(catalog, "#/$defs/CreateSceneOutput", json, "aviutl_create_scene");
     }
 
     private static Dictionary<string, InputFixture> CreateInputFixtures()
@@ -76,6 +144,7 @@ public sealed class ToolSchemaConformanceTests
             ["aviutl_set_effect_state"] = CreateFixture(typeof(SetEffectStateInput), """{"expectedRevision":"r1","locator":__LOCATOR__,"effect":{"name":"standard"},"isEnabled":true}"""),
             ["aviutl_set_layer"] = new(typeof(SetLayerInput), """{"expectedRevision":"r1","layer":1,"name":"voice"}"""),
             ["aviutl_open_scene"] = new(typeof(OpenSceneInput), """{"sceneId":0}"""),
+            ["aviutl_create_scene"] = new(typeof(CreateSceneInput), """{"expectedRevision":"r1","name":"New scene","width":1920,"height":1080,"frameRate":29.97,"sampleRate":48000,"label":"chapter","dryRun":true}"""),
             ["aviutl_set_cursor"] = new(typeof(SetCursorInput), """{"frame":1}"""),
             ["aviutl_execute_batch"] = CreateFixture(typeof(ExecuteBatchInput), """{"expectedRevision":"r1","operations":[{"op":"createObject","clientOperationId":"op-1","args":{"effect":{"name":"standard"},"placement":__PLACEMENT__}}]}"""),
             ["aviutl_render_preview"] = new(typeof(RenderPreviewInput), """{"frame":1}"""),
@@ -88,6 +157,12 @@ public sealed class ToolSchemaConformanceTests
             ["aviutl_psd_create_voice"] = CreateFixture(typeof(PsdCreateVoiceInput), """{"expectedRevision":"r1","audioPath":"C:\\voice.wav","characterId":"alice","placement":__PLACEMENT__}"""),
             ["aviutl_psd_validate"] = CreateFixture(typeof(PsdValidateInput), """{"locator":__LOCATOR__}"""),
         };
+    }
+
+    private static JsonObject ReadCatalog()
+    {
+        string catalogPath = Path.Combine(FindRepositoryRoot(), "schemas", "mcp", "v1", "catalog.json");
+        return JsonNode.Parse(File.ReadAllText(catalogPath))!.AsObject();
     }
 
     private static InputFixture CreateFixture(Type dtoType, string template)

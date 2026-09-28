@@ -13,6 +13,8 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 
 調査対象は2026-08-02時点の公開リポジトリと、ローカルに導入済みの AviUtl ExEdit2 2.1.3a、PSDToolKit2、GCMZDrops とする。2026-08-02版の公式SDKと固定submoduleは、文字コード変換に伴う波ダッシュ表現を除き同一であることを確認済み。
 
+2026-09-28の追補としてAviUtl2 2.1.10対応SDKの`create_scene`、`select_scene`、`enum_scene_name`を確認し、v0.4.0からscene追加と公式SDKによるscene選択・一覧取得を実装する。旧本体への互換経路も維持する。
+
 ## 3. 判定区分
 
 | 区分 | 意味 |
@@ -28,7 +30,7 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 |---|---|---|---|
 | `aviutl_get_status` | 複合 | `get_edit_state`、`get_edit_info`、`enum_module_info`、IPC状態、GCMZDrops共有メモリ | AviUtl2未起動、プロジェクト未作成、再生、出力を別状態として返す |
 | `aviutl_get_capabilities` | サーバー | 状態、APIバージョン、モジュール列挙結果から能力表を生成 | 未検証機能を推測で有効化せず、理由と依存先を返す |
-| `aviutl_get_project` | 複合 | `get_edit_info`、編集セクション内の `get_project_file` と `PROJECT_FILE::get_project_file_path`、GCMZDrops `ProjectPath` | `get_project_file` は読取セクションで利用不可。未保存時はパスが空なので、空パスだけで未作成と判定しない |
+| `aviutl_get_project` | 複合 | `get_edit_info`、`enum_scene_name`、編集セクション内の `get_project_file` と `PROJECT_FILE::get_project_file_path`、GCMZDrops `ProjectPath` | 2.1.10以降は未保存sceneもSDKから一覧取得する。`get_project_file` は読取セクションで利用不可。未保存時はパスが空なので、空パスだけで未作成と判定しない |
 | `aviutl_save_project` | 複合 | host windowの既存「プロジェクトを保存」command、`register_project_save_handler` | command IDは固定せずmenu表示名から解決する。名前付きprojectだけを対象とし、callback未確認時は結果を`unknown`として再実行しない |
 | `aviutl_get_timeline` | 直接 | `call_read_section`、`find_object`、`get_object_layer_frame`、レイヤー取得API | `layer_max` はオブジェクト存在範囲。要求範囲、件数、詳細度の上限が必要 |
 | `aviutl_find_objects` | 直接 | `call_read_section`、`find_object`、名称・エイリアス・エフェクト取得API | SDKハンドルは応答へ出さず、その場でロケーターへ変換する |
@@ -47,7 +49,8 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 | `aviutl_set_effect_item` | 直接 | `get_effect_item_value`、`set_effect_item_value`、項目別トラック・チェック設定API | 列挙した項目型に応じて入力を検証する |
 | `aviutl_set_effect_state` | 直接 | `set_effect_enable`、`set_effect_lock` | 既存エフェクトだけを対象とし、追加・削除・並べ替えは行わない |
 | `aviutl_set_layer` | 直接 | `set_layer_name`、`set_layer_enable`、`set_layer_lock` | UI表示番号とSDKの0始まり番号を境界で変換する |
-| `aviutl_open_scene` | UI補助 | 保存済み`.aup2`のscene catalog、`シーンリスト`、SDK事後読取 | 公開SDKにscene切替APIがないため、dock済みシーンリストを同期messageで操作し、scene IDと名前をSDKで再照合する実験機能。floating配置は明示的に拒否する |
+| `aviutl_open_scene` | 直接 / UI補助 | `select_scene`、`enum_scene_name`、SDK事後読取。旧本体は保存済み`.aup2`のscene catalogと`シーンリスト` | 2.1.10以降は保存前のsceneもSDKで選択し、scene IDと名前をSDKで再照合する。旧本体はdock済みUIの実験経路を維持し、floating配置は明示的に拒否する |
+| `aviutl_create_scene` | 直接 | `create_scene`、`get_scene_info`、`set_scene_info` | 2.1.10以降で有効化する。省略設定は現在sceneを継承し、追加後にscene ID・設定・選択状態を照合する。dry-runは追加しない。scene IDはSDKの採番結果を返す |
 | `aviutl_set_cursor` | 直接 | `set_cursor_layer_frame`、`set_display_layer_frame`、`set_select_range` | SDK側で補正された実値を再取得して返す |
 | `aviutl_execute_batch` | 複合 | サーバー側事前検証後、1回の `call_edit_section_param` 内で各編集APIを実行 | 1 Undo単位にはできるが、編集開始後のAPI失敗を自動ロールバックする公開APIはない。部分適用を検出して明示する |
 | `aviutl_render_preview` | 複合 | `rendering_scene_video`、`wait_rendering_task`、bridge側WIC PNG変換 | 描画は非同期。`wait_rendering_task` を読取・編集ロック中に呼ぶとデッドロックし得るため、必ずロック外で待つ |
@@ -60,7 +63,7 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 | `aviutl_psd_create_voice` | 複合 | WAV/TXT/LAB検証、GCMZDrops外部APIによる直接WAV/TXTまたは中間`.object`投入、`セリフ準備@PSDToolKit`生成、字幕エイリアス作成 | `external_wav_txt_pair`または`external_object_audio_text`が必要。必須character IDを生成後にSDK設定し、各生成物を事後検証する |
 | `aviutl_psd_validate` | 複合 | タイムライン、エイリアス、エフェクト、項目、ファイル対応を読取り、サーバーで規則判定 | 目パチ、2方式の口パク、パーツ上書き、参照ID、初期化順序を個別結果として返す |
 
-結論として、列挙済み33 toolsはV1の実装候補として維持できる。ただし、シーン切替はUI補助を使う実験機能であり、バッチ編集、PSD投入、音声・字幕生成は完全な原子性を保証できないため、事前検証、相関ID、事後条件検証、部分適用エラーをAPI契約へ含める。
+結論として、列挙済み34 toolsをV1の実装対象として維持できる。ただし、旧本体のシーン切替はUI補助を使う実験機能であり、バッチ編集、PSD投入、音声・字幕生成は完全な原子性を保証できないため、事前検証、相関ID、事後条件検証、部分適用エラーをAPI契約へ含める。
 
 ## 5. Resources と Prompts
 
@@ -77,7 +80,7 @@ Phase 1 で列挙した MCP インターフェースを、AviUtl2 公開SDK、PS
 - 再生開始、停止
 - 既存オブジェクトへのエフェクト追加、削除、並べ替え
 - オブジェクト分割、長さ変更、トラック・キーフレーム編集
-- シーン追加、削除、切替
+- シーン削除（追加と2.1.10以降の切替は公開SDKで実装済み）
 - 出力開始、進捗取得、キャンセル
 
 ## 7. Phase 2へ持ち越す設計判断

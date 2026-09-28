@@ -18,7 +18,7 @@
 - WP9 report進捗: W9.9 generatorを先行実装。component別相関log、revision、preview/artifact SHA-256、versions、checks、起動PIDを相関directory内のJSONへ安全に集約し、非UUIDv7拒否と秘密値maskを自動testで検証済み
 - WP9 verification進捗: W9.8 before/after verifier完了。revision差とRGBA PNGのCRC/zlib/filter復号後pixel差を検証し、変更pixel数・比率・最大/平均channel差を返す
 
-V1の33 tools、5 resources、4 promptsを削減せず実装する。各末端taskは原則15～60分の検証可能な単位とし、失敗時に層を特定できる順で進める。
+V1の34 tools、5 resources、4 promptsを削減せず実装する。各末端taskは原則15～60分の検証可能な単位とし、失敗時に層を特定できる順で進める。
 
 ## 2. 問題分解
 
@@ -39,7 +39,7 @@ Level 0: AviUtl2 MCP V1を実装・検証・配布する
 │  ├─ Level 2: PSDToolKit2/GCMZDrops
 │  └─ Level 2: logs/diagnostics
 ├─ Level 1: MCP公開面
-│  ├─ Level 2: 33 tools
+│  ├─ Level 2: 34 tools
 │  ├─ Level 2: 5 resources
 │  └─ Level 2: 4 prompts
 └─ Level 1: 品質と配布
@@ -83,7 +83,7 @@ Level 0: AviUtl2 MCP V1を実装・検証・配布する
 | W2.3 | `InstanceSelector`を実装 | top-level/locator/env/唯一候補の優先順位とambiguous拒否 | W2.2 | 60分 |
 | W2.4 | `RequestValidator`を実装 | frame/layer/path/string/countの横断上限を検証 | W1.1,W2.1 | 60分 |
 | W2.5 | `PagingCursorCodec`を実装 | HMAC binding、期限、query/revision不一致を拒否 | W2.2 | 60分 |
-| W2.6 | `CapabilityService`を実装 | 33操作、version、固定limit DTOを返す | W2.3 | 60分 |
+| W2.6 | `CapabilityService`を実装 | 34操作、version、固定limit DTOを返す | W2.3 | 60分 |
 | W2.7 | envelope/result mapperを実装 | MCP成功、tool error、partial、warningを一貫変換 | W2.1,W2.2 | 45分 |
 
 ### WP3 C# BridgeClient
@@ -331,7 +331,7 @@ flowchart LR
 以下は2026-07-19にすべて達成済み。個別の自動・実機証跡は[受け入れテスト対応表](acceptance-test-matrix.md)に記録する。
 
 - Windows x64でC# serverとnative `.aux2`がclean buildできる。
-- 33 tools、5 resources、4 promptsがmachine catalogと一致する。
+- 34 tools、5 resources、4 promptsがmachine catalogと一致する。
 - unit、schema、MCP contract、stdio、native、bridge integration testが成功する。
 - 専用実機でread/edit/Undo/preview/PSD/voice/diagnosticsを検証する。
 - 34 ACすべてに成功証拠または明示的な実機reportがある。

@@ -100,6 +100,21 @@ public sealed record ListEffectItemsInput : CommonInput
     public bool IncludeChoices { get; init; } = true;
 }
 
+public sealed record CreateSceneInput : MutationInput
+{
+    public required string Name { get; init; }
+
+    public int? Width { get; init; }
+
+    public int? Height { get; init; }
+
+    public double? FrameRate { get; init; }
+
+    public int? SampleRate { get; init; }
+
+    public string? Label { get; init; }
+}
+
 public sealed record CreateObjectInput : MutationInput
 {
     public required EffectDefinitionSelector Effect { get; init; }

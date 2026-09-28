@@ -2,7 +2,7 @@
 
 ## 1. 適用範囲
 
-本書はV1で公開する33 tools、5 resources、4 promptsの名前、入力、構造化出力、エラー、annotationsを固定する。機械可読な必須、enum、条件、nested DTO、tool別input/outputは [V1 Schema catalog](../schemas/mcp/v1/catalog.json) を正とする。
+本書はV1で公開する34 tools、5 resources、4 promptsの名前、入力、構造化出力、エラー、annotationsを固定する。機械可読な必須、enum、条件、nested DTO、tool別input/outputは [V1 Schema catalog](../schemas/mcp/v1/catalog.json) を正とする。
 
 - MCP SDK: 公式C# SDK `ModelContextProtocol` 1.4.1
 - transport: stdio
@@ -128,7 +128,7 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 | Tool | 固有入力 | `data` |
 |---|---|---|
 | `aviutl_get_status` | なし | `connectionState`、各componentの`version/status`、`projectState`、`editState`、`selectedInstance`、候補`instances[]` |
-| `aviutl_get_capabilities` | なし | 33操作ごとの`available/reason/constraints`、protocol/schema/bridge版、V1制限値 |
+| `aviutl_get_capabilities` | なし | 34操作ごとの`available/reason/constraints`、protocol/schema/bridge版、V1制限値 |
 | `aviutl_get_project` | `includeScenes?: boolean=true` | `path?`、`isSaved`、解像度、frame/sample rate、current scene/frame、選択・表示範囲、`scenes[]` |
 | `aviutl_save_project` | `expectedRevision: string` | `path`、`saved: true`。名前付きの現在projectだけを保存し、`dryRun`と別名保存dialogは提供しない |
 | `aviutl_get_timeline` | `sceneId?`、`layerStart?`、`layerEnd?`、`startFrame?`、`endFrame?`、`detail?: "summary"|"effects"="summary"`、Page | `layers[]`、`objects[]`、Page、`coordinateSystem` |
@@ -160,11 +160,18 @@ timeline/object/effect cursorは`instanceId`、`projectGeneration`、`revision`�
 | `aviutl_set_effect_state` | `locator: Locator`、`effect: EffectInstanceSelector`、`isEnabled?`、`isLocked?` | 更新後effect state。少なくとも一方必須 |
 | `aviutl_set_layer` | `sceneId?`、`layer: integer`、`name?`、`isVisible?`、`isLocked?` | 更新後layer。変更propertyを1つ以上必須 |
 | `aviutl_open_scene` | `sceneId`または`sceneName`のちょうど一方、`expectedViewRevision?` | 開いたsceneの`sceneId/name`、`viewRevision` |
+| `aviutl_create_scene` | `name`、`width?`、`height?`、`frameRate?`、`sampleRate?`、`label?` | 新規sceneの`sceneId/name/width/height/frameRate/sampleRate`、`created`、`activated` |
 | `aviutl_set_cursor` | `sceneId?`、`frame?`、`displayFrame?`、`selection?: {startFrame,endFrame}`、`expectedViewRevision?` | 更新後のcurrent/display/selection、`viewRevision` |
 
 作成・移動は対象範囲、layer lock、object衝突を事前検証する。ファイルtoolは絶対パスへ正規化し、存在、通常ファイル、許可拡張子を検証する。シェルや関連付け実行は行わない。
 
-`aviutl_open_scene`は公開SDKにscene切替APIがないため、保存済みprojectのscene catalogとdock済み`シーンリスト`を使う実験機能とする。floating配置、未保存project、scene ID/名前の事後照合不一致は成功扱いにしない。OSのforegroundや実cursor位置は変更しない。
+`aviutl_create_scene`はAviUtl2 2.1.10以降の公開SDKを使い、新しいsceneを追加して開く。`name`は空白のみを禁止し1～256文字、`label`は0～256文字、`width/height`は1～8192、`frameRate`は0より大きく1000以下、`sampleRate`は8000～384000を許可する。省略した設定は現在のsceneを継承する。FPSは100万分の1の精度で有理数へ変換し、0に丸められる極小値は拒否する。同名シーンの重複作成は`scene_already_exists`で拒否する。`expectedRevision`を編集直前に照合し、成功時はcontent/view revisionを更新する。`dryRun=true`では設定を検証するだけで追加・切り替えせず、`sceneId=-1`、`created=false`、`activated=false`を返す。旧本体では`version_not_supported`を返し、scene IDの指定やbatchへの組み込みは提供しない。
+
+scene IDはSDKが採番するため、`name="シーン20"`としてもIDが20になるとは限らない。後続の配置やscene選択には作成結果の`sceneId`を使い、revisionも成功応答の最新値を使う。
+
+本体仕様上、scene追加はUndoできない。編集前に保存・バックアップを行うこと。作成後の確認に失敗した場合は`outcome="partial"`、`undoRecommended=false`を返すため、再試行前にscene一覧を確認し、必要ならバックアップから復旧する。
+
+`aviutl_open_scene`はAviUtl2 2.1.10以降では公開SDKの`select_scene`を使い、保存前に追加したsceneも開ける。`aviutl_get_project(includeScenes:true)`の全scene一覧も`enum_scene_name`から取得する。旧本体では保存済みprojectのscene catalogとdock済み`シーンリスト`を使う実験機能を維持する。旧経路のfloating配置、未保存project、scene ID/名前の事後照合不一致は成功扱いにしない。OSのforegroundや実cursor位置は変更しない。
 
 ### 3.3 Batch
 
@@ -240,6 +247,7 @@ PSD編集toolは `expectedRevision` と任意の `dryRun` を持つ。`aviutl_ps
 | `aviutl_set_effect_state` | false | true | true |
 | `aviutl_set_layer` | false | true | true |
 | `aviutl_open_scene` | false | false | true |
+| `aviutl_create_scene` | false | false | false |
 | `aviutl_set_cursor` | false | false | true |
 | `aviutl_execute_batch` | false | true | false |
 | `aviutl_render_preview` | true | false | true |

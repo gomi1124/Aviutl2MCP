@@ -45,7 +45,8 @@ public sealed class RealOpenSceneTests
                 timeout.Token);
             Assert.IsTrue(initial.Ok, initial.Error?.Message);
             Assert.AreEqual(0, initial.Data!.CurrentSceneId);
-            Assert.AreEqual("Root", initial.Data.Scenes.Single().Name);
+            Assert.AreEqual("Root", initial.Data.Scenes.Single(scene =>
+                scene.SceneId == initial.Data.CurrentSceneId).Name);
             Assert.IsNotNull(initial.Revision);
             Assert.IsNotNull(initial.ViewRevision);
             Revision contentRevision = initial.Revision.Value;
@@ -73,7 +74,8 @@ public sealed class RealOpenSceneTests
                 timeout.Token);
             Assert.IsTrue(sceneSeven.Ok, sceneSeven.Error?.Message);
             Assert.AreEqual(7, sceneSeven.Data!.CurrentSceneId);
-            Assert.AreEqual("MCP Scene Seven", sceneSeven.Data.Scenes.Single().Name);
+            Assert.AreEqual("MCP Scene Seven", sceneSeven.Data.Scenes.Single(scene =>
+                scene.SceneId == sceneSeven.Data.CurrentSceneId).Name);
 
             Revision sceneSevenViewRevision = openedById.ViewRevision.Value;
             GatewayResponse<OpenSceneData> openedByName = await edit.OpenSceneAsync(

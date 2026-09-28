@@ -4,6 +4,10 @@ namespace AviUtl2MCP.Application.Gateways;
 
 public interface IAviUtlEditGateway
 {
+    ValueTask<GatewayResponse<CreateSceneData>> CreateSceneAsync(
+        GatewayRequest<CreateSceneArgs> request,
+        CancellationToken cancellationToken);
+
     ValueTask<GatewayResponse<TData>> ExecuteEditAsync<TParameters, TData>(
         string operation,
         GatewayRequest<TParameters> request,

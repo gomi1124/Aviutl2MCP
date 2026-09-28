@@ -14,9 +14,11 @@
 #include <charconv>
 #include <cmath>
 #include <chrono>
+#include <cstring>
 #include <cwctype>
 #include <exception>
 #include <limits>
+#include <numeric>
 #include <span>
 #include <stdexcept>
 #include <unordered_map>
@@ -198,7 +200,9 @@ void invoke_read_section_with_info(void* raw_context, EDIT_SECTION* edit) noexce
         context->callback(context->callback_context, nullptr);
         return;
     }
-    EDIT_SECTION adapted = *edit;
+    EDIT_SECTION adapted{};
+    // Only copy the SDK baseline used here; 2.1.9 and earlier have no appended flags/IDs.
+    std::memcpy(&adapted, edit, offsetof(EDIT_SECTION, get_object_flag));
     adapted.info = &context->edit_info;
     context->callback(context->callback_context, &adapted);
 }
@@ -2891,6 +2895,25 @@ struct project_read_context final {
     std::string error;
 };
 
+void copy_scene_summary(void* raw_context, LPCWSTR name, const int scene_id) noexcept {
+    auto* context = static_cast<project_read_context*>(raw_context);
+    try {
+        if (scene_id < 0 || name == nullptr || context->project->scenes.size() >= 4096U) {
+            throw std::runtime_error("SDK returned an invalid scene catalog");
+        }
+        if (std::ranges::any_of(context->project->scenes, [scene_id](const auto& scene) {
+                return scene.scene_id == scene_id;
+            })) {
+            throw std::runtime_error("SDK returned a duplicate scene ID");
+        }
+        context->project->scenes.push_back({scene_id, to_utf8(name)});
+    } catch (const std::exception& exception) {
+        context->error = exception.what();
+    } catch (...) {
+        context->error = "SDK scene enumeration failed with an unknown exception";
+    }
+}
+
 void copy_project(void* raw_context, EDIT_SECTION* edit) noexcept {
     auto* context = static_cast<project_read_context*>(raw_context);
     context->was_called = true;
@@ -3001,6 +3024,11 @@ sdk_read_facade::~sdk_read_facade() {
     detach();
 }
 
+void sdk_read_facade::set_host_version(const std::uint32_t version) noexcept {
+    std::scoped_lock lock(mutex_);
+    host_version_ = version;
+}
+
 bool sdk_read_facade::register_host(HOST_APP_TABLE* host) noexcept {
     if (host == nullptr
         || host->create_edit_handle == nullptr
@@ -3073,6 +3101,10 @@ sdk_status_snapshot sdk_read_facade::query_status() const noexcept {
         std::scoped_lock lock(mutex_);
         edit_handle = edit_handle_;
         result.is_sdk_ready = edit_handle != nullptr;
+        // Short circuit before accessing the new SDK tail on older host tables.
+        result.supports_scene_management = edit_handle != nullptr && host_version_ >= 2011000U
+            && edit_handle->enum_scene_name != nullptr && edit_handle->select_scene != nullptr
+            && edit_handle->create_scene != nullptr;
         result.project_state = project_state_;
         result.project_path = project_path_;
         if (!project_cache_error_.empty()) {
@@ -3284,6 +3316,15 @@ sdk_project_query_result sdk_read_facade::query_project(const bool include_scene
                 .error_message = callback_context.error,
             };
         }
+        if (include_scenes && status.supports_scene_management) {
+            project.scenes.clear();
+            edit_handle->enum_scene_name(&callback_context, &copy_scene_summary);
+            if (!callback_context.error.empty() || project.scenes.empty()) {
+                return {.error_code = "sdk_query_failed", .error_message =
+                    callback_context.error.empty() ? "SDK returned an empty scene catalog"
+                        : callback_context.error};
+            }
+        }
         return {
             .ok = true,
             .project = std::move(project),
@@ -3301,6 +3342,125 @@ sdk_project_query_result sdk_read_facade::query_project(const bool include_scene
             .error_message = "SDK project query failed with an unknown exception",
         };
     }
+}
+
+sdk_scene_create_result sdk_read_facade::create_scene(
+    const sdk_scene_create_request& request, const bool dry_run) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, &request, dry_run]() { return create_scene(request, dry_run); },
+            sdk_scene_create_result{.error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
+    sdk_scene_create_result result;
+    try {
+        const std::wstring name = to_wide(request.name);
+        const std::wstring label = request.label.has_value() ? to_wide(*request.label) : L"";
+        if (name.empty() || name.size() > 256U || label.size() > 256U
+            || request.name.find('\0') != std::string::npos
+            || (request.label.has_value() && request.label->find('\0') != std::string::npos)
+            || std::ranges::all_of(name, [](wchar_t character) { return std::iswspace(character) != 0; })) {
+            throw std::invalid_argument("Scene name and label must be valid text up to 256 characters");
+        }
+        const sdk_status_snapshot status = query_status();
+        if (!status.is_sdk_ready || status.has_query_error) {
+            return {.error_code = "sdk_not_available", .error_message = "AviUtl2 SDK is not ready"};
+        }
+        if (!status.supports_scene_management) {
+            return {.error_code = "version_not_supported",
+                .error_message = "Scene creation requires AviUtl2 2.1.10 or newer"};
+        }
+        if (status.edit_state != sdk_edit_state::edit) {
+            return {.error_code = sdk_edit_state_error_code(status.edit_state),
+                .error_message = sdk_edit_state_error_message(status.edit_state)};
+        }
+        const sdk_project_query_result before = query_project(true);
+        if (!before.ok) {
+            return {.error_code = before.error_code, .error_message = before.error_message};
+        }
+        if (before.project.scenes.size() >= 4096U) {
+            return {.error_code = "invalid_argument", .error_message = "The supported scene count limit was reached"};
+        }
+        if (std::ranges::any_of(before.project.scenes, [&request](const auto& scene) {
+                return scene.name == request.name;
+            })) {
+            return {.error_code = "scene_already_exists",
+                .error_message = "A scene with the requested name already exists"};
+        }
+        EDIT_HANDLE* handle = nullptr;
+        {
+            std::scoped_lock lock(mutex_);
+            handle = edit_handle_;
+        }
+        EDIT_INFO info{};
+        handle->get_edit_info(&info, sizeof(info));
+        result.name = request.name;
+        result.width = request.width.value_or(info.width);
+        result.height = request.height.value_or(info.height);
+        result.sample_rate = request.sample_rate.value_or(info.sample_rate);
+        int rate = info.rate;
+        int scale = info.scale;
+        if (request.frame_rate.has_value()) {
+            if (!std::isfinite(*request.frame_rate) || *request.frame_rate <= 0
+                || *request.frame_rate > 1000) {
+                throw std::invalid_argument("frameRate must be positive and at most 1000");
+            }
+            scale = 1'000'000;
+            rate = static_cast<int>(std::llround(*request.frame_rate * scale));
+            const int divisor = std::gcd(rate, scale);
+            rate /= divisor;
+            scale /= divisor;
+        }
+        if (result.width < 1 || result.width > 8192 || result.height < 1 || result.height > 8192
+            || result.sample_rate < 8000 || result.sample_rate > 384000 || rate <= 0 || scale <= 0) {
+            throw std::invalid_argument("Scene dimensions, frame rate or sample rate are outside supported limits");
+        }
+        result.frame_rate = static_cast<double>(rate) / scale;
+        if (dry_run) {
+            result.ok = true;
+            return result;
+        }
+        // create_scene and select_scene must run outside SDK read/edit sections.
+        if (!handle->create_scene(name.c_str(), label.c_str(), result.width, result.height,
+                rate, scale, result.sample_rate, info.background)) {
+            return {.error_code = "scene_create_failed", .error_message = "AviUtl2 rejected scene creation"};
+        }
+        result.has_changed = true;
+        const sdk_project_query_result after = query_project(true);
+        if (!after.ok) {
+            result.error_code = "scene_create_failed";
+            result.error_message = "The scene was created but its postconditions could not be read";
+            return result;
+        }
+        result.scene_id = after.project.current_scene_id;
+        const auto created = std::ranges::find_if(after.project.scenes, [&result](const auto& scene) {
+            return scene.scene_id == result.scene_id && scene.name == result.name;
+        });
+        const bool was_existing = std::ranges::any_of(before.project.scenes, [&result](const auto& scene) {
+            return scene.scene_id == result.scene_id;
+        });
+        if (created == after.project.scenes.end() || was_existing
+            || after.project.scenes.size() != before.project.scenes.size() + 1U
+            || after.project.width != result.width || after.project.height != result.height
+            || std::abs(after.project.frame_rate - result.frame_rate) > 0.000001
+            || after.project.sample_rate != result.sample_rate) {
+            result.error_code = "scene_create_failed";
+            result.error_message = "AviUtl2 scene creation postconditions did not match the request";
+            return result;
+        }
+        result.ok = true;
+        return result;
+    } catch (const std::invalid_argument& exception) {
+        result.error_code = "invalid_argument";
+        result.error_message = exception.what();
+    } catch (const std::exception& exception) {
+        result.error_code = "sdk_query_failed";
+        result.error_message = exception.what();
+    } catch (...) {
+        result.error_code = "sdk_query_failed";
+        result.error_message = "Scene creation failed with an unknown exception";
+    }
+    return result;
 }
 
 sdk_timeline_query_result sdk_read_facade::query_timeline(const sdk_timeline_query& query) const noexcept {
@@ -4369,6 +4529,12 @@ sdk_view_edit_result sdk_read_facade::edit_view(
 
 sdk_open_scene_result sdk_read_facade::open_scene(
     const sdk_open_scene_request& request) const noexcept {
+    if (auto dispatched = dispatch_sdk_call(
+            [this, &request]() { return open_scene(request); },
+            sdk_open_scene_result{.error_code = "sdk_dispatch_failed",
+                .error_message = "SDK main-thread dispatch failed"})) {
+        return std::move(*dispatched);
+    }
     const bool has_scene_id = request.scene_id.has_value();
     const bool has_scene_name = request.scene_name.has_value();
     if (has_scene_id == has_scene_name
@@ -4407,7 +4573,8 @@ sdk_open_scene_result sdk_read_facade::open_scene(
             .error_message = sdk_edit_state_error_message(status.edit_state),
         };
     }
-    if (!status.project_path.has_value() || status.project_path->empty()) {
+    if (!status.supports_scene_management
+        && (!status.project_path.has_value() || status.project_path->empty())) {
         return {
             .error_code = "project_path_required",
             .error_message = "The project must be saved before a scene can be opened",
@@ -4425,18 +4592,58 @@ sdk_open_scene_result sdk_read_facade::open_scene(
                 : before_query.error_message,
         };
     }
+    const auto active_scene = std::ranges::find_if(before_query.project.scenes,
+        [&before_query](const auto& scene) {
+            return scene.scene_id == before_query.project.current_scene_id;
+        });
+    if (active_scene == before_query.project.scenes.end()) {
+        return {.error_code = "sdk_query_failed", .error_message = "The active scene is not in the catalog"};
+    }
     const scene_list_snapshot before{
         .scene_id = before_query.project.current_scene_id,
-        .name = before_query.project.scenes.front().name,
+        .name = active_scene->name,
     };
     const bool is_already_open = has_scene_id
         ? before.scene_id == *request.scene_id
         : before.name == *request.scene_name;
-    if (is_already_open) {
+    if (is_already_open && !status.supports_scene_management) {
         return {
             .ok = true,
             .scene = before,
         };
+    }
+
+    if (status.supports_scene_management) {
+        std::optional<sdk_scene_summary> target;
+        for (const auto& scene : before_query.project.scenes) {
+            if (has_scene_id ? scene.scene_id == *request.scene_id : scene.name == *request.scene_name) {
+                if (target.has_value()) {
+                    return {.error_code = "scene_ambiguous", .error_message = "The scene name is not unique"};
+                }
+                target = scene;
+            }
+        }
+        if (!target.has_value()) {
+            return {.error_code = "scene_not_found", .error_message = "The requested scene was not found"};
+        }
+        if (target->scene_id == before.scene_id) {
+            return {.ok = true, .scene = before};
+        }
+        EDIT_HANDLE* handle = nullptr;
+        {
+            std::scoped_lock lock(mutex_);
+            handle = edit_handle_;
+        }
+        if (!handle->select_scene(target->scene_id)) {
+            return {.error_code = "scene_switch_failed", .error_message = "AviUtl2 rejected scene selection"};
+        }
+        const sdk_project_query_result after = query_project(true);
+        if (!after.ok || after.project.current_scene_id != target->scene_id) {
+            return {.has_changed = true, .error_code = "scene_switch_failed",
+                .error_message = "The requested scene could not be verified after selection"};
+        }
+        return {.ok = true, .has_changed = true,
+            .scene = scene_list_snapshot{target->scene_id, target->name}};
     }
 
     void* host_window = nullptr;

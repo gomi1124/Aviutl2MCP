@@ -100,6 +100,7 @@ public sealed class DiagnosticsToolStdioTests
             McpClientTool statusTool = tools.Single(tool => tool.Name == "aviutl_get_status");
             McpClientTool projectTool = tools.Single(tool => tool.Name == "aviutl_get_project");
             McpClientTool saveTool = tools.Single(tool => tool.Name == "aviutl_save_project");
+            McpClientTool createSceneTool = tools.Single(tool => tool.Name == "aviutl_create_scene");
             McpClientTool effectItemTool = tools.Single(
                 tool => tool.Name == "aviutl_set_effect_item");
             McpClientTool previewTool = tools.Single(tool => tool.Name == "aviutl_render_preview");
@@ -129,6 +130,22 @@ public sealed class DiagnosticsToolStdioTests
             CallToolResult invalidTimelineResult = await client.CallToolAsync(
                 timelineTool.Name,
                 new Dictionary<string, object?> { ["limit"] = 0 },
+                cancellationToken: timeout.Token);
+            CallToolResult offlineCreateSceneResult = await client.CallToolAsync(
+                createSceneTool.Name,
+                new Dictionary<string, object?>
+                {
+                    ["expectedRevision"] = "epoch:generation:0",
+                    ["name"] = "New scene",
+                },
+                cancellationToken: timeout.Token);
+            CallToolResult invalidCreateSceneResult = await client.CallToolAsync(
+                createSceneTool.Name,
+                new Dictionary<string, object?>
+                {
+                    ["expectedRevision"] = "epoch:generation:0",
+                    ["name"] = " ",
+                },
                 cancellationToken: timeout.Token);
             CallToolResult offlineDeleteResult = await client.CallToolAsync(
                 deleteTool.Name,
@@ -228,7 +245,7 @@ public sealed class DiagnosticsToolStdioTests
                 cancellationToken: timeout.Token);
 
             // Assert
-            Assert.AreEqual(33, tools.Count);
+            Assert.AreEqual(34, tools.Count);
             CollectionAssert.IsSubsetOf(
                 READ_TOOL_NAMES,
                 tools.Select(tool => tool.Name).ToArray());
@@ -255,6 +272,7 @@ public sealed class DiagnosticsToolStdioTests
             AssertToolMetadata(psdValidateTool, "scope", "checks", "locator");
             AssertCursorToolMetadata(tools.Single(tool => tool.Name == "aviutl_set_cursor"));
             AssertOpenSceneToolMetadata(tools.Single(tool => tool.Name == "aviutl_open_scene"));
+            AssertCreateSceneToolMetadata(createSceneTool);
             AssertToolMetadata(logsTool, "sources", "limit");
             AssertToolMetadata(diagnoseTool, "includeReadSmoke", "includePreviewSmoke", "maxLogLines");
             AssertToolMetadata(previewTool, "frame", "maxWidth", "maxHeight", "includeAlpha");
@@ -306,6 +324,15 @@ public sealed class DiagnosticsToolStdioTests
             Assert.AreEqual(
                 "invalid_argument",
                 invalidTimelineEnvelope.GetProperty("error").GetProperty("code").GetString());
+
+            Assert.AreEqual(true, offlineCreateSceneResult.IsError);
+            Assert.AreEqual(
+                "aviutl_not_running",
+                offlineCreateSceneResult.StructuredContent!.Value.GetProperty("error").GetProperty("code").GetString());
+            Assert.AreEqual(true, invalidCreateSceneResult.IsError);
+            Assert.AreEqual(
+                "invalid_argument",
+                invalidCreateSceneResult.StructuredContent!.Value.GetProperty("error").GetProperty("code").GetString());
 
             Assert.AreEqual(true, offlineDeleteResult.IsError);
             JsonElement offlineDeleteEnvelope = offlineDeleteResult.StructuredContent!.Value;
@@ -441,6 +468,29 @@ public sealed class DiagnosticsToolStdioTests
         Assert.IsTrue(properties.TryGetProperty("expectedRevision", out _));
         Assert.IsFalse(properties.TryGetProperty("dryRun", out _));
         Assert.IsFalse(properties.TryGetProperty("input", out _));
+    }
+
+    private static void AssertCreateSceneToolMetadata(McpClientTool tool)
+    {
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations!.ReadOnlyHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.DestructiveHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.IdempotentHint);
+        Assert.AreEqual(false, tool.ProtocolTool.Annotations.OpenWorldHint);
+        Assert.IsTrue(tool.ProtocolTool.OutputSchema.HasValue);
+        JsonElement properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        Assert.IsTrue(properties.TryGetProperty("name", out _));
+        Assert.IsTrue(properties.TryGetProperty("width", out _));
+        Assert.IsTrue(properties.TryGetProperty("height", out _));
+        Assert.IsTrue(properties.TryGetProperty("frameRate", out _));
+        Assert.IsTrue(properties.TryGetProperty("sampleRate", out _));
+        Assert.IsTrue(properties.TryGetProperty("label", out _));
+        Assert.IsTrue(properties.TryGetProperty("expectedRevision", out _));
+        Assert.IsTrue(properties.TryGetProperty("dryRun", out _));
+        Assert.IsFalse(properties.TryGetProperty("input", out _));
+        string[] required = tool.ProtocolTool.InputSchema.GetProperty("required")
+            .EnumerateArray().Select(property => property.GetString()!).ToArray();
+        CollectionAssert.Contains(required, "name");
+        CollectionAssert.Contains(required, "expectedRevision");
     }
 
     private static void AssertEffectItemValueSchema(McpClientTool tool)

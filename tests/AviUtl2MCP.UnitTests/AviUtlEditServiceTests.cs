@@ -17,6 +17,95 @@ public sealed class AviUtlEditServiceTests
     private static readonly Revision EXPECTED_REVISION = new("epoch:generation:4");
 
     [TestMethod]
+    public async Task CreateScenePassesRevisionDryRunAndExplicitSettings()
+    {
+        // Arrange
+        CreateSceneData data = new(8, "Ending", 1280, 720, 29.97, 48000, false, false);
+        CapturingEditGateway gateway = new(CreateSuccess(data));
+        AviUtlEditService service = new(new StubResolver(CreateInstance()), gateway);
+        CreateSceneInput input = new()
+        {
+            ExpectedRevision = EXPECTED_REVISION,
+            DryRun = true,
+            Name = "Ending",
+            Width = 1280,
+            Height = 720,
+            FrameRate = 29.97,
+            SampleRate = 48000,
+            Label = "main",
+        };
+        using RequestContext context = CreateContext();
+
+        // Act
+        QueryExecutionResult<CreateSceneData> result = await service.CreateSceneAsync(input, context);
+
+        // Assert
+        Assert.IsTrue(result.Result.IsSuccess);
+        Assert.AreSame(data, result.Result.Value);
+        Assert.AreEqual("scene.create", gateway.Operation);
+        Assert.AreEqual(EXPECTED_REVISION, gateway.ExpectedRevision!.Value);
+        Assert.IsTrue(gateway.DryRun);
+        CreateSceneArgs args = Assert.IsInstanceOfType<CreateSceneArgs>(gateway.Parameters);
+        Assert.AreEqual(new CreateSceneArgs("Ending", 1280, 720, 29.97, 48000, "main"), args);
+    }
+
+    [TestMethod]
+    public async Task CreateSceneKeepsOmittedSettingsForNativeInheritance()
+    {
+        // Arrange
+        CapturingEditGateway gateway = new(CreateSuccess(
+            new CreateSceneData(8, "Ending", 1920, 1080, 30, 48000, true, true)));
+        AviUtlEditService service = new(new StubResolver(CreateInstance()), gateway);
+        CreateSceneInput input = new() { ExpectedRevision = EXPECTED_REVISION, Name = "Ending" };
+        using RequestContext context = CreateContext();
+
+        // Act
+        QueryExecutionResult<CreateSceneData> result = await service.CreateSceneAsync(input, context);
+
+        // Assert
+        Assert.IsTrue(result.Result.IsSuccess);
+        Assert.IsTrue(result.Result.Value!.Created);
+        Assert.IsTrue(result.Result.Value.Activated);
+        Assert.IsFalse(gateway.DryRun);
+        Assert.AreEqual(new CreateSceneArgs("Ending"), gateway.Parameters);
+    }
+
+    [TestMethod]
+    public async Task CreateScenePreservesVersionNotSupportedError()
+    {
+        // Arrange
+        GatewayResponse<CreateSceneData> response = new(
+            false,
+            Guid.CreateVersion7(),
+            INSTANCE_ID,
+            EXPECTED_REVISION,
+            new Revision("epoch:generation:2"),
+            null,
+            [],
+            new GatewayError(
+                "version_not_supported",
+                "AviUtl2 2.1.10 or later is required.",
+                false,
+                "preflight",
+                "unchanged",
+                false,
+                JsonDocument.Parse("{}").RootElement.Clone()),
+            ReadOnlyMemory<byte>.Empty);
+        AviUtlEditService service = new(new StubResolver(CreateInstance()), new CapturingEditGateway(response));
+        using RequestContext context = CreateContext();
+
+        // Act
+        QueryExecutionResult<CreateSceneData> result = await service.CreateSceneAsync(
+            new CreateSceneInput { ExpectedRevision = EXPECTED_REVISION, Name = "Ending" },
+            context);
+
+        // Assert
+        Assert.IsFalse(result.Result.IsSuccess);
+        Assert.AreEqual("version_not_supported", result.Result.Error!.Code);
+        Assert.AreEqual(EXPECTED_REVISION, result.Revision!.Value);
+    }
+
+    [TestMethod]
     public async Task CreateObjectPassesRevisionDryRunAndArguments()
     {
         // Arrange
@@ -383,6 +472,17 @@ public sealed class AviUtlEditServiceTests
         public bool DryRun { get; private set; }
 
         public object? Parameters { get; private set; }
+
+        public ValueTask<GatewayResponse<CreateSceneData>> CreateSceneAsync(
+            GatewayRequest<CreateSceneArgs> request,
+            CancellationToken cancellationToken)
+        {
+            Operation = "scene.create";
+            ExpectedRevision = request.ExpectedRevision;
+            DryRun = request.DryRun;
+            Parameters = request.Parameters;
+            return ValueTask.FromResult((GatewayResponse<CreateSceneData>)response!);
+        }
 
         public ValueTask<GatewayResponse<TData>> ExecuteEditAsync<TParameters, TData>(
             string operation,

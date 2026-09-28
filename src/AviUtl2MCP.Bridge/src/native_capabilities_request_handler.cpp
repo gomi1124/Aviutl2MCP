@@ -64,7 +64,6 @@ constexpr std::array EDIT_OPERATIONS{
 
 constexpr std::array SAVE_OPERATIONS{
     std::string_view("aviutl_save_project"),
-    std::string_view("aviutl_open_scene"),
 };
 
 constexpr std::array PSD_TOOLKIT_OPERATIONS{
@@ -187,6 +186,13 @@ operation_result native_capabilities_request_handler::execute(
         add_operations(operations, PROJECT_OPERATIONS, project_reason == nullptr, project_reason);
         add_operations(operations, EDIT_OPERATIONS, edit_reason == nullptr, edit_reason);
         add_operations(operations, SAVE_OPERATIONS, save_reason == nullptr, save_reason);
+        const char* scene_reason = edit_reason != nullptr ? edit_reason
+            : status.supports_scene_management ? nullptr : "version_not_supported";
+        add_operations(operations, std::array{std::string_view("aviutl_create_scene")},
+            scene_reason == nullptr, scene_reason);
+        const char* open_scene_reason = status.supports_scene_management ? edit_reason : save_reason;
+        add_operations(operations, std::array{std::string_view("aviutl_open_scene")},
+            open_scene_reason == nullptr, open_scene_reason);
         const char* psd_edit_reason = choose_reason(
             edit_reason, has_profile, false, has_gcmz, false, has_voice_route);
         add_operations(
